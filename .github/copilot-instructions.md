@@ -14,18 +14,19 @@ is `staging` or `production` in the real environment; see `env_file.py`).
 - There is no test suite or test runner yet, so neither a full-suite nor a single-test command
   exists. Add the appropriate `uv run <runner> path\to\test.py::test_name` command here when tests
   are introduced.
-- The `membership-applications` script is still a placeholder. Run the implemented CLI with
-  `uv run python -m membership_applications.cli.main`.
+- The `membership-management` script is still a placeholder. Run the implemented CLI with
+  `uv run python -m membership_management.cli.main`.
 - Start the API for day-to-day development with
-  `uv run --package membership-applications-api fastapi dev src\membership_applications\api\main.py`.
+  `uv run --package membership-management-api fastapi dev src\membership_management\api\main.py`.
   For production-style behavior, including configured Uvicorn settings, use
-  `uv run --package membership-applications-api python -m membership_applications.api.run`.
+  `uv run --package membership-management-api python -m membership_management.api.run`.
 
 ## Architecture
 
-- This is a single membership-applications microservice alongside an existing church application.
+- This is a single membership-management microservice (membership applications, members, small
+  groups and small-group reports) alongside an existing church application.
   Its current implementation is a synchronous SQL Server assimilation data layer consumed by a CLI
-  and a FastAPI workspace member at `src/membership_applications/api`. The API has its own
+  and a FastAPI workspace member at `src/membership_management/api`. The API has its own
   `pyproject.toml`; keep FastAPI-specific dependencies and configuration there.
 - Settings load from env vars and, outside staging/production, the root `.env`; start with
   `.env.example`. `ENVIRONMENT` is required, and `DEBUG` defaults to `False`. Importing the assimilation layer

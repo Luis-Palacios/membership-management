@@ -1,7 +1,7 @@
 [project]
-name = "membership-applications"
+name = "membership-management"
 version = "0.1.0"
-description = "Add your description here"
+description = "Church membership management API: membership applications, members, small groups and small-group reports"
 readme = "README.md"
 authors = [
     { name = "Luis Palacios", email = "lrpalaciosdev@gmail.com" }
@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-membership-applications = "membership_applications:main"
+membership-management = "membership_management:main"
 
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13.0"]
@@ -30,5 +30,5 @@ dev = [
 
 [tool.uv.workspace]
 members = [
-    "src/membership_applications/api",
+    "src/membership_management/api",
 ]

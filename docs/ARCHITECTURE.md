@@ -4,10 +4,11 @@ This describes where the project is headed, not what's built yet — for current
 
 ## System shape
 
-A single microservice — membership applications (assimilation) — augmenting an existing church web application (SQL Server DB, real users) by adding a new component alongside it rather than extending it directly.
+A single microservice — membership management (assimilation): membership applications, members, small groups and small-group reports — augmenting an existing church web application (SQL Server DB, real users) by adding a new component alongside it rather than extending it directly.
 
-- Uses the **existing SQL Server DB** via SQLAlchemy (this is the code that exists today, under `src/membership_applications/data/assimilation/`).
+- Uses the **existing SQL Server DB** via SQLAlchemy (this is the code that exists today, under `src/membership_management/data/assimilation/`).
 - FastAPI surface to list, review, and approve membership applications.
+- Planned areas beyond applications: members management, small groups, and small-group reports.
 
 ## Infra / deployment target
 - Docker → Kubernetes → Terraform, deployed to AWS or GCP.

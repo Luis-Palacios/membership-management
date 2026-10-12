@@ -4,8 +4,8 @@ requires-python = ">=3.14"
 
 [manifest]
 members = [
-    "membership-applications",
-    "membership-applications-api",
+    "membership-management",
+    "membership-management-api",
 ]
 
 [[package]]
@@ -747,7 +747,7 @@ wheels = [
 ]
 
 [[package]]
-name = "membership-applications"
+name = "membership-management"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
@@ -780,9 +780,9 @@ dev = [
 ]
 
 [[package]]
-name = "membership-applications-api"
+name = "membership-management-api"
 version = "0.1.0"
-source = { virtual = "src/membership_applications/api" }
+source = { virtual = "src/membership_management/api" }
 dependencies = [
     { name = "fastapi" },
     { name = "limits" },
