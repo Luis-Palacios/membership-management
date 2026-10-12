@@ -26,7 +26,7 @@ WORKDIR /app
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    --mount=type=bind,source=src/membership_applications/api/pyproject.toml,target=src/membership_applications/api/pyproject.toml \
+    --mount=type=bind,source=src/membership_management/api/pyproject.toml,target=src/membership_management/api/pyproject.toml \
     uv sync --locked --no-dev --all-packages --no-install-workspace
 
 # Now our own code. --no-editable installs it into site-packages like any other package, so the
@@ -77,4 +77,4 @@ EXPOSE 8000
 # Exec form: python is PID 1 and receives SIGTERM directly, so uvicorn's graceful shutdown runs
 # (GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS). A shell form or `uv run` would put a process in between.
 # ENVIRONMENT and every other setting come from the task definition at run time; none is baked in.
-CMD ["python", "-m", "membership_applications.api.run"]
+CMD ["python", "-m", "membership_management.api.run"]
