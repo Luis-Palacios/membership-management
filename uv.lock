@@ -816,6 +816,7 @@ source = { virtual = "src/membership_management/api" }
 dependencies = [
     { name = "fastapi" },
     { name = "limits" },
+    { name = "pydantic", extra = ["email"] },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "uvicorn" },
 ]
@@ -829,6 +830,7 @@ dev = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.141.1" },
     { name = "limits", specifier = ">=5.8.0" },
+    { name = "pydantic", extras = ["email"], specifier = ">=2.13.4" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.10.1" },
     { name = "uvicorn", specifier = ">=0.52.4" },
 ]

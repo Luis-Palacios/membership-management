@@ -19,7 +19,7 @@ from membership_management.api.middleware import (
     RequestLoggingMiddleware,
     RequestTimeoutMiddleware,
 )
-from membership_management.api.routers import applications, people
+from membership_management.api.routers import applications, members, people
 from membership_management.data.assimilation.config import settings
 from membership_management.data.assimilation.database import engine
 from membership_management.data.database import engine as members_engine
@@ -61,12 +61,13 @@ if api_settings.cors_allowed_origins:
         CORSMiddleware,
         allow_origins=api_settings.cors_allowed_origins,
         allow_credentials=False,
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "PATCH"],
         allow_headers=["Authorization", "Content-Type"],
     )
 app.add_middleware(RequestLoggingMiddleware)
 app.include_router(applications.router)
 app.include_router(people.router)
+app.include_router(members.router)
 
 
 @app.get("/")
