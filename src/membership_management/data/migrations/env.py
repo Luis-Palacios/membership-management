@@ -65,16 +65,13 @@ def run_migrations_online() -> None:
             # it queues behind this migration (see migration_lock_timeout_seconds in config.py).
             # statement_timeout=0: unlike API requests, a data backfill may legitimately run long.
             "options": (
-                f"-c lock_timeout={settings.migration_lock_timeout_seconds * 1000}"
-                " -c statement_timeout=0"
+                f"-c lock_timeout={settings.migration_lock_timeout_seconds * 1000} -c statement_timeout=0"
             ),
         },
     )
 
     with connectable.connect() as connection:
-        context.configure(
-            connection=connection, target_metadata=target_metadata
-        )
+        context.configure(connection=connection, target_metadata=target_metadata)
 
         with context.begin_transaction():
             context.run_migrations()

@@ -55,9 +55,7 @@ app = FastAPI(
     openapi_url="/openapi.json" if settings.environment == "local" else None,
     lifespan=lifespan,
 )
-app.add_middleware(
-    RequestTimeoutMiddleware, timeout_seconds=api_settings.request_timeout_seconds
-)
+app.add_middleware(RequestTimeoutMiddleware, timeout_seconds=api_settings.request_timeout_seconds)
 if api_settings.cors_allowed_origins:
     app.add_middleware(
         CORSMiddleware,

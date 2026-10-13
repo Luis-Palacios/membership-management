@@ -9,7 +9,8 @@ class PersonEventSchema(CamelModel):
     event_name: str
     event_date: datetime
     event_type_name: str
-    
+
+
 class PersonFirstAssistanceSchema(CamelModel):
     person_id: int
     assistance_date: datetime

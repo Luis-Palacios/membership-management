@@ -6,5 +6,3 @@ class PersonFirstAssistanceResult(NamedTuple):
     person_id: int
     assistance_date: datetime
     assistance_type_id: int
-
- 

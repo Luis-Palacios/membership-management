@@ -26,20 +26,19 @@ def get_recently_generated_membership_applications_query(
         .order_by(MembershipApplication.generated_date.desc())
     )
 
+
 def get_recently_generated_membership_applications_count_query(
     start_date: datetime, end_date: datetime
 ) -> Select[tuple[int]]:
     """
     Get the count of membership applications generated between the specified start and end dates.
     """
-    return (
-        select(func.count(MembershipApplication.id))
-        .where(MembershipApplication.generated_date.between(start_date, end_date))
+    return select(func.count(MembershipApplication.id)).where(
+        MembershipApplication.generated_date.between(start_date, end_date)
     )
-    
-def get_detailed_membership_application_query(
-    membership_application_id: int
-) -> Select:
+
+
+def get_detailed_membership_application_query(membership_application_id: int) -> Select:
     """
     Get detailed information for a specific membership application by its ID.
     """
@@ -65,5 +64,3 @@ most_recent_membership_application_query: Select[tuple[datetime, int]] = (
     .order_by(MembershipApplication.generated_date.desc())
     .limit(limit=1)
 )
-
-
