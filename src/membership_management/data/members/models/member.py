@@ -13,8 +13,8 @@ class Member(MemberManagementBase):
     phone: Mapped[str | None] = mapped_column(String(20))
     address: Mapped[str | None] = mapped_column(String(255))
 
-    # The ID of the user associated with this member. handled by separated better-auth service (auth-server)
+    # ID of the linked user, managed by the separate better-auth service (auth-server).
     user_id: Mapped[str | None] = mapped_column(String(255), unique=True)
 
-    # Temporal while we migrate data from the SQL Server DB
+    # Temporary while we migrate data from the SQL Server DB.
     legacy_id: Mapped[int | None] = mapped_column(unique=True)

@@ -3,6 +3,10 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import create_engine, pool
 
+import membership_management.data.models  # noqa: F401  (registers every table on the metadata)
+from membership_management.data.config import settings
+from membership_management.data.database import MemberManagementBase
+
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
@@ -11,10 +15,6 @@ config = context.config
 # This line sets up loggers basically.
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
-
-import membership_management.data.models  # noqa: F401
-from membership_management.data.config import settings
-from membership_management.data.database import MemberManagementBase
 
 target_metadata = MemberManagementBase.metadata
 DATABASE_URL = str(settings.database_url)
