@@ -1,3 +1,4 @@
+from sqlalchemy import Identity, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from membership_management.data.database import MemberManagementBase
@@ -6,18 +7,14 @@ from membership_management.data.database import MemberManagementBase
 class Member(MemberManagementBase):
     __tablename__ = "members"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(nullable=False)
-    email: Mapped[str] = mapped_column(unique=True, nullable=False)
-    phone: Mapped[str] = mapped_column(unique=False, nullable=True)
-    address: Mapped[str] = mapped_column(nullable=True)
+    id: Mapped[int] = mapped_column(Identity(always=True), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+    email: Mapped[str] = mapped_column(String(255), unique=True)
+    phone: Mapped[str | None] = mapped_column(String(20))
+    address: Mapped[str | None] = mapped_column(String(255))
 
-    
-    """
-    The ID of the user associated with this member.
-    handled by separated better-auth service (auth-server)
-    """
-    user_id: Mapped[str] = mapped_column(nullable=True)
+    # The ID of the user associated with this member. handled by separated better-auth service (auth-server)
+    user_id: Mapped[str | None] = mapped_column(String(255), unique=True)
 
     # Temporal while we migrate data from the SQL Server DB
-    legacy_id: Mapped[int] = mapped_column(nullable=True)
+    legacy_id: Mapped[int | None] = mapped_column(unique=True)

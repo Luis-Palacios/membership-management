@@ -32,8 +32,8 @@ class ApiSettings(BaseSettings):
     port: int = 8000
 
     # Uvicorn worker processes for run.py. Each worker is a separate process
-    # with its own SQLAlchemy engine/pool, so total DB connections become
-    # workers x (db_pool_size + db_max_overflow) -- and multiply again by
+    # with its own SQLAlchemy engine/pool per DB, so total connections to each
+    # DB become workers x (that DB's db_pool_size + db_max_overflow) -- and multiply again by
     # replica count once this runs as multiple containers. Each worker also
     # gets its own in-memory rate-limiter counters -- see the warning in
     # rate_limit.py -- so a "10/minute" limit effectively becomes
@@ -82,9 +82,9 @@ class ApiSettings(BaseSettings):
     # these on anyio's default thread pool, not the asyncio event loop
     # (async def routes bypass this entirely). 40 matches anyio's own
     # default. Per process, same as db_pool_size/db_max_overflow -- multiply
-    # by workers x replicas for the real total. If this is smaller than
-    # db_pool_size + db_max_overflow, *this* becomes the binding concurrency
-    # limit for sync DB-backed routes instead of the DB pool; if it's
+    # by workers x replicas for the real total. If this is smaller than a
+    # DB's db_pool_size + db_max_overflow, *this* becomes the binding concurrency
+    # limit for sync routes using that DB instead of its pool; if it's
     # larger, the DB pool stays the bottleneck and raising this further has
     # no effect. Applied in main.py's lifespan startup hook (not passed to
     # uvicorn), so unlike limit_concurrency/backlog/workers this one *does*
