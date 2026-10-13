@@ -74,12 +74,15 @@ Alembic manages the schema of the members PostgreSQL database **only**. The assi
 
 1. Add or change models under `src/membership_management/data/<domain>/models/`, using `MemberManagementBase`. For a new model, export it from its domain's `models/__init__.py`; for a new domain, also import its `models` package in `src/membership_management/data/models.py`. Autogenerate only sees imported models, and treats an existing table whose model it can't see as deleted, so it would generate a `drop_table` for it.
 2. Generate a migration:
+
    ```powershell
    uv run alembic revision --autogenerate -m "short description"
    ```
+
    The new file lands in `src/membership_management/data/migrations/versions/` and is automatically fixed and formatted by ruff (post-write hooks in `alembic.ini`).
 3. **Review the generated file before applying it.** Autogenerate is a draft, not a guarantee. Check that `upgrade()` only contains the changes you intended (no unexpected `drop_table`/`drop_column`) and that `downgrade()` reverses them. Some changes aren't detected and must be written by hand, e.g. new values for the `small_group_members.role` CHECK constraint, or table/column renames, which autogenerate sees as drop + add.
 4. Apply it and confirm it can be rolled back:
+
    ```powershell
    uv run alembic upgrade head      # apply all pending migrations
    uv run alembic downgrade -1      # roll back the latest one...

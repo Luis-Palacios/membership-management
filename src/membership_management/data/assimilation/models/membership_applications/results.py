@@ -21,6 +21,7 @@ class MembershipApplicationSummary(NamedTuple):
     first_name: str
     last_name: str
 
+
 class MembershipApplicationDetails(NamedTuple):
     id: int
     person_id: int

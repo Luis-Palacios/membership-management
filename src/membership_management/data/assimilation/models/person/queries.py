@@ -16,7 +16,8 @@ def get_person_events_query(person_id: int) -> Select:
             Event.name.label("event_name"),
             Event.date.label("event_date"),
             EventType.name.label("event_type_name"),
-            )
-        .join(EventPerson.event).join(Event.event_type)
+        )
+        .join(EventPerson.event)
+        .join(Event.event_type)
         .where(EventPerson.person_id == person_id)
     )

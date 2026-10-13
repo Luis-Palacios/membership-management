@@ -1,4 +1,6 @@
-from sqlalchemy import Identity, String
+from datetime import date
+
+from sqlalchemy import Date, Identity, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from membership_management.data.database import MemberManagementBase
@@ -12,6 +14,7 @@ class Member(MemberManagementBase):
     email: Mapped[str] = mapped_column(String(255), unique=True)
     phone: Mapped[str | None] = mapped_column(String(20))
     address: Mapped[str | None] = mapped_column(String(255))
+    birth_date: Mapped[date | None] = mapped_column(Date)
 
     # ID of the linked user, managed by the separate better-auth service (auth-server).
     user_id: Mapped[str | None] = mapped_column(String(255), unique=True)

@@ -13,7 +13,7 @@ class MembershipApplication(Base):
     id: Mapped[int] = mapped_column(primary_key=True, name="Id", autoincrement=True)
     token: Mapped[str] = mapped_column(name="Token")
     person_id: Mapped[int] = mapped_column(ForeignKey(column="Persona.Id_Persona"), name="PersonId")
-    generated_date: Mapped[datetime] = mapped_column(DateTime,name="GeneratedDate")
+    generated_date: Mapped[datetime] = mapped_column(DateTime, name="GeneratedDate")
     fulfilment_date: Mapped[datetime | None] = mapped_column(DateTime, name="FulfilmentDate", nullable=True)
     life_before: Mapped[str] = mapped_column(name="LifeBefore")
     conversion: Mapped[str] = mapped_column(name="Conversion")

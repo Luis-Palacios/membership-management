@@ -24,6 +24,6 @@ class EventPerson(Base):
         primary_key=True,
     )
     assisted: Mapped[bool] = mapped_column(name="Asistio")
-    
+
     person: Mapped["Person"] = relationship("Person", back_populates="events", foreign_keys=[person_id])
     event: Mapped["Event"] = relationship("Event", back_populates="guests", foreign_keys=[event_id])
