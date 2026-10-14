@@ -66,6 +66,30 @@ uv run ruff check # check linting
 
 Request/DB timeouts (connect, query, pool, request, keep-alive, graceful-shutdown, port) are all configurable via `.env` — see `.env.example` for the full list and defaults.
 
+## Seeding the members database
+
+`src/membership_management/data/seed/` fills the members PostgreSQL database with realistic development/demo data set in Managua, Nicaragua: 55 members (Nicaraguan names, `+505` phones, landmark-style Managua addresses, `@example.com` emails), 5 small groups (`GP - #1` … `GP - #5`) with 8–10 active members each including one leader and one co-leader, some membership history (promotions, transfers, members who left), and the last 8 weeks of small-group reports with attendance. The assimilation SQL Server database is never touched.
+
+Apply the migrations first (`uv run alembic upgrade head`), then from the repository root:
+
+```powershell
+# Seed an empty database. Refuses if any members-DB table already has rows.
+uv run python -m membership_management.data.seed
+
+# Wipe every members-DB table (TRUNCATE ... RESTART IDENTITY) and seed again.
+# Destroys whatever data is there; the migration state (alembic_version) is kept.
+uv run python -m membership_management.data.seed --reset
+
+# Options
+uv run python -m membership_management.data.seed --help
+#   --rng-seed N          generate a different (but still reproducible) data set; default 2026
+#   --today YYYY-MM-DD    fix the date that join dates and report dates are generated from
+```
+
+The data is deterministic: the same `--rng-seed` and `--today` always produce the same rows, so demos and tests are repeatable. Everything is written in one transaction, so a failure leaves the database unchanged. The script refuses to run when `ENVIRONMENT=production`.
+
+To seed a new table, add a `seed_<domain>(ctx)` function in its own module under `data/seed/` (it adds rows through `ctx.session` and uses `ctx.rng`/`ctx.today`, flushing but never committing) and register it in `SEEDERS` in `data/seed/runner.py`, after any seeders whose rows it reads. `--reset` picks up new tables automatically. Static names, neighborhoods and texts live in `data/seed/fixtures.py`.
+
 ## Database migrations
 
 Alembic manages the schema of the members PostgreSQL database **only**. The assimilation SQL Server database belongs to the existing church web app and is never migrated from here, and auth-server has its own separate database. Run every command from the repository root.

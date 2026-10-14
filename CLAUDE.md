@@ -25,6 +25,8 @@ This project uses [uv](https://docs.astral.sh/uv/) with the `uv_build` backend (
 - Type-check: `uv run ty check` ([`ty`](https://github.com/astral-sh/ty), Astral's type checker — no separate config file yet)
 - Migrations (members DB only): `uv run alembic revision --autogenerate -m "..."`, then **review the generated file** (autogenerate drops any table whose model isn't imported via `data/models.py`) before `uv run alembic upgrade head`. `uv run alembic upgrade head --sql` previews the SQL without touching the DB; `uv run alembic check` fails if models changed without a migration; check `downgrade -1` + `upgrade head` round-trips. Generated files are ruff-fixed and formatted by post-write hooks in `alembic.ini`. Deployments run `python -m membership_management.data.migrate` (no `alembic.ini` in the image) as a one-off task before the service update, never on app startup. Locally the DB URL must use `127.0.0.1`, not `localhost` (`::1` hangs against Docker Desktop's Postgres).
 
+- Seed the members DB with deterministic Managua demo data: `uv run python -m membership_management.data.seed` (refuses if any table has rows; `--reset` truncates every members-DB table first; refuses in production). New tables: add a `seed_<domain>(ctx)` module under `data/seed/` and register it in `runner.SEEDERS`.
+
 Run commands from the repository root so settings load the root `.env`. `.env` is skipped when `ENVIRONMENT` is `staging`/`production` in the real environment (`env_file.py`), so deployments use real env vars only.
 
 ## Architecture
