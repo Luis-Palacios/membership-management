@@ -6,6 +6,7 @@ This is lightweight scaffolding, not the full detailed implementation plan (that
 1. FastAPI endpoints on top of the existing `data/assimilation` module: `GET /applications/recents` is implemented (reuses the CLI's service layer). `POST /applications/approve` and `/applications/reject` exist but are placeholders — they don't persist status changes or publish the future membership-approval event yet.
 2. **Open decision, revisit:** routes currently call `services.py` functions directly (no repository abstraction). This works fine so far; revisit only if the service layer stops being a sufficient seam between FastAPI and SQLAlchemy. Weigh against how much this is a learning exercise vs. a small app that doesn't need the extra layer.
 3. Basic automated deploy on push (GitHub Actions).
+4. Role gating and leader scoping (Phase 9, specified in `docs/specs/small-group-leader-access.md` in the workspace repo). Reuse what member linking added: `require_roles` (`api/jwt_auth.py`) for role checks and `get_current_member` / `CurrentMemberDep` (`api/current_member.py`) for "my member"; `GET /me` already returns the groups a member leads.
 
 ## Database access
 
