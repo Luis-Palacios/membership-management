@@ -18,6 +18,8 @@ class SmallGroupSummarySchema(CamelModel):
     meeting_day: Weekday | None
     closed_at: date | None
     active_member_count: int
+    leader_member_id: int | None
+    leader_name: str | None
 
 
 class SmallGroupMemberSchema(CamelModel):
