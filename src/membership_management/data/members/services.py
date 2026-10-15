@@ -102,17 +102,17 @@ def link_member_user(session: Session, member: Member, user_id: str) -> Member:
 def link_member_by_accepted_invite(session: Session, user_id: str, email: str) -> int | None:
     """Link the one unlinked member whose email matches (case-insensitive); return their id.
 
-    Changes nothing and returns None when the user is already linked or the email matches no member
-    or several. Never raises for those cases: the caller is an invite acceptance that must not fail.
+    Changes nothing and returns None when the user is already linked or no unlinked member has
+    that email. Never raises for those cases: the caller is an invite acceptance that must not fail.
     """
     if session.scalar(select(Member.id).where(Member.user_id == user_id)) is not None:
         return None
-    candidates = session.scalars(
-        select(Member).where(func.lower(Member.email) == email.lower(), Member.user_id.is_(None)).limit(2)
-    ).all()
-    if len(candidates) != 1:
+    # lower(email) is unique, so at most one member can match.
+    member = session.scalar(
+        select(Member).where(func.lower(Member.email) == email.lower(), Member.user_id.is_(None))
+    )
+    if member is None:
         return None
-    member = candidates[0]
     member.user_id = user_id
     try:
         session.commit()
@@ -136,6 +136,6 @@ def _flush_or_raise_duplicate(session: Session) -> None:
         session.flush()
     except IntegrityError as exc:
         session.rollback()
-        if "uq_members_email" in str(exc.orig):
+        if "uq_members_email_lower" in str(exc.orig):
             raise DuplicateMemberEmailError from exc
         raise
