@@ -9,6 +9,7 @@ from membership_management.data.members.models import Member
 from membership_management.data.query_helpers import all_as
 from membership_management.data.small_groups.models import SmallGroup, SmallGroupMember, SmallGroupRole
 from membership_management.data.small_groups.queries import (
+    led_small_group_ids_query,
     list_small_groups_query,
     small_group_active_members_query,
 )
@@ -41,6 +42,11 @@ class LeaderAlreadyExistsError(Exception):
 
 def list_small_groups(session: Session) -> Sequence[SmallGroupSummary]:
     return all_as(session, list_small_groups_query(), SmallGroupSummary)
+
+
+def get_led_small_group_ids(session: Session, member_id: int) -> frozenset[int]:
+    """The group ids a member may work on as a scoped role: led now, or led when the group closed."""
+    return frozenset(session.scalars(led_small_group_ids_query(member_id)))
 
 
 def get_small_group(session: Session, small_group_id: int) -> SmallGroup | None:

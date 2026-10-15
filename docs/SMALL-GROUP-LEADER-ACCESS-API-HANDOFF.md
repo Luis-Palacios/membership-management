@@ -27,14 +27,21 @@ to HTTP codes.
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. Role sets and the small group scope | [ ] | |
+| 1. Role sets and the small group scope | [x] | see git log |
 | 2. Scoped reads; full-role-only routes | [ ] | |
 | 3. Scoped writes and the leadership limits | [ ] | |
 | 4. Docs | [ ] | |
 
 ### Decisions and deviations
 
-- (none yet)
+- Verification: no test runner, so each stage was tried with a scratch script (kept outside the repo)
+  that seeds `ZZ`-prefixed members and groups in the local members DB, calls the API through
+  `TestClient` with `get_current_claims` overridden, and deletes the rows afterwards.
+- Stage 1: the scope predicate lives in `data/small_groups/queries.py` (`leads_in_scope_condition`)
+  and is shared by `led_small_group_ids_query` and `member_active_leads_query`, so `/me` `leads` and
+  the access scope can't drift. Tried: leader, co-leader (open and closed group), member only, former
+  leader, leader at close, removed before close, no member (`[]`); `admin`/`elder` full, `deacon`
+  scoped, `user`/`pending` 403. `alembic check`: no migration needed.
 
 ## Who can do what
 

@@ -1,7 +1,8 @@
 from sqlalchemy import Select, select
 
 from membership_management.data.members.models import Member
-from membership_management.data.small_groups.models import SmallGroup, SmallGroupMember, SmallGroupRole
+from membership_management.data.small_groups.models import SmallGroup, SmallGroupMember
+from membership_management.data.small_groups.queries import leads_in_scope_condition
 
 
 def list_members_query() -> Select:
@@ -35,7 +36,11 @@ def member_by_user_id_query(user_id: str) -> Select:
 
 
 def member_active_leads_query(member_id: int) -> Select:
-    """Groups the member leads or co-leads right now (open periods only; closed groups included)."""
+    """Groups in the member's leader scope, with the period's role.
+
+    Same rule as `led_small_group_ids_query`: leader/co-leader periods that are active or ended by
+    the group closing (closed groups included).
+    """
     return (
         select(
             SmallGroup.id.label("small_group_id"),
@@ -43,10 +48,6 @@ def member_active_leads_query(member_id: int) -> Select:
             SmallGroupMember.role.label("role"),
         )
         .join(SmallGroup, SmallGroup.id == SmallGroupMember.small_group_id)
-        .where(
-            SmallGroupMember.member_id == member_id,
-            SmallGroupMember.left_at.is_(None),
-            SmallGroupMember.role.in_([SmallGroupRole.LEADER, SmallGroupRole.CO_LEADER]),
-        )
+        .where(SmallGroupMember.member_id == member_id, leads_in_scope_condition())
         .order_by(SmallGroup.name)
     )
