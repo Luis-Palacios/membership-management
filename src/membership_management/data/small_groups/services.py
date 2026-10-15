@@ -62,6 +62,8 @@ def create_small_group(
 
 def update_small_group(session: Session, small_group: SmallGroup, changes: dict[str, object]) -> SmallGroup:
     """Apply only the given fields (the ones the client actually sent) and commit."""
+    if small_group.closed_at is not None:
+        raise SmallGroupClosedError
     for field, value in changes.items():
         setattr(small_group, field, value)
     session.commit()

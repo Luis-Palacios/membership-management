@@ -121,7 +121,11 @@ def patch_small_group(
     # name is NOT NULL: an explicit null would otherwise surface as a DB error (500).
     if "name" in changes and changes["name"] is None:
         raise HTTPException(status_code=422, detail="name cannot be null.")
-    return _detail(db, update_small_group(db, small_group, changes))
+    try:
+        small_group = update_small_group(db, small_group, changes)
+    except SmallGroupClosedError as exc:
+        raise HTTPException(status_code=409, detail="This small group is closed.") from exc
+    return _detail(db, small_group)
 
 
 @router.post(
