@@ -783,6 +783,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pyodbc" },
     { name = "sqlalchemy" },
+    { name = "tzdata" },
 ]
 
 [package.dev-dependencies]
@@ -800,6 +801,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.15.0" },
     { name = "pyodbc", specifier = ">=5.3.0" },
     { name = "sqlalchemy", specifier = ">=2.0.52" },
+    { name = "tzdata", specifier = ">=2026.1" },
 ]
 
 [package.metadata.requires-dev]
