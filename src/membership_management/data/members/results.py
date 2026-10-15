@@ -17,3 +17,9 @@ class MemberSmallGroup(NamedTuple):
     small_group_name: str
     role: SmallGroupRole
     joined_at: date
+
+
+class MemberLead(NamedTuple):
+    small_group_id: int
+    small_group_name: str
+    role: SmallGroupRole
