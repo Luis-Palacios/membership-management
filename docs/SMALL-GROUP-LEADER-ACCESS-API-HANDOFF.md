@@ -29,8 +29,8 @@ to HTTP codes.
 | --- | --- | --- |
 | 1. Role sets and the small group scope | [x] | 6bf035f |
 | 2. Scoped reads; full-role-only routes | [x] | a7c344e |
-| 3. Scoped writes and the leadership limits | [x] | see git log |
-| 4. Docs | [ ] | |
+| 3. Scoped writes and the leadership limits | [x] | e4a5ede |
+| 4. Docs | [x] | see git log |
 
 ### Decisions and deviations
 
@@ -56,6 +56,7 @@ to HTTP codes.
   unknown member, non-member target, out-of-scope group (404) and a closed group (409 on add). A
   co-leader acting on the leader's row gets the leadership message; on their own row, the own-row
   message. Scratch rows were deleted afterwards.
+- Stage 4: `CLAUDE.md` and `ROADMAP.md` updated; `docs/ARCHITECTURE.md` doesn't describe auth, so no change.
 - Closed groups: changing a role or adding returns 409 as before. Removing a member there returns 404
   "not in the small group" (all periods ended at close), also as before; not changed here.
 
