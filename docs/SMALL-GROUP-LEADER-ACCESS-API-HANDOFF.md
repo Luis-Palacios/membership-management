@@ -28,8 +28,8 @@ to HTTP codes.
 | Stage | Status | Commit |
 | --- | --- | --- |
 | 1. Role sets and the small group scope | [x] | 6bf035f |
-| 2. Scoped reads; full-role-only routes | [x] | see git log |
-| 3. Scoped writes and the leadership limits | [ ] | |
+| 2. Scoped reads; full-role-only routes | [x] | a7c344e |
+| 3. Scoped writes and the leadership limits | [x] | see git log |
 | 4. Docs | [ ] | |
 
 ### Decisions and deviations
@@ -48,6 +48,16 @@ to HTTP codes.
   groups (a leader at close sees the closed group, a former leader and an unlinked user see `[]`);
   out-of-scope and unknown ids give the same 404; `user`/`pending` 403 on every route; `deacon` 403 on
   create/close/set leader; `admin` unchanged.
+- Stage 3: the rule 9 checks are `ensure_scoped_caller_can_add_member` and
+  `ensure_scoped_caller_can_change_member` in `api/access.py` (authorization stays out of the
+  services). `_active_membership` is now public as `get_active_membership`. Tried as `smallGroupLeader`
+  (leader), `deacon` (co-leader), `user` and `admin` on every row of the stage table plus the allowed
+  moves (add `member`/`co_leader`, `member` <-> `co_leader`, remove a member or another co-leader),
+  unknown member, non-member target, out-of-scope group (404) and a closed group (409 on add). A
+  co-leader acting on the leader's row gets the leadership message; on their own row, the own-row
+  message. Scratch rows were deleted afterwards.
+- Closed groups: changing a role or adding returns 409 as before. Removing a member there returns 404
+  "not in the small group" (all periods ended at close), also as before; not changed here.
 
 ## Who can do what
 

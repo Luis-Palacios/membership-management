@@ -2,7 +2,12 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
-from membership_management.api.access import SmallGroupScope, SmallGroupScopeDep
+from membership_management.api.access import (
+    SmallGroupScope,
+    SmallGroupScopeDep,
+    ensure_scoped_caller_can_add_member,
+    ensure_scoped_caller_can_change_member,
+)
 from membership_management.api.church_time import church_today
 from membership_management.api.dependencies import MembersSessionDep
 from membership_management.api.jwt_auth import get_current_claims, require_roles
@@ -175,6 +180,7 @@ def post_small_group_member(
     small_group_id: int, body: SmallGroupMemberAddSchema, db: MembersSessionDep, scope: SmallGroupScopeDep
 ) -> SmallGroupDetailSchema:
     small_group = _get_or_404(db, small_group_id, scope)
+    ensure_scoped_caller_can_add_member(scope, body.role)
     try:
         add_small_group_member(db, small_group, member_id=body.member_id, role=body.role, today=_today())
     except SmallGroupClosedError as exc:
@@ -202,6 +208,7 @@ def patch_small_group_member(
     scope: SmallGroupScopeDep,
 ) -> SmallGroupDetailSchema:
     small_group = _get_or_404(db, small_group_id, scope)
+    ensure_scoped_caller_can_change_member(db, scope, small_group_id, member_id, body.role)
     try:
         change_small_group_member_role(db, small_group, member_id=member_id, role=body.role, today=_today())
     except SmallGroupClosedError as exc:
@@ -248,6 +255,7 @@ def delete_small_group_member(
     small_group_id: int, member_id: int, db: MembersSessionDep, scope: SmallGroupScopeDep
 ) -> Response:
     small_group = _get_or_404(db, small_group_id, scope)
+    ensure_scoped_caller_can_change_member(db, scope, small_group_id, member_id, None)
     try:
         remove_small_group_member(db, small_group, member_id=member_id, today=_today())
     except ActiveMembershipNotFoundError as exc:
