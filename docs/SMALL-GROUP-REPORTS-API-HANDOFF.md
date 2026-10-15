@@ -31,8 +31,8 @@ work stay plain `def`. Put report code next to the small group code (`data/small
 | Stage | Status | Commit |
 | --- | --- | --- |
 | 1. Roster for a date, church Sunday, missed streaks | [x] | 0ae1e15 |
-| 2. Create and detail (observation visibility) | [x] | see git log |
-| 3. Edit and delete | [ ] | |
+| 2. Create and detail (observation visibility) | [x] | 43d68c8 |
+| 3. Edit and delete | [x] | see git log |
 | 4. List with not-filed meetings, and the summary | [ ] | |
 | 5. Docs | [ ] | |
 
@@ -260,3 +260,18 @@ Router mapping (messages are English; the staff app matches on status + a phrase
 - Any new column or table (drafts, observation author, edit history).
 - Reminders for not-filed reports.
 - Role checks on `/members`, `/people`, `/applications` (leader access spec, *Not in this spec*).
+- Stage 3: edit validates like create (closed, future, duplicate date ignoring the report itself,
+  attendance set equals the roster on the new date) but does **not** repeat the "led on that date"
+  check: that is a rule about submitting (rule 5), the submitter never changes, and rule 6 lets any
+  current leader or co-leader edit.
+- Stage 3: rule 9 on edit uses one helper, `observations_visible_to`, shared with the detail. A caller
+  who may see observations (admin, elder, the submitter) replaces them with what they send (omitted
+  or null clears); anyone else leaves every stored observation alone, and a row inserted by such a
+  caller is created with none.
+- Stage 3 verification (scratch script, `TestClient` plus direct DB reads): a co-leader editing the
+  leader's report can't read or overwrite observations; the submitter and an unlinked elder can;
+  attendance rows keep their ids; moving the date adds and removes rows to match the new roster;
+  collision with another report's date is 409 with `existingReportId`; the submitter and
+  `submitted_at` are unchanged after every edit; closed-group PATCH/DELETE as elder, admin and the
+  group's own leader (409); PATCH and DELETE for all eleven actors, including that refused callers
+  change and delete nothing; delete removes the attendance rows.
