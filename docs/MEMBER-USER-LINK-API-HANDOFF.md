@@ -1,0 +1,118 @@
+# Member ↔ user link: changes for the staff app
+
+Handoff spec for the membership-management side of **member ↔ user linking**. Read the cross-repo
+spec first: `../docs/specs/member-user-linking.md` (workspace folder
+`members-management/docs/specs/`); it holds the rules and the contract. The screens are designed in
+the Claude Design canvas "ekklesiaio Staff App"
+(https://claude.ai/artifact/PLs9gdHVcigkRSAWJrsKs1, page "Member ↔ User linking").
+
+`members.user_id` (String(255), nullable, unique `uq_members_user_id`) already exists, so **no
+migration is expected**; confirm with `uv run alembic check`. Nothing reads or writes the column
+yet.
+
+Work through it **stage by stage**, one reviewable commit per stage, on the
+**`member-user-linking`** branch (the same name in every repo). Each stage must pass `uv run ruff check .` and `uv run ty check`,
+and be tried against the local API (`fastapi dev`, `/docs`) before the next one starts. There's no
+test runner yet, so note in *Decisions and deviations* what you tried and how.
+
+Keep the existing conventions: routes call `services.py` directly, `queries.py` builds `Select`s,
+`results.py` holds `NamedTuple`s mapped with `all_as`, schemas are `CamelModel`, every mutating
+route has its own `rate_limit(...)` scope, and service errors are domain exceptions the router maps
+to HTTP codes.
+
+## Progress (handoff log)
+
+| Stage | Status | Commit |
+| --- | --- | --- |
+| 1. `userId` on member responses | [ ] | |
+| 2. Role check for admin/elder | [ ] | |
+| 3. Link and unlink a user | [ ] | |
+| 4. Internal accept-invite endpoint | [ ] | |
+| 5. Docs | [ ] | |
+
+### Decisions and deviations
+
+- (none yet)
+
+## What the staff app does with these endpoints
+
+| Screen | Calls |
+| --- | --- |
+| Members list: Account column and Linked / Invited / No account filter | `GET /members` (now with `userId`); invites come from auth-server |
+| Member detail: Account card and header pill | `GET /members/{id}` (now with `userId`) |
+| Link existing user dialog | `PUT /members/{id}/user` |
+| Unlink dialog (member or user side) | `DELETE /members/{id}/user` |
+| Users list "Member" column; User detail "Linked member" | `GET /members` (find the member whose `userId` is the user) |
+| Invite accepted | auth-server → `POST /internal/member-links/accepted-invite` |
+
+## Stage 1: `userId` on member responses
+
+`MemberSummarySchema` and `MemberDetailSchema` get `user_id: str | None` (camelCase `userId`
+over the wire). Add it to `list_members` / `_detail`. Never accept `user_id` from
+`MemberCreateSchema` / `MemberUpdateSchema`; linking only goes through the endpoints below.
+
+**Files:** `api/schemas/members.py`, `api/routers/members.py`, and the service/query that builds
+the list if it selects columns explicitly.
+
+## Stage 2: Role check
+
+The JWT already carries `role` (`AuthClaims.role`, deliberately a plain `str` until authorization
+lands). Add a small dependency, e.g. `require_roles("admin", "elder")` in `api/jwt_auth.py`, that
+returns the claims or raises `HTTPException(403, "You don't have permission to do this.")`. Keep
+it generic (takes role names), so the future role-based gating can reuse it, but **apply it only to
+the endpoints in this spec**; don't retrofit existing routes here.
+
+The role names are the auth-server role keys: `admin`, `elder`.
+
+## Stage 3: Link and unlink
+
+**Files:** `data/members/services.py`, `api/routers/members.py`, `api/schemas/members.py`.
+
+`PUT /members/{member_id}/user`, body `{ "userId": str }` (`StringConstraints`: strip, min 1, max
+255). Rate limit `rate_limit("20/minute", scope="link_member_user")`, plus `require_roles`.
+
+- 404 `Member with ID {id} not found.` if the member doesn't exist.
+- If the member already has this same `user_id`: 200, no change (idempotent).
+- If the member has a different `user_id`: 409 `This member is already linked to another user.`
+- If another member already has this `user_id`: 409 `This user is already linked to another member.`
+  Detect it with a query first **and** catch the unique-constraint violation on commit (race), both
+  mapping to the same 409. Domain exceptions in `services.py`, like `DuplicateMemberEmailError`.
+- Returns `MemberDetailSchema`.
+
+`DELETE /members/{member_id}/user`: sets `user_id = NULL`. 404 if the member doesn't exist; 204
+whether or not it was linked. Rate limit scope `unlink_member_user`, plus `require_roles`.
+
+Do not validate `userId` against auth-server (separate DB); the staff app only offers real users.
+
+## Stage 4: Internal accept-invite endpoint
+
+Called by auth-server's `afterAcceptInvite` hook (see the auth-server handoff).
+
+`POST /internal/member-links/accepted-invite`, body `{ "userId": str, "email": EmailStr }`, response
+`{ "linked": bool, "memberId": int | null }`.
+
+- **Auth is not the JWT.** Add `internal_api_token: SecretStr` to `ApiSettings` (env
+  `INTERNAL_API_TOKEN`; required in staging/production, optional locally where the route is then
+  disabled and returns 404). Compare the `X-Internal-Token` header with `secrets.compare_digest`;
+  401 on mismatch. Put the router outside the JWT-protected routers and keep it out of the OpenAPI
+  schema (`include_in_schema=False`).
+- Logic, in one transaction: find members whose `lower(email)` equals the lowercased email **and**
+  `user_id IS NULL`. Exactly one → set its `user_id`, `linked: true`. Zero or several → change
+  nothing, `linked: false`. If `userId` is already linked to some member → change nothing,
+  `linked: false`. Always 200; this endpoint must never make the invite acceptance fail.
+- Per-IP rate limiting stays at the edge; the shared secret is the control here.
+
+## Stage 5: Docs
+
+- `CLAUDE.md`: extend the Members DB bullet by one sentence: `user_id` is a cross-service
+  reference with no FK, set only through `PUT/DELETE /members/{id}/user` and the internal accept
+  endpoint, which require `admin`/`elder` and the service token respectively.
+- `.env.example`: `INTERNAL_API_TOKEN`.
+- `ROADMAP.md`: note that `require_roles` exists and Phase 9 (role gating) should reuse it.
+
+## Not in this spec
+
+- Looking up users in auth-server from this service; checking that `userId` exists.
+- Clearing `user_id` when a user is deleted (D2 in the cross-repo spec).
+- Role gating on the other routes (Phase 9 of the auth integration roadmap).
+- Seeding linked members: seed data has no auth-server user ids to point to.
