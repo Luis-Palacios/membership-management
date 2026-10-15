@@ -1,7 +1,7 @@
-from typing import Annotated
+from typing import Annotated, Literal, Self
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from membership_management.env_file import ENV_FILE
@@ -28,6 +28,15 @@ class ApiSettings(BaseSettings):
     # by *adding* a trailing slash, which would silently break every iss/aud comparison.
     jwt_issuer: str
     jwt_audience: str
+
+    # Same required ENVIRONMENT the data layer reads (see BaseDbSettings), repeated here only so
+    # internal_api_token can be required outside local.
+    environment: Literal["local", "staging", "production"] = Field(validation_alias="ENVIRONMENT")
+
+    # Shared secret auth-server sends as X-Internal-Token to the internal endpoints (service to
+    # service; the JWT only covers browser sessions). Required in staging/production; unset locally,
+    # where /internal/* is disabled and answers 404.
+    internal_api_token: SecretStr | None = None
 
     # Port the production server (run.py) binds to.
     port: int = 8000
@@ -100,6 +109,13 @@ class ApiSettings(BaseSettings):
 
     # Same .env handling as the data layer's Settings (see env_file.py).
     model_config = SettingsConfigDict(env_file=ENV_FILE, env_file_encoding="utf-8", extra="ignore")
+
+    @model_validator(mode="after")
+    def require_internal_api_token_outside_local(self) -> Self:
+        token = self.internal_api_token.get_secret_value() if self.internal_api_token else ""
+        if self.environment != "local" and not token:
+            raise ValueError("INTERNAL_API_TOKEN is required when ENVIRONMENT is staging or production")
+        return self
 
     @field_validator("cors_allowed_origins", mode="before")
     @classmethod

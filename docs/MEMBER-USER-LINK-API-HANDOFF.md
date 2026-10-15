@@ -27,7 +27,7 @@ to HTTP codes.
 | 1. `userId` on member responses | [x] | (this commit) |
 | 2. Role check for admin/elder | [x] | (this commit) |
 | 3. Link and unlink a user | [x] | (this commit) |
-| 4. Internal accept-invite endpoint | [ ] | |
+| 4. Internal accept-invite endpoint | [x] | (this commit) |
 | 5. Current member and `GET /me` | [ ] | |
 | 6. Docs | [ ] | |
 
@@ -36,6 +36,7 @@ to HTTP codes.
 - Stage 1: `user_id` added to the `list_members` query, `MemberSummary` result and both schemas. Create/update schemas untouched (confirmed `userId` is absent from them in OpenAPI). Tried with `TestClient` against the local Postgres with the claims dependency overridden: `GET /members` and `GET /members/1` return `userId: null`. `ruff` and `ty` pass.
 - Stage 2: `require_roles(*allowed)` in `api/jwt_auth.py`, built on `CurrentClaimsDep`; exact match on `claims.role` (auth-server roles are single values, no comma lists). Not applied to any route yet (stage 3 does). Tried on a scratch FastAPI app with the claims dependency overridden: `admin` and `elder` get 200; `smallGroupLeader` and an empty role get 403 `You don't have permission to do this.`. `ruff` and `ty` pass.
 - Stage 3: `link_member_user` / `unlink_member_user` in `data/members/services.py` with `MemberAlreadyLinkedError` and `UserAlreadyLinkedError`; the check-first query plus a catch of `uq_members_user_id` on flush both map to the same 409. `PUT` body schema is `MemberUserLinkSchema` (`UserId`: strip, 1 to 255). Tried with `TestClient` against the local Postgres, claims overridden, then unlinked everything (0 links before and after): link 200, same user again 200, other user on the same member 409, user already on another member 409, blank `userId` 422, missing member 404 on both verbs, `elder` allowed, `smallGroupLeader` 403 on both verbs, unlink 204 twice. The race branch (unique violation on flush) was not exercised, only written to mirror `_flush_or_raise_duplicate`. `ruff` and `ty` pass.
+- Stage 4: `internal_api_token: SecretStr | None` in `ApiSettings`, plus an `environment` field (same required `ENVIRONMENT` alias the DB settings use) so a validator can demand the token outside `local`. An empty token counts as unset, so an empty `X-Internal-Token` header can never match. Router `api/routers/internal.py` (`include_in_schema=False`, no JWT dependency), logic in `link_member_by_accepted_invite` (`data/members/services.py`): user already linked, zero or several email matches (`limit(2)`; `members.email` is unique but case-sensitive, so `A@x.com` and `a@x.com` can coexist) all return `linked: false`; a unique violation on commit is rolled back to the same result. Tried with `TestClient` against the local Postgres (three scratch members, deleted afterwards): mixed-case email links (200, `linked: true`); same user again, member already linked, two case-variant duplicates and no match all 200 `linked: false` with nothing changed; wrong or missing token 401; blank `userId` 422; route absent from OpenAPI; token unset locally 404; `ENVIRONMENT=staging` without the token fails at startup. `ruff`, `ty` and `alembic check` pass. Not tried against a real auth-server invite acceptance yet. `.env.example` line for `INTERNAL_API_TOKEN` added here rather than in stage 6.
 
 ## What the staff app does with these endpoints
 

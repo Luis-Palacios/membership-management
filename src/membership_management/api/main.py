@@ -19,7 +19,7 @@ from membership_management.api.middleware import (
     RequestLoggingMiddleware,
     RequestTimeoutMiddleware,
 )
-from membership_management.api.routers import applications, members, people, small_groups
+from membership_management.api.routers import applications, internal, members, people, small_groups
 from membership_management.data.assimilation.config import settings
 from membership_management.data.assimilation.database import engine
 from membership_management.data.database import engine as members_engine
@@ -69,6 +69,7 @@ app.include_router(applications.router)
 app.include_router(people.router)
 app.include_router(members.router)
 app.include_router(small_groups.router)
+app.include_router(internal.router)
 
 
 @app.get("/")
