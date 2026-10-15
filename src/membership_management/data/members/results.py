@@ -9,6 +9,7 @@ class MemberSummary(NamedTuple):
     name: str
     email: str | None
     phone: str | None
+    user_id: str | None
 
 
 class MemberSmallGroup(NamedTuple):

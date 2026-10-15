@@ -17,6 +17,7 @@ class MemberSummarySchema(CamelModel):
     name: str
     email: str | None
     phone: str | None
+    user_id: str | None
 
 
 class MemberSmallGroupSchema(CamelModel):
@@ -33,6 +34,7 @@ class MemberDetailSchema(CamelModel):
     phone: str | None
     address: str | None
     birth_date: date | None
+    user_id: str | None
     small_groups: list[MemberSmallGroupSchema]
 
 

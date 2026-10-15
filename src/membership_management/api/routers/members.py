@@ -36,6 +36,7 @@ def _detail(db: MembersSessionDep, member: Member) -> MemberDetailSchema:
         phone=member.phone,
         address=member.address,
         birth_date=member.birth_date,
+        user_id=member.user_id,
         small_groups=[
             MemberSmallGroupSchema(
                 small_group_id=group.small_group_id,
@@ -50,7 +51,10 @@ def _detail(db: MembersSessionDep, member: Member) -> MemberDetailSchema:
 
 @router.get("", name="list_members", description="List all members")
 def get_members(db: MembersSessionDep) -> list[MemberSummarySchema]:
-    return [MemberSummarySchema(id=m.id, name=m.name, email=m.email, phone=m.phone) for m in list_members(db)]
+    return [
+        MemberSummarySchema(id=m.id, name=m.name, email=m.email, phone=m.phone, user_id=m.user_id)
+        for m in list_members(db)
+    ]
 
 
 @router.get("/{member_id}", name="get_member", description="Get a member with their current small groups")
