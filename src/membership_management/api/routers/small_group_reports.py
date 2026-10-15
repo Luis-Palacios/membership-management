@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -10,25 +10,39 @@ from membership_management.api.dependencies import MembersSessionDep
 from membership_management.api.jwt_auth import get_current_claims
 from membership_management.api.rate_limit import default_user_rate_limit, rate_limit
 from membership_management.api.schemas.small_group_reports import (
+    FiledReportItemSchema,
+    NotFiledItemSchema,
     ReportAttendanceSchema,
     ReportBodySchema,
+    ReportCountsSchema,
     ReportDetailSchema,
     ReportGroupSchema,
+    ReportListGroupSchema,
+    ReportListSchema,
     ReportPermissionsSchema,
     ReportPersonSchema,
     ReportRosterGroupSchema,
     ReportRosterPersonSchema,
     ReportRosterSchema,
+    ReportSummaryItemSchema,
     ReportTotalsSchema,
+    SummaryGroupSchema,
+    SummaryLastReportSchema,
 )
 from membership_management.data.small_groups.models import SmallGroup
-from membership_management.data.small_groups.results import AttendanceInput, ReportDetail, ReportInput
+from membership_management.data.small_groups.results import (
+    AttendanceInput,
+    NotFiledMeeting,
+    ReportDetail,
+    ReportInput,
+)
 from membership_management.data.small_groups.services import (
     AttendanceMismatchError,
     FutureMeetingDateError,
     MemberRequiredToSubmitError,
     NotGroupLeaderOnDateError,
     ReportAlreadyExistsError,
+    ReportStatus,
     SmallGroupClosedError,
     build_report_detail,
     church_sunday,
@@ -36,7 +50,9 @@ from membership_management.data.small_groups.services import (
     delete_report,
     get_report,
     get_report_roster,
+    get_report_summary,
     get_small_group,
+    list_reports,
     update_report,
 )
 
@@ -46,6 +62,9 @@ router = APIRouter(
     dependencies=[Depends(get_current_claims), Depends(default_user_rate_limit)],
 )
 
+
+# Default list window: the last six weeks.
+DEFAULT_LIST_DAYS = 42
 
 DUPLICATE_REPORT_DETAIL = "There's already a report for this group on that date."
 
@@ -198,6 +217,112 @@ def _report_detail_or_404(
     return _detail_schema(
         build_report_detail(db, report, sees_all_observations=scope.full, viewer_member_id=scope.member_id)
     )
+
+
+# Declared before `/small-group-reports/{report_id}` so "summary" is never read as a report id.
+@router.get(
+    "/small-group-reports",
+    name="list_small_group_reports",
+    description="Filed reports and not-filed meetings of the groups in scope, newest first, with counts",
+)
+def get_small_group_reports(
+    db: MembersSessionDep,
+    scope: SmallGroupScopeDep,
+    small_group_id: Annotated[int | None, Query(alias="smallGroupId")] = None,
+    from_date: Annotated[date | None, Query(alias="from")] = None,
+    to_date: Annotated[date | None, Query(alias="to")] = None,
+    status_filter: Annotated[ReportStatus, Query(alias="status")] = "all",
+    q: Annotated[str | None, Query(max_length=100)] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(alias="pageSize", ge=1, le=100)] = 25,
+) -> ReportListSchema:
+    today = church_today()
+    result = list_reports(
+        db,
+        only_group_ids=None if scope.full else scope.group_ids,
+        small_group_id=small_group_id,
+        from_date=from_date if from_date is not None else today - timedelta(days=DEFAULT_LIST_DAYS),
+        to_date=to_date if to_date is not None else today,
+        status=status_filter,
+        q=q,
+        page=page,
+        page_size=page_size,
+        today=today,
+    )
+    items: list[FiledReportItemSchema | NotFiledItemSchema] = []
+    for item in result.items:
+        group = ReportListGroupSchema(
+            id=item.small_group_id, name=item.small_group_name, closed_at=item.small_group_closed_at
+        )
+        if isinstance(item, NotFiledMeeting):
+            items.append(NotFiledItemSchema(small_group=group, meeting_date=item.meeting_date))
+        else:
+            items.append(
+                FiledReportItemSchema(
+                    id=item.id,
+                    small_group=group,
+                    meeting_date=item.meeting_date,
+                    submitted_by=ReportPersonSchema(
+                        member_id=item.submitted_by_member_id, name=item.submitted_by_name
+                    ),
+                    submitted_at=item.submitted_at,
+                    roster_count=item.roster_count,
+                    attended_group_count=item.attended_group_count,
+                    attended_church_count=item.attended_church_count,
+                )
+            )
+    return ReportListSchema(
+        items=items,
+        counts=ReportCountsSchema(
+            all=result.counts.all, filed=result.counts.filed, not_filed=result.counts.not_filed
+        ),
+        total=result.total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get(
+    "/small-group-reports/summary",
+    name="get_small_group_reports_summary",
+    description="Per open group in scope: the latest report and the meetings still without one",
+)
+def get_small_group_reports_summary(
+    db: MembersSessionDep, scope: SmallGroupScopeDep
+) -> list[ReportSummaryItemSchema]:
+    summary = get_report_summary(
+        db,
+        only_group_ids=None if scope.full else scope.group_ids,
+        member_id=scope.member_id,
+        today=church_today(),
+    )
+    return [
+        ReportSummaryItemSchema(
+            small_group=SummaryGroupSchema(
+                id=row.group.id,
+                name=row.group.name,
+                meeting_day=row.group.meeting_day,
+                closed_at=row.group.closed_at,
+            ),
+            role=row.role,
+            last_report=(
+                SummaryLastReportSchema(
+                    id=row.last_report.id,
+                    meeting_date=row.last_report.meeting_date,
+                    roster_count=row.last_report.roster_count,
+                    attended_group_count=row.last_report.attended_group_count,
+                    submitted_by=ReportPersonSchema(
+                        member_id=row.last_report.submitted_by_member_id,
+                        name=row.last_report.submitted_by_name,
+                    ),
+                )
+                if row.last_report is not None
+                else None
+            ),
+            not_filed_dates=row.not_filed_dates,
+        )
+        for row in summary
+    ]
 
 
 @router.post(

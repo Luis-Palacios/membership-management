@@ -32,8 +32,8 @@ work stay plain `def`. Put report code next to the small group code (`data/small
 | --- | --- | --- |
 | 1. Roster for a date, church Sunday, missed streaks | [x] | 0ae1e15 |
 | 2. Create and detail (observation visibility) | [x] | 43d68c8 |
-| 3. Edit and delete | [x] | see git log |
-| 4. List with not-filed meetings, and the summary | [ ] | |
+| 3. Edit and delete | [x] | 322e273 |
+| 4. List with not-filed meetings, and the summary | [x] | see git log |
 | 5. Docs | [ ] | |
 
 ### Decisions and deviations
@@ -275,3 +275,30 @@ Router mapping (messages are English; the staff app matches on status + a phrase
   `submitted_at` are unchanged after every edit; closed-group PATCH/DELETE as elder, admin and the
   group's own leader (409); PATCH and DELETE for all eleven actors, including that refused callers
   change and delete nothing; delete removes the attendance rows.
+- Stage 4: **not-filed rows are for open groups only**, as the handoff says. Spec rule 10's wording
+  ("while the group was open, `date <= closed_at`") could be read to also list a closed group's last
+  missed meetings, but a closed group takes no report (rule 8), so such a row could never be acted
+  on. Say so if the spec's reading is wanted instead; it is one `closed_at` condition in
+  `not_filed_dates` (`services.py`).
+- Stage 4: "had an active leader or co-leader" is checked **per date** (a leadership period covering
+  that date), not against today, so a group whose leader started 10 days ago shows no not-filed
+  meetings before that. The window is `[max(from, today - 28), min(to, today - 1)]`, so an earlier
+  `from` shows older filed reports but never older not-filed meetings.
+- Stage 4: `q` is matched in Python (case and accent folding with `unicodedata`), against the group
+  name and, for filed reports, the submitter's name. The "members search" the handoff mentions doesn't
+  exist server-side, and `unaccent` would need an extension, so no migration. Cheap here because the
+  filed query is already bounded by scope and date range and paging is in memory by design.
+- Stage 4: `notFiledDates` in the summary are newest first (like the list). `role` is the caller's
+  *current* role in the group (always leader or co-leader for a scoped caller on an open group); null
+  for admins and elders even when they are members. The summary and the list never read observations.
+- Stage 4: a scoped caller who filters by a group outside their scope (`smallGroupId`) gets an empty
+  list, not a 404 ("filtered out of lists"). `from` after `to` gives an empty list rather than a 422.
+- Stage 4: `/small-group-reports/summary` is declared before `/small-group-reports/{report_id}`; swapping
+  them makes `summary` fail as a non-integer id.
+- Stage 4 verification (scratch script, `TestClient`, seeded `ZZ` groups next to the real seed data,
+  which full roles also see, so those checks narrow with `q=zz`): defaults; `status`, `smallGroupId`,
+  `from`/`to`, `q` with accents and capitals (submitter and group), paging and bad parameters (422);
+  a not-filed meeting never today, never older than 28 days, never in a closed group or a group with no
+  meeting day, and not before the leader started; list and summary for all eleven actors (empty, not
+  an error, for scoped roles with nothing to see; 403 for `user`); no observation text anywhere in the
+  list or summary even though the seeded reports have observations. Also a smoke run on the real seed.

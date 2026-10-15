@@ -150,3 +150,118 @@ def recent_attendance_marks_query(small_group_id: int, before: date, report_limi
         .where(SmallGroupReportAttendance.report_id.in_(latest_reports))
         .order_by(SmallGroupReport.meeting_date.desc())
     )
+
+
+def report_groups_query(only_ids: frozenset[int] | None, small_group_id: int | None = None) -> Select:
+    """The groups a report list or summary is about, optionally one group; scope filtered in SQL."""
+    query = select(
+        SmallGroup.id.label("id"),
+        SmallGroup.name.label("name"),
+        SmallGroup.meeting_day.label("meeting_day"),
+        SmallGroup.closed_at.label("closed_at"),
+    ).order_by(SmallGroup.name, SmallGroup.id)
+    if only_ids is not None:
+        query = query.where(SmallGroup.id.in_(only_ids))
+    if small_group_id is not None:
+        query = query.where(SmallGroup.id == small_group_id)
+    return query
+
+
+def filed_reports_query(
+    only_group_ids: frozenset[int] | None,
+    *,
+    small_group_id: int | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    report_ids: Select | None = None,
+) -> Select:
+    """Filed reports with their submitter and three attendance counts (no observations)."""
+    attendance = SmallGroupReportAttendance
+    query = (
+        select(
+            SmallGroupReport.id.label("id"),
+            SmallGroup.id.label("small_group_id"),
+            SmallGroup.name.label("small_group_name"),
+            SmallGroup.closed_at.label("small_group_closed_at"),
+            SmallGroupReport.meeting_date.label("meeting_date"),
+            Member.id.label("submitted_by_member_id"),
+            Member.name.label("submitted_by_name"),
+            SmallGroupReport.submitted_at.label("submitted_at"),
+            func.count(attendance.id).label("roster_count"),
+            func.count(attendance.id)
+            .filter(attendance.attended_group.is_(True))
+            .label("attended_group_count"),
+            func.count(attendance.id)
+            .filter(attendance.attended_church.is_(True))
+            .label("attended_church_count"),
+        )
+        .join(SmallGroup, SmallGroup.id == SmallGroupReport.small_group_id)
+        .join(Member, Member.id == SmallGroupReport.submitted_by_member_id)
+        .outerjoin(attendance, attendance.report_id == SmallGroupReport.id)
+        .group_by(SmallGroupReport.id, SmallGroup.id, Member.id)
+        .order_by(SmallGroupReport.meeting_date.desc(), SmallGroup.name, SmallGroupReport.id)
+    )
+    if only_group_ids is not None:
+        query = query.where(SmallGroupReport.small_group_id.in_(only_group_ids))
+    if small_group_id is not None:
+        query = query.where(SmallGroupReport.small_group_id == small_group_id)
+    if from_date is not None:
+        query = query.where(SmallGroupReport.meeting_date >= from_date)
+    if to_date is not None:
+        query = query.where(SmallGroupReport.meeting_date <= to_date)
+    if report_ids is not None:
+        query = query.where(SmallGroupReport.id.in_(report_ids))
+    return query
+
+
+def report_dates_query(group_ids: frozenset[int], from_date: date, to_date: date) -> Select:
+    """(group, meeting date) of every report in the range, to tell filed meetings from not-filed ones."""
+    return select(
+        SmallGroupReport.small_group_id.label("small_group_id"),
+        SmallGroupReport.meeting_date.label("meeting_date"),
+    ).where(
+        SmallGroupReport.small_group_id.in_(group_ids),
+        SmallGroupReport.meeting_date >= from_date,
+        SmallGroupReport.meeting_date <= to_date,
+    )
+
+
+def leadership_periods_query(group_ids: frozenset[int]) -> Select:
+    """Leader and co-leader periods of the groups, for "did the group have a leader that day"."""
+    return select(
+        SmallGroupMember.small_group_id.label("small_group_id"),
+        SmallGroupMember.joined_at.label("joined_at"),
+        SmallGroupMember.left_at.label("left_at"),
+    ).where(
+        SmallGroupMember.small_group_id.in_(group_ids),
+        SmallGroupMember.role.in_([SmallGroupRole.LEADER, SmallGroupRole.CO_LEADER]),
+    )
+
+
+def latest_report_ids_query(group_ids: frozenset[int]) -> Select:
+    """The id of each group's newest report (by meeting date)."""
+    ranked = (
+        select(
+            SmallGroupReport.id.label("id"),
+            func.row_number()
+            .over(
+                partition_by=SmallGroupReport.small_group_id,
+                order_by=(SmallGroupReport.meeting_date.desc(), SmallGroupReport.id.desc()),
+            )
+            .label("rank"),
+        )
+        .where(SmallGroupReport.small_group_id.in_(group_ids))
+        .subquery()
+    )
+    return select(ranked.c.id).where(ranked.c.rank == 1)
+
+
+def member_active_roles_query(member_id: int, group_ids: frozenset[int]) -> Select:
+    """The member's current role in each of the groups (open periods only)."""
+    return select(
+        SmallGroupMember.small_group_id.label("small_group_id"), SmallGroupMember.role.label("role")
+    ).where(
+        SmallGroupMember.member_id == member_id,
+        SmallGroupMember.small_group_id.in_(group_ids),
+        SmallGroupMember.left_at.is_(None),
+    )
