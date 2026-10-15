@@ -23,7 +23,7 @@ to HTTP codes.
 | Stage | Status | Commit |
 | --- | --- | --- |
 | 1. Leader on the groups list | [x] | (this commit) |
-| 2. Set the leader in one call | [ ] | |
+| 2. Set the leader in one call | [x] | (this commit) |
 | 3. Closed groups are read-only | [ ] | |
 | 4. Docs | [ ] | |
 
@@ -35,6 +35,15 @@ group, so the count can't multiply; chosen over a subquery as the smaller change
 `list_small_groups` against the seeded local DB: all 5 groups return their leader and
 `active_member_count` (8/8/8/10/8). The seed has no closed group, so the `null` case for closed/leaderless
 groups wasn't exercised, only follows from the outer joins.
+
+**Stage 2.** Split out `_add_membership` and `_apply_role_change` (non-committing); `add_small_group_member`,
+`change_small_group_member_role` and the new `set_small_group_leader` share them, with the same checks and
+error order as before. Tried by calling the services in a rolled-back outer transaction against the seeded DB
+(group 1, leader A, members B and D outside the group): `B` -> B leader and A co-leader with periods
+closed/opened; `D` (not in group) -> added as leader, B co-leader; `D` again -> no change; `A` back -> D, who
+joined today, corrected in place; unknown member and a closed group raise the 404/409 errors. The HTTP route
+(`PUT /small-groups/{id}/leader`) was not called through `/docs`; its error mapping mirrors the member routes.
+The existing POST/PATCH endpoints weren't re-run; their logic is moved unchanged.
 
 _(fill in per stage)_
 
