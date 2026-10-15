@@ -25,7 +25,7 @@ to HTTP codes.
 | 1. Leader on the groups list | [x] | (this commit) |
 | 2. Set the leader in one call | [x] | (this commit) |
 | 3. Closed groups are read-only | [x] | (this commit) |
-| 4. Docs | [ ] | |
+| 4. Docs | [x] | (this commit) |
 
 ### Decisions and deviations
 
@@ -50,7 +50,7 @@ to 409 "This small group is closed.". Tried via the service in a rolled-back tra
 renames as before; after closing, the update raises and leaves the name unchanged. The HTTP route wasn't
 called through `/docs`.
 
-_(fill in per stage)_
+**Stage 4.** One sentence added to the Members DB bullet in `CLAUDE.md`; nothing newly deferred, so `ROADMAP.md` is unchanged.
 
 ## What the staff app does with these endpoints
 
