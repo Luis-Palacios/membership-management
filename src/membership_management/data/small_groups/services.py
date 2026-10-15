@@ -7,17 +7,27 @@ from sqlalchemy.orm import Session
 
 from membership_management.data.members.models import Member
 from membership_management.data.query_helpers import all_as
-from membership_management.data.small_groups.models import SmallGroup, SmallGroupMember, SmallGroupRole
+from membership_management.data.small_groups.models import (
+    SmallGroup,
+    SmallGroupMember,
+    SmallGroupReport,
+    SmallGroupReportAttendance,
+    SmallGroupRole,
+)
 from membership_management.data.small_groups.queries import (
     led_small_group_ids_query,
     list_small_groups_query,
     recent_attendance_marks_query,
     report_id_on_date_query,
+    report_in_scope_query,
     roster_periods_on_date_query,
     small_group_active_members_query,
 )
 from membership_management.data.small_groups.results import (
     AttendanceMark,
+    ReportAttendanceView,
+    ReportDetail,
+    ReportInput,
     ReportRoster,
     RosterPeriod,
     RosterPerson,
@@ -165,6 +175,128 @@ def get_report_roster(session: Session, small_group: SmallGroup, d: date, *, tod
         people=[p._replace(missed_streak=streaks[p.member_id]) for p in people],
         existing_report_id=session.scalars(report_id_on_date_query(small_group.id, d)).one_or_none(),
     )
+
+
+def get_report(
+    session: Session, report_id: int, only_group_ids: frozenset[int] | None
+) -> SmallGroupReport | None:
+    """The report, or None when it doesn't exist or its group is outside `only_group_ids`."""
+    if only_group_ids is not None and not only_group_ids:
+        return None
+    return session.scalars(report_in_scope_query(report_id, only_group_ids)).one_or_none()
+
+
+def build_report_detail(
+    session: Session, report: SmallGroupReport, *, sees_all_observations: bool, viewer_member_id: int | None
+) -> ReportDetail:
+    """The report as a viewer may see it. Rule 9 is decided here, once: admins, elders, the submitter."""
+    observations_visible = sees_all_observations or (
+        viewer_member_id is not None and viewer_member_id == report.submitted_by_member_id
+    )
+    roles = {p.member_id: p.role for p in roster_on_date(session, report.small_group_id, report.meeting_date)}
+    streaks = missed_streaks(
+        session, report.small_group_id, [a.member_id for a in report.attendances], report.meeting_date
+    )
+    views = [
+        ReportAttendanceView(
+            member_id=a.member_id,
+            member_name=a.member.name,
+            # Memberships edited after the report could drop someone from the roster: show a member.
+            role=roles.get(a.member_id, SmallGroupRole.MEMBER),
+            attended_group=a.attended_group,
+            attended_church=a.attended_church,
+            missed_streak=streaks[a.member_id],
+            observation=a.observation if observations_visible else None,
+        )
+        for a in report.attendances
+    ]
+    views.sort(key=lambda v: (_ROLE_ORDER[v.role], v.member_name, v.member_id))
+    return ReportDetail(
+        id=report.id,
+        small_group_id=report.small_group_id,
+        small_group_name=report.small_group.name,
+        small_group_meeting_address=report.small_group.meeting_address,
+        small_group_closed_at=report.small_group.closed_at,
+        meeting_date=report.meeting_date,
+        address=report.address,
+        group_prayer_request=report.group_prayer_request,
+        group_praise_report=report.group_praise_report,
+        group_relevant_discussion=report.group_relevant_discussion,
+        submitted_by_member_id=report.submitted_by_member_id,
+        submitted_by_name=report.submitted_by.name,
+        submitted_at=report.submitted_at,
+        observations_visible=observations_visible,
+        attendances=views,
+    )
+
+
+def create_report(
+    session: Session,
+    small_group: SmallGroup,
+    body: ReportInput,
+    *,
+    submitter_member_id: int,
+    caller_is_scoped: bool,
+    today: date,
+) -> SmallGroupReport:
+    roster = _validated_roster(session, small_group, body, today=today, ignore_report_id=None)
+    if caller_is_scoped and not any(
+        p.member_id == submitter_member_id and p.role != SmallGroupRole.MEMBER for p in roster
+    ):
+        raise NotGroupLeaderOnDateError
+    report = SmallGroupReport(
+        small_group_id=small_group.id,
+        meeting_date=body.meeting_date,
+        address=body.address,
+        group_prayer_request=body.group_prayer_request,
+        group_praise_report=body.group_praise_report,
+        group_relevant_discussion=body.group_relevant_discussion,
+        submitted_by_member_id=submitter_member_id,
+        attendances=[
+            SmallGroupReportAttendance(
+                member_id=a.member_id,
+                attended_group=a.attended_group,
+                attended_church=a.attended_church,
+                observation=a.observation,
+            )
+            for a in body.attendances
+        ],
+    )
+    session.add(report)
+    _commit_report_or_raise_conflict(session, small_group.id, body.meeting_date)
+    return report
+
+
+def _validated_roster(
+    session: Session, small_group: SmallGroup, body: ReportInput, *, today: date, ignore_report_id: int | None
+) -> list[RosterPerson]:
+    """Rules 1, 2, 3 and 8 for a create or edit; returns the roster on the meeting date."""
+    if small_group.closed_at is not None:
+        raise SmallGroupClosedError
+    if body.meeting_date > today:
+        raise FutureMeetingDateError
+    existing_id = session.scalars(report_id_on_date_query(small_group.id, body.meeting_date)).one_or_none()
+    if existing_id is not None and existing_id != ignore_report_id:
+        raise ReportAlreadyExistsError(existing_id)
+    roster = roster_on_date(session, small_group.id, body.meeting_date)
+    sent_ids = [a.member_id for a in body.attendances]
+    # Exactly one row per person on the roster: no missing, extra or repeated members.
+    if len(sent_ids) != len(set(sent_ids)) or set(sent_ids) != {p.member_id for p in roster}:
+        raise AttendanceMismatchError
+    return roster
+
+
+def _commit_report_or_raise_conflict(session: Session, small_group_id: int, meeting_date: date) -> None:
+    """Commit, mapping a lost race on (group, meeting date) to the same error as the check."""
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        if "uq_small_group_reports_small_group_id" in str(exc.orig):
+            existing_id = session.scalars(report_id_on_date_query(small_group_id, meeting_date)).one_or_none()
+            if existing_id is not None:
+                raise ReportAlreadyExistsError(existing_id) from exc
+        raise
 
 
 def create_small_group(

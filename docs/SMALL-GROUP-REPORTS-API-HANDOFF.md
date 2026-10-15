@@ -30,8 +30,8 @@ work stay plain `def`. Put report code next to the small group code (`data/small
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. Roster for a date, church Sunday, missed streaks | [x] | see git log |
-| 2. Create and detail (observation visibility) | [ ] | |
+| 1. Roster for a date, church Sunday, missed streaks | [x] | 0ae1e15 |
+| 2. Create and detail (observation visibility) | [x] | see git log |
 | 3. Edit and delete | [ ] | |
 | 4. List with not-filed meetings, and the summary | [ ] | |
 | 5. Docs | [ ] | |
@@ -50,6 +50,30 @@ work stay plain `def`. Put report code next to the small group code (`data/small
 - Stage 1: `church_sunday` lives in `data/small_groups/services.py` (the data layer can't import from
   `api/`); the router imports it. The roster's `date` query parameter is required.
 - Stage 1: the roster checks closed (409) before future (422), the same order as create.
+- Stage 2: the duplicate-date 409 body is `{ "detail": "There's already a report…", "existingReportId": N }`.
+  A plain `HTTPException` can't add a key, so the router raises `DuplicateReportHTTPError` and
+  `main.py` has a handler for it. Other errors are plain `{ "detail": … }`.
+- Stage 2: the route's 404 for a report is "Small group report with ID N not found." (the handoff's
+  "existing not-found message" is the group's, which would be misleading here).
+- Stage 2: observation keys are omitted with `response_model_exclude_unset=True`: the mapping only
+  passes `observation` / `totals.observations` when visible. `build_report_detail` already nulls
+  every observation for a viewer who can't see them, so a mapping slip can't leak one.
+- Stage 2: text trimming and blank to null happen in the request schema (`ReportBodySchema`), which
+  both create and edit use; the service gets already-clean values. Checks run in this order: closed,
+  future, duplicate date, attendance set (exactly the roster, no repeats), then "led on that date"
+  for scoped callers. A caller with no member gets 409 before any of them.
+- Stage 2: rate-limit scopes are named like the existing ones (`create_small_group_report`, 20/minute),
+  not `small-group-reports:write`.
+- Stage 2 verification (scratch script, `TestClient`): create as elder (linked), elder and admin
+  with no member (409), leader and co-leader (201, own observation visible), a co-leader who only
+  started leading 3 days ago (422 for an earlier date, 201 for a date they led), group leader of
+  another group, former leader, leader of a closed group, deacon with no member, deacon who is only
+  a plain member, `user` (403); duplicate, missing/extra/repeated/wrong attendance, future date,
+  over-long text and observation, closed group (elder and its own leader); detail for every actor
+  on a report by the leader (other leaders get no `observation` keys and no trace of the text),
+  a seeded report by the co-leader, a closed group's report (leaders when it closed see it,
+  `permissions` false), unknown ids. The unique-violation race was forced by stubbing the pre-check.
+
 
 ## Who can do what
 
