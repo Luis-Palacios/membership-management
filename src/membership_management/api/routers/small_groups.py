@@ -2,9 +2,10 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
+from membership_management.api.access import SmallGroupScope, SmallGroupScopeDep
 from membership_management.api.church_time import church_today
 from membership_management.api.dependencies import MembersSessionDep
-from membership_management.api.jwt_auth import get_current_claims
+from membership_management.api.jwt_auth import get_current_claims, require_roles
 from membership_management.api.rate_limit import default_user_rate_limit, rate_limit
 from membership_management.api.schemas.small_groups import (
     SmallGroupCreateSchema,
@@ -63,15 +64,22 @@ def _detail(db: MembersSessionDep, small_group: SmallGroup) -> SmallGroupDetailS
     )
 
 
-def _get_or_404(db: MembersSessionDep, small_group_id: int) -> SmallGroup:
-    small_group = get_small_group(db, small_group_id)
+def _get_or_404(
+    db: MembersSessionDep, small_group_id: int, scope: SmallGroupScope | None = None
+) -> SmallGroup:
+    """404 when the group doesn't exist or is outside the scope, with the same message for both."""
+    small_group = (
+        None
+        if scope is not None and not scope.includes(small_group_id)
+        else get_small_group(db, small_group_id)
+    )
     if small_group is None:
         raise HTTPException(status_code=404, detail=f"Small group with ID {small_group_id} not found.")
     return small_group
 
 
 @router.get("", name="list_small_groups", description="List all small groups, open and closed")
-def get_small_groups(db: MembersSessionDep) -> list[SmallGroupSummarySchema]:
+def get_small_groups(db: MembersSessionDep, scope: SmallGroupScopeDep) -> list[SmallGroupSummarySchema]:
     return [
         SmallGroupSummarySchema(
             id=g.id,
@@ -83,15 +91,17 @@ def get_small_groups(db: MembersSessionDep) -> list[SmallGroupSummarySchema]:
             leader_member_id=g.leader_member_id,
             leader_name=g.leader_name,
         )
-        for g in list_small_groups(db)
+        for g in list_small_groups(db, None if scope.full else scope.group_ids)
     ]
 
 
 @router.get(
     "/{small_group_id}", name="get_small_group", description="Get a small group with its active members"
 )
-def get_small_group_detail(small_group_id: int, db: MembersSessionDep) -> SmallGroupDetailSchema:
-    return _detail(db, _get_or_404(db, small_group_id))
+def get_small_group_detail(
+    small_group_id: int, db: MembersSessionDep, scope: SmallGroupScopeDep
+) -> SmallGroupDetailSchema:
+    return _detail(db, _get_or_404(db, small_group_id, scope))
 
 
 @router.post(
@@ -99,7 +109,10 @@ def get_small_group_detail(small_group_id: int, db: MembersSessionDep) -> SmallG
     name="create_small_group",
     description="Create a small group",
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(rate_limit("20/minute", scope="create_small_group"))],
+    dependencies=[
+        Depends(require_roles("admin", "elder")),
+        Depends(rate_limit("20/minute", scope="create_small_group")),
+    ],
 )
 def post_small_group(body: SmallGroupCreateSchema, db: MembersSessionDep) -> SmallGroupDetailSchema:
     small_group = create_small_group(
@@ -115,9 +128,9 @@ def post_small_group(body: SmallGroupCreateSchema, db: MembersSessionDep) -> Sma
     dependencies=[Depends(rate_limit("30/minute", scope="update_small_group"))],
 )
 def patch_small_group(
-    small_group_id: int, body: SmallGroupUpdateSchema, db: MembersSessionDep
+    small_group_id: int, body: SmallGroupUpdateSchema, db: MembersSessionDep, scope: SmallGroupScopeDep
 ) -> SmallGroupDetailSchema:
-    small_group = _get_or_404(db, small_group_id)
+    small_group = _get_or_404(db, small_group_id, scope)
     changes = body.model_dump(exclude_unset=True)
     # name is NOT NULL: an explicit null would otherwise surface as a DB error (500).
     if "name" in changes and changes["name"] is None:
@@ -133,7 +146,10 @@ def patch_small_group(
     "/{small_group_id}/close",
     name="close_small_group",
     description="Close a small group today and end all its active memberships",
-    dependencies=[Depends(rate_limit("10/minute", scope="close_small_group"))],
+    dependencies=[
+        Depends(require_roles("admin", "elder")),
+        Depends(rate_limit("10/minute", scope="close_small_group")),
+    ],
 )
 def post_close_small_group(small_group_id: int, db: MembersSessionDep) -> SmallGroupDetailSchema:
     small_group = _get_or_404(db, small_group_id)
@@ -156,9 +172,9 @@ def _today() -> date:
     dependencies=[Depends(rate_limit("30/minute", scope="add_small_group_member"))],
 )
 def post_small_group_member(
-    small_group_id: int, body: SmallGroupMemberAddSchema, db: MembersSessionDep
+    small_group_id: int, body: SmallGroupMemberAddSchema, db: MembersSessionDep, scope: SmallGroupScopeDep
 ) -> SmallGroupDetailSchema:
-    small_group = _get_or_404(db, small_group_id)
+    small_group = _get_or_404(db, small_group_id, scope)
     try:
         add_small_group_member(db, small_group, member_id=body.member_id, role=body.role, today=_today())
     except SmallGroupClosedError as exc:
@@ -179,9 +195,13 @@ def post_small_group_member(
     dependencies=[Depends(rate_limit("30/minute", scope="change_small_group_member_role"))],
 )
 def patch_small_group_member(
-    small_group_id: int, member_id: int, body: SmallGroupMemberRoleSchema, db: MembersSessionDep
+    small_group_id: int,
+    member_id: int,
+    body: SmallGroupMemberRoleSchema,
+    db: MembersSessionDep,
+    scope: SmallGroupScopeDep,
 ) -> SmallGroupDetailSchema:
-    small_group = _get_or_404(db, small_group_id)
+    small_group = _get_or_404(db, small_group_id, scope)
     try:
         change_small_group_member_role(db, small_group, member_id=member_id, role=body.role, today=_today())
     except SmallGroupClosedError as exc:
@@ -197,7 +217,10 @@ def patch_small_group_member(
     "/{small_group_id}/leader",
     name="set_small_group_leader",
     description="Make a member the leader; any current leader becomes co-leader, in one transaction",
-    dependencies=[Depends(rate_limit("30/minute", scope="set_small_group_leader"))],
+    dependencies=[
+        Depends(require_roles("admin", "elder")),
+        Depends(rate_limit("30/minute", scope="set_small_group_leader")),
+    ],
 )
 def put_small_group_leader(
     small_group_id: int, body: SmallGroupLeaderSchema, db: MembersSessionDep
@@ -221,8 +244,10 @@ def put_small_group_leader(
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(rate_limit("30/minute", scope="remove_small_group_member"))],
 )
-def delete_small_group_member(small_group_id: int, member_id: int, db: MembersSessionDep) -> Response:
-    small_group = _get_or_404(db, small_group_id)
+def delete_small_group_member(
+    small_group_id: int, member_id: int, db: MembersSessionDep, scope: SmallGroupScopeDep
+) -> Response:
+    small_group = _get_or_404(db, small_group_id, scope)
     try:
         remove_small_group_member(db, small_group, member_id=member_id, today=_today())
     except ActiveMembershipNotFoundError as exc:

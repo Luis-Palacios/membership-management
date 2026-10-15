@@ -5,12 +5,13 @@ from membership_management.data.members.models import Member
 from membership_management.data.small_groups.models import SmallGroup, SmallGroupMember, SmallGroupRole
 
 
-def list_small_groups_query() -> Select:
+def list_small_groups_query(only_ids: frozenset[int] | None = None) -> Select:
+    """All groups, or only `only_ids` when given (the scope filter is applied in SQL)."""
     # The partial unique index allows at most one active leader row per group, so joining it
     # next to the active-member join can't change the count; its columns just join the GROUP BY.
     leader = aliased(SmallGroupMember)
     leader_member = aliased(Member)
-    return (
+    query = (
         select(
             SmallGroup.id.label("id"),
             SmallGroup.name.label("name"),
@@ -37,6 +38,9 @@ def list_small_groups_query() -> Select:
         .group_by(SmallGroup.id, leader_member.id)
         .order_by(SmallGroup.name, SmallGroup.id)
     )
+    if only_ids is not None:
+        query = query.where(SmallGroup.id.in_(only_ids))
+    return query
 
 
 def small_group_active_members_query(small_group_id: int) -> Select:
