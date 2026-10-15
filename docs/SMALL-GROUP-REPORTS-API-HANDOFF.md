@@ -33,8 +33,8 @@ work stay plain `def`. Put report code next to the small group code (`data/small
 | 1. Roster for a date, church Sunday, missed streaks | [x] | 0ae1e15 |
 | 2. Create and detail (observation visibility) | [x] | 43d68c8 |
 | 3. Edit and delete | [x] | 322e273 |
-| 4. List with not-filed meetings, and the summary | [x] | see git log |
-| 5. Docs | [ ] | |
+| 4. List with not-filed meetings, and the summary | [x] | 7f43679 |
+| 5. Docs | [x] | see git log |
 
 ### Decisions and deviations
 
@@ -302,3 +302,9 @@ Router mapping (messages are English; the staff app matches on status + a phrase
   meeting day, and not before the leader started; list and summary for all eleven actors (empty, not
   an error, for scoped roles with nothing to see; 403 for `user`); no observation text anywhere in the
   list or summary even though the seeded reports have observations. Also a smoke run on the real seed.
+- Stage 5: `docs/ARCHITECTURE.md` (a *Small group reports (built)* section), `docs/ROADMAP.md` and the
+  one-line pointer in this repo's `CLAUDE.md`. **The workspace spec
+  (`docs/specs/small-group-reports.md`) is not trimmed yet:** the staff-app stages are still open, and
+  the spec counts as done only when every repo's log is ticked. Two things to carry there when it is
+  trimmed or the staff-app session starts: names are a single `name` (not first/last), and the not-filed
+  rows are open groups only (see *Decisions* above).
