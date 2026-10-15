@@ -186,12 +186,21 @@ def get_report(
     return session.scalars(report_in_scope_query(report_id, only_group_ids)).one_or_none()
 
 
+def observations_visible_to(
+    report: SmallGroupReport, *, sees_all_observations: bool, viewer_member_id: int | None
+) -> bool:
+    """Rule 9: admins and elders (`sees_all_observations`), and the report's submitter. Nobody else."""
+    return sees_all_observations or (
+        viewer_member_id is not None and viewer_member_id == report.submitted_by_member_id
+    )
+
+
 def build_report_detail(
     session: Session, report: SmallGroupReport, *, sees_all_observations: bool, viewer_member_id: int | None
 ) -> ReportDetail:
-    """The report as a viewer may see it. Rule 9 is decided here, once: admins, elders, the submitter."""
-    observations_visible = sees_all_observations or (
-        viewer_member_id is not None and viewer_member_id == report.submitted_by_member_id
+    """The report as a viewer may see it; rule 9 is decided once, here, and carried in the result."""
+    observations_visible = observations_visible_to(
+        report, sees_all_observations=sees_all_observations, viewer_member_id=viewer_member_id
     )
     roles = {p.member_id: p.role for p in roster_on_date(session, report.small_group_id, report.meeting_date)}
     streaks = missed_streaks(
@@ -265,6 +274,62 @@ def create_report(
     session.add(report)
     _commit_report_or_raise_conflict(session, small_group.id, body.meeting_date)
     return report
+
+
+def update_report(
+    session: Session,
+    report: SmallGroupReport,
+    body: ReportInput,
+    *,
+    sees_all_observations: bool,
+    viewer_member_id: int | None,
+    today: date,
+) -> SmallGroupReport:
+    """Replace the report's content (rule 6: `submitted_by_member_id` and `submitted_at` never change).
+
+    Attendance rows are updated in place by member so stored observations survive. A caller who
+    can't see observations (rule 9) can't change them either: theirs are ignored, stored ones kept.
+    """
+    _validated_roster(session, report.small_group, body, today=today, ignore_report_id=report.id)
+    may_edit_observations = observations_visible_to(
+        report, sees_all_observations=sees_all_observations, viewer_member_id=viewer_member_id
+    )
+    report.meeting_date = body.meeting_date
+    report.address = body.address
+    report.group_prayer_request = body.group_prayer_request
+    report.group_praise_report = body.group_praise_report
+    report.group_relevant_discussion = body.group_relevant_discussion
+    sent = {a.member_id: a for a in body.attendances}
+    existing = {row.member_id: row for row in report.attendances}
+    for member_id, row in existing.items():
+        if member_id not in sent:
+            report.attendances.remove(row)  # delete-orphan removes the row
+    for member_id, attendance in sent.items():
+        row = existing.get(member_id)
+        if row is None:
+            report.attendances.append(
+                SmallGroupReportAttendance(
+                    member_id=member_id,
+                    attended_group=attendance.attended_group,
+                    attended_church=attendance.attended_church,
+                    observation=attendance.observation if may_edit_observations else None,
+                )
+            )
+            continue
+        row.attended_group = attendance.attended_group
+        row.attended_church = attendance.attended_church
+        if may_edit_observations:
+            row.observation = attendance.observation
+    _commit_report_or_raise_conflict(session, report.small_group_id, body.meeting_date)
+    return report
+
+
+def delete_report(session: Session, report: SmallGroupReport) -> None:
+    """Delete the report; its attendance rows go with it (rule 8: not when the group is closed)."""
+    if report.small_group.closed_at is not None:
+        raise SmallGroupClosedError
+    session.delete(report)
+    session.commit()
 
 
 def _validated_roster(

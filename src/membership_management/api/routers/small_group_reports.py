@@ -1,7 +1,7 @@
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from membership_management.api.access import SmallGroupScope, SmallGroupScopeDep
 from membership_management.api.church_time import church_today
@@ -33,9 +33,11 @@ from membership_management.data.small_groups.services import (
     build_report_detail,
     church_sunday,
     create_report,
+    delete_report,
     get_report,
     get_report_roster,
     get_small_group,
+    update_report,
 )
 
 # No prefix: report routes live under both /small-groups/{id}/... and /small-group-reports.
@@ -247,3 +249,53 @@ def get_small_group_report(
     report_id: int, db: MembersSessionDep, scope: SmallGroupScopeDep
 ) -> ReportDetailSchema:
     return _report_detail_or_404(db, report_id, scope)
+
+
+@router.patch(
+    "/small-group-reports/{report_id}",
+    name="update_small_group_report",
+    description="Replace a report's content and attendance; the submitter and submission time never change",
+    response_model_exclude_unset=True,
+    dependencies=[Depends(rate_limit("30/minute", scope="update_small_group_report"))],
+)
+def patch_small_group_report(
+    report_id: int, body: ReportBodySchema, db: MembersSessionDep, scope: SmallGroupScopeDep
+) -> ReportDetailSchema:
+    report = get_report(db, report_id, None if scope.full else scope.group_ids)
+    if report is None:
+        raise HTTPException(status_code=404, detail=f"Small group report with ID {report_id} not found.")
+    try:
+        update_report(
+            db,
+            report,
+            _to_input(body),
+            sees_all_observations=scope.full,
+            viewer_member_id=scope.member_id,
+            today=church_today(),
+        )
+    except (
+        SmallGroupClosedError,
+        FutureMeetingDateError,
+        ReportAlreadyExistsError,
+        AttendanceMismatchError,
+    ) as exc:
+        raise _http_error(exc) from exc
+    return _report_detail_or_404(db, report_id, scope)
+
+
+@router.delete(
+    "/small-group-reports/{report_id}",
+    name="delete_small_group_report",
+    description="Delete a report and its attendance",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(rate_limit("20/minute", scope="delete_small_group_report"))],
+)
+def delete_small_group_report(report_id: int, db: MembersSessionDep, scope: SmallGroupScopeDep) -> Response:
+    report = get_report(db, report_id, None if scope.full else scope.group_ids)
+    if report is None:
+        raise HTTPException(status_code=404, detail=f"Small group report with ID {report_id} not found.")
+    try:
+        delete_report(db, report)
+    except SmallGroupClosedError as exc:
+        raise _http_error(exc) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
