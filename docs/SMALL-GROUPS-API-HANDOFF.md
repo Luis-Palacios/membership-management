@@ -22,12 +22,19 @@ to HTTP codes.
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. Leader on the groups list | [ ] | |
+| 1. Leader on the groups list | [x] | (this commit) |
 | 2. Set the leader in one call | [ ] | |
 | 3. Closed groups are read-only | [ ] | |
 | 4. Docs | [ ] | |
 
 ### Decisions and deviations
+
+**Stage 1.** Joined an aliased active-leader `SmallGroupMember` and its `Member` onto the existing
+active-member join and added the leader member's id to `GROUP BY` (the leader row is at most one per
+group, so the count can't multiply; chosen over a subquery as the smaller change). Tried by running
+`list_small_groups` against the seeded local DB: all 5 groups return their leader and
+`active_member_count` (8/8/8/10/8). The seed has no closed group, so the `null` case for closed/leaderless
+groups wasn't exercised, only follows from the outer joins.
 
 _(fill in per stage)_
 

@@ -77,6 +77,8 @@ def get_small_groups(db: MembersSessionDep) -> list[SmallGroupSummarySchema]:
             meeting_day=g.meeting_day,
             closed_at=g.closed_at,
             active_member_count=g.active_member_count,
+            leader_member_id=g.leader_member_id,
+            leader_name=g.leader_name,
         )
         for g in list_small_groups(db)
     ]
