@@ -40,8 +40,13 @@ class LeaderAlreadyExistsError(Exception):
     """The group already has an active leader."""
 
 
-def list_small_groups(session: Session) -> Sequence[SmallGroupSummary]:
-    return all_as(session, list_small_groups_query(), SmallGroupSummary)
+def list_small_groups(
+    session: Session, only_ids: frozenset[int] | None = None
+) -> Sequence[SmallGroupSummary]:
+    """All groups, or just `only_ids` (a scoped caller's groups; empty means none, without a query)."""
+    if only_ids is not None and not only_ids:
+        return []
+    return all_as(session, list_small_groups_query(only_ids), SmallGroupSummary)
 
 
 def get_led_small_group_ids(session: Session, member_id: int) -> frozenset[int]:

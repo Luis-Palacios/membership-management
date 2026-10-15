@@ -27,8 +27,8 @@ to HTTP codes.
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. Role sets and the small group scope | [x] | see git log |
-| 2. Scoped reads; full-role-only routes | [ ] | |
+| 1. Role sets and the small group scope | [x] | 6bf035f |
+| 2. Scoped reads; full-role-only routes | [x] | see git log |
 | 3. Scoped writes and the leadership limits | [ ] | |
 | 4. Docs | [ ] | |
 
@@ -42,6 +42,12 @@ to HTTP codes.
   the access scope can't drift. Tried: leader, co-leader (open and closed group), member only, former
   leader, leader at close, removed before close, no member (`[]`); `admin`/`elder` full, `deacon`
   scoped, `user`/`pending` 403. `alembic check`: no migration needed.
+- Stage 2: `_get_or_404` takes an optional scope (full-only routes don't need one). The three member
+  routes also got `SmallGroupScopeDep` here, so they are never open to `user`/`pending` between
+  stages; the rule 9 limits come in stage 3. Tried through the real app: scoped users list only their
+  groups (a leader at close sees the closed group, a former leader and an unlinked user see `[]`);
+  out-of-scope and unknown ids give the same 404; `user`/`pending` 403 on every route; `deacon` 403 on
+  create/close/set leader; `admin` unchanged.
 
 ## Who can do what
 
