@@ -103,7 +103,7 @@ def add_small_group_member(
         raise SmallGroupClosedError
     if session.get(Member, member_id) is None:
         raise MemberNotFoundError
-    if _active_membership(session, small_group.id, member_id) is not None:
+    if get_active_membership(session, small_group.id, member_id) is not None:
         raise MemberAlreadyInGroupError
     _ensure_leader_slot_free(session, small_group.id, role)
     _add_membership(session, small_group.id, member_id, role, today)
@@ -116,7 +116,7 @@ def change_small_group_member_role(
     """Change the role by closing the current period and opening a new one (kept as history)."""
     if small_group.closed_at is not None:
         raise SmallGroupClosedError
-    membership = _active_membership(session, small_group.id, member_id)
+    membership = get_active_membership(session, small_group.id, member_id)
     if membership is None:
         raise ActiveMembershipNotFoundError
     if membership.role == role:
@@ -145,7 +145,7 @@ def set_small_group_leader(session: Session, small_group: SmallGroup, *, member_
         _apply_role_change(session, current_leader, SmallGroupRole.CO_LEADER, today)
         # Flush the demotion before the promotion so the active-leader index never sees two.
         session.flush()
-    membership = _active_membership(session, small_group.id, member_id)
+    membership = get_active_membership(session, small_group.id, member_id)
     if membership is None:
         _add_membership(session, small_group.id, member_id, SmallGroupRole.LEADER, today)
     else:
@@ -157,7 +157,7 @@ def remove_small_group_member(
     session: Session, small_group: SmallGroup, *, member_id: int, today: date
 ) -> None:
     """End the member's current period; the row stays as history."""
-    membership = _active_membership(session, small_group.id, member_id)
+    membership = get_active_membership(session, small_group.id, member_id)
     if membership is None:
         raise ActiveMembershipNotFoundError
     membership.left_at = today
@@ -187,7 +187,8 @@ def _apply_role_change(
     _add_membership(session, membership.small_group_id, membership.member_id, role, today)
 
 
-def _active_membership(session: Session, small_group_id: int, member_id: int) -> SmallGroupMember | None:
+def get_active_membership(session: Session, small_group_id: int, member_id: int) -> SmallGroupMember | None:
+    """The member's open period in the group, if any."""
     return session.scalars(
         select(SmallGroupMember).where(
             SmallGroupMember.small_group_id == small_group_id,
