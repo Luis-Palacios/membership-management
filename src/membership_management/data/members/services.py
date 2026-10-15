@@ -6,8 +6,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from membership_management.data.members.models import Member
-from membership_management.data.members.queries import list_members_query, member_active_small_groups_query
-from membership_management.data.members.results import MemberSmallGroup, MemberSummary
+from membership_management.data.members.queries import (
+    list_members_query,
+    member_active_leads_query,
+    member_active_small_groups_query,
+    member_by_user_id_query,
+)
+from membership_management.data.members.results import MemberLead, MemberSmallGroup, MemberSummary
 from membership_management.data.query_helpers import all_as
 
 
@@ -29,6 +34,15 @@ def list_members(session: Session) -> Sequence[MemberSummary]:
 
 def get_member(session: Session, member_id: int) -> Member | None:
     return session.get(Member, member_id)
+
+
+def get_member_by_user_id(session: Session, user_id: str) -> Member | None:
+    """The member linked to this auth-server user, or None (a user needn't be a member)."""
+    return session.scalar(member_by_user_id_query(user_id))
+
+
+def get_member_leads(session: Session, member_id: int) -> Sequence[MemberLead]:
+    return all_as(session, member_active_leads_query(member_id), MemberLead)
 
 
 def get_member_small_groups(session: Session, member_id: int) -> Sequence[MemberSmallGroup]:
