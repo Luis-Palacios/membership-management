@@ -20,3 +20,32 @@ class SmallGroupActiveMember(NamedTuple):
     member_name: str
     role: SmallGroupRole
     joined_at: date
+
+
+class RosterPeriod(NamedTuple):
+    member_id: int
+    member_name: str
+    role: SmallGroupRole
+    joined_at: date
+    left_at: date | None
+    period_id: int
+
+
+class AttendanceMark(NamedTuple):
+    member_id: int
+    attended_group: bool
+
+
+class RosterPerson(NamedTuple):
+    """Someone who belongs in a report for a date, with the role they held that day."""
+
+    member_id: int
+    member_name: str
+    role: SmallGroupRole
+    joined_at: date
+    missed_streak: int
+
+
+class ReportRoster(NamedTuple):
+    people: list[RosterPerson]
+    existing_report_id: int | None

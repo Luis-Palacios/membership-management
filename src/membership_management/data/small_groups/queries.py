@@ -1,8 +1,16 @@
+from datetime import date
+
 from sqlalchemy import ColumnElement, Select, and_, func, or_, select
 from sqlalchemy.orm import aliased
 
 from membership_management.data.members.models import Member
-from membership_management.data.small_groups.models import SmallGroup, SmallGroupMember, SmallGroupRole
+from membership_management.data.small_groups.models import (
+    SmallGroup,
+    SmallGroupMember,
+    SmallGroupReport,
+    SmallGroupReportAttendance,
+    SmallGroupRole,
+)
 
 
 def list_small_groups_query(only_ids: frozenset[int] | None = None) -> Select:
@@ -77,4 +85,52 @@ def led_small_group_ids_query(member_id: int) -> Select:
         .join(SmallGroupMember, SmallGroupMember.small_group_id == SmallGroup.id)
         .where(SmallGroupMember.member_id == member_id, leads_in_scope_condition())
         .distinct()
+    )
+
+
+def roster_periods_on_date_query(small_group_id: int, d: date) -> Select:
+    """Membership periods that cover `d` (rule 3: joined by then, not left before it).
+
+    A member can appear twice when their role changed on `d`; the service picks one per member.
+    """
+    return (
+        select(
+            Member.id.label("member_id"),
+            Member.name.label("member_name"),
+            SmallGroupMember.role.label("role"),
+            SmallGroupMember.joined_at.label("joined_at"),
+            SmallGroupMember.left_at.label("left_at"),
+            SmallGroupMember.id.label("period_id"),
+        )
+        .join(Member, Member.id == SmallGroupMember.member_id)
+        .where(
+            SmallGroupMember.small_group_id == small_group_id,
+            SmallGroupMember.joined_at <= d,
+            or_(SmallGroupMember.left_at.is_(None), SmallGroupMember.left_at >= d),
+        )
+    )
+
+
+def report_id_on_date_query(small_group_id: int, d: date) -> Select:
+    return select(SmallGroupReport.id).where(
+        SmallGroupReport.small_group_id == small_group_id, SmallGroupReport.meeting_date == d
+    )
+
+
+def recent_attendance_marks_query(small_group_id: int, before: date, report_limit: int) -> Select:
+    """Attendance rows of the group's latest `report_limit` reports strictly before `before`, newest first."""
+    latest_reports = (
+        select(SmallGroupReport.id)
+        .where(SmallGroupReport.small_group_id == small_group_id, SmallGroupReport.meeting_date < before)
+        .order_by(SmallGroupReport.meeting_date.desc())
+        .limit(report_limit)
+    )
+    return (
+        select(
+            SmallGroupReportAttendance.member_id.label("member_id"),
+            SmallGroupReportAttendance.attended_group.label("attended_group"),
+        )
+        .join(SmallGroupReport, SmallGroupReport.id == SmallGroupReportAttendance.report_id)
+        .where(SmallGroupReportAttendance.report_id.in_(latest_reports))
+        .order_by(SmallGroupReport.meeting_date.desc())
     )

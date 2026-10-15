@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from datetime import date
+from datetime import date, timedelta
 
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
@@ -11,9 +11,22 @@ from membership_management.data.small_groups.models import SmallGroup, SmallGrou
 from membership_management.data.small_groups.queries import (
     led_small_group_ids_query,
     list_small_groups_query,
+    recent_attendance_marks_query,
+    report_id_on_date_query,
+    roster_periods_on_date_query,
     small_group_active_members_query,
 )
-from membership_management.data.small_groups.results import SmallGroupActiveMember, SmallGroupSummary
+from membership_management.data.small_groups.results import (
+    AttendanceMark,
+    ReportRoster,
+    RosterPeriod,
+    RosterPerson,
+    SmallGroupActiveMember,
+    SmallGroupSummary,
+)
+
+# Reports looked at for a "missed the last N meetings" hint (rule 11); plenty for a hint.
+MISSED_STREAK_REPORT_WINDOW = 12
 
 
 class SmallGroupAlreadyClosedError(Exception):
@@ -40,6 +53,35 @@ class LeaderAlreadyExistsError(Exception):
     """The group already has an active leader."""
 
 
+class ReportAlreadyExistsError(Exception):
+    """The group already has a report for that meeting date (rule 1)."""
+
+    def __init__(self, existing_id: int) -> None:
+        super().__init__(existing_id)
+        self.existing_id = existing_id
+
+
+class MemberRequiredToSubmitError(Exception):
+    """The caller has no linked member, and submitting a report needs one (rule 5)."""
+
+
+class FutureMeetingDateError(Exception):
+    """The meeting date is after today in the church's time zone (rule 2)."""
+
+
+class AttendanceMismatchError(Exception):
+    """The attendance rows don't match the group's members on the meeting date (rule 3)."""
+
+
+class NotGroupLeaderOnDateError(Exception):
+    """A scoped caller didn't hold leader or co-leader in the group on the meeting date (rule 5)."""
+
+
+def church_sunday(d: date) -> date:
+    """The most recent Sunday on or before `d` (rule 12); `d` itself when it is a Sunday."""
+    return d - timedelta(days=d.isoweekday() % 7)
+
+
 def list_small_groups(
     session: Session, only_ids: frozenset[int] | None = None
 ) -> Sequence[SmallGroupSummary]:
@@ -60,6 +102,69 @@ def get_small_group(session: Session, small_group_id: int) -> SmallGroup | None:
 
 def get_small_group_active_members(session: Session, small_group_id: int) -> Sequence[SmallGroupActiveMember]:
     return all_as(session, small_group_active_members_query(small_group_id), SmallGroupActiveMember)
+
+
+_ROLE_ORDER = {SmallGroupRole.LEADER: 0, SmallGroupRole.CO_LEADER: 1, SmallGroupRole.MEMBER: 2}
+
+
+def roster_on_date(session: Session, small_group_id: int, d: date) -> list[RosterPerson]:
+    """Everyone whose membership covers `d` (rule 3): leader, then co-leaders, then members, by name.
+
+    `missed_streak` is filled in by `get_report_roster`; here it is 0.
+    """
+    best: dict[int, RosterPeriod] = {}
+    for period in all_as(session, roster_periods_on_date_query(small_group_id, d), RosterPeriod):
+        current = best.get(period.member_id)
+        if current is None or _period_rank(period, d) > _period_rank(current, d):
+            best[period.member_id] = period
+    people = [
+        RosterPerson(p.member_id, p.member_name, p.role, p.joined_at, missed_streak=0) for p in best.values()
+    ]
+    return sorted(people, key=lambda p: (_ROLE_ORDER[p.role], p.member_name, p.member_id))
+
+
+def _period_rank(period: RosterPeriod, d: date) -> tuple[bool, date, int]:
+    """Prefer the period still running at the end of `d` (a role change on `d`), else the latest."""
+    return (period.left_at is None or period.left_at > d, period.joined_at, period.period_id)
+
+
+def missed_streaks(
+    session: Session, small_group_id: int, member_ids: Sequence[int], before: date
+) -> dict[int, int]:
+    """Per member, how many of the group's latest reports before `before` they missed in a row (rule 11).
+
+    Counts the leading run of `attended_group = false`, newest report first; reports where the member
+    has no row neither break nor extend it.
+    """
+    marks = all_as(
+        session,
+        recent_attendance_marks_query(small_group_id, before, MISSED_STREAK_REPORT_WINDOW),
+        AttendanceMark,
+    )
+    streaks = dict.fromkeys(member_ids, 0)
+    attended_since: set[int] = set()
+    for mark in marks:
+        if mark.member_id not in streaks or mark.member_id in attended_since:
+            continue
+        if mark.attended_group:
+            attended_since.add(mark.member_id)
+        else:
+            streaks[mark.member_id] += 1
+    return streaks
+
+
+def get_report_roster(session: Session, small_group: SmallGroup, d: date, *, today: date) -> ReportRoster:
+    """Who goes in a report for `d`, their missed streaks, and the report already filed for `d`, if any."""
+    if small_group.closed_at is not None:
+        raise SmallGroupClosedError
+    if d > today:
+        raise FutureMeetingDateError
+    people = roster_on_date(session, small_group.id, d)
+    streaks = missed_streaks(session, small_group.id, [p.member_id for p in people], d)
+    return ReportRoster(
+        people=[p._replace(missed_streak=streaks[p.member_id]) for p in people],
+        existing_report_id=session.scalars(report_id_on_date_query(small_group.id, d)).one_or_none(),
+    )
 
 
 def create_small_group(
