@@ -26,6 +26,7 @@ to HTTP codes.
 | 2. Set the leader in one call | [x] | (this commit) |
 | 3. Closed groups are read-only | [x] | (this commit) |
 | 4. Docs | [x] | (this commit) |
+| 5. Review fix: church-local "today" | [x] | (this commit) |
 
 ### Decisions and deviations
 
@@ -49,6 +50,15 @@ The existing POST/PATCH endpoints weren't re-run; their logic is moved unchanged
 to 409 "This small group is closed.". Tried via the service in a rolled-back transaction: an active group
 renames as before; after closing, the update raises and leaves the name unchanged. The HTTP route wasn't
 called through `/docs`.
+
+**Stage 5.** New `api/church_time.py` with `church_today()`; `_today()` and the close route both use it, so the
+router has no other clock call. `ApiSettings.church_timezone` (`CHURCH_TIMEZONE`, default `America/Managua`) is
+validated at startup (a bad name stops the API with a clear error; tried with `Nope/Zone`). Added `tzdata` as a
+dependency (it was only pulled in for Windows, and the slim Docker image can't be assumed to ship zoneinfo data).
+Tried by faking the clock to 01:11 UTC on Oct 15 (7:11 pm Oct 14 in Managua): `church_today()` returns Oct 14. Not
+run through the HTTP routes. Per-service for now; once multi-tenancy lands the church/ministry carries its own
+timezone. Existing rows untouched. The seed script still uses the UTC date (`data/seed/runner.py`): left as is,
+it only places demo data relative to today.
 
 **Stage 4.** One sentence added to the Members DB bullet in `CLAUDE.md`; nothing newly deferred, so `ROADMAP.md` is unchanged.
 
@@ -149,6 +159,36 @@ works as before.
   leader change, in a line or two (keep that file short).
 - `docs/ROADMAP.md`: nothing unless something new is deferred.
 - Mark the stages above done with their commits and finish *Decisions and deviations*.
+
+## Review follow-ups (browser review, 2026-10-14)
+
+Reviewed through the staff app against the local API. The list's leader columns, the
+single-transaction leader change (`PUT .../leader`, both "add as leader" and "promote an existing
+member") and the closed-group `PATCH` 409 all behave as specified. One bug goes in **Stage 5**.
+
+## Stage 5: Review fix — church-local "today"
+
+**Bug:** every "today" in `api/routers/small_groups.py` is `datetime.now(tz=UTC).date()` (`_today()`
+and the inline call in `post_close_small_group`). The church is in Managua (UTC-6), so from 6 pm
+local time on, "today" is already tomorrow: a member added at 7:11 pm on Oct 14 got
+`joined_at = 2026-10-15`, and a group closed that evening got `closed_at = 2026-10-15`. It affects
+add, role change, leader change, remove and close.
+
+**Fix:**
+
+1. Add a timezone setting (e.g. `church_timezone: str = "America/Managua"`, env `CHURCH_TIMEZONE`)
+   to `ApiSettings`, validated at startup with `zoneinfo.ZoneInfo` (fail fast on a bad name;
+   `tzdata` may be needed in the Docker image, check). Document it in `.env.example`.
+2. One helper, e.g. `church_today() -> date` (`datetime.now(ZoneInfo(settings.church_timezone)).date()`),
+   used by `_today()` **and** the close route, so there's a single source of "today".
+3. Keep it per-service for now (one church per deployment today). Note under *Decisions* that this
+   becomes per-church once multi-tenancy lands (the church/ministry would carry its own timezone).
+4. Don't rewrite existing rows; dates already stored a day ahead in local/dev data can stay.
+
+**Done when:** with the API running after 6 pm Managua time (or with the clock/zone faked in a
+quick script), adding a member, changing a role, setting the leader, removing a member and closing
+a group all store the **Managua** date; `ruff` and `ty` pass; `.env.example` and `CLAUDE.md`
+(*Architecture*, one line) mention the setting.
 
 ## Not in this spec (open questions for Luis)
 

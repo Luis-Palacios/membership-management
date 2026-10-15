@@ -1,4 +1,5 @@
 from typing import Annotated
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -91,6 +92,12 @@ class ApiSettings(BaseSettings):
     # take effect under `fastapi dev` too, not just run.py.
     thread_pool_size: int = 40
 
+    # IANA timezone of the church, used for every date-only business "today" (a member joining or
+    # leaving a small group, a group closing). The server clock is UTC, so without this "today"
+    # flips to tomorrow at 6 pm in Managua. One timezone per deployment for now; once
+    # multi-tenancy lands this moves onto the church/ministry. Validated at startup.
+    church_timezone: str = "America/Managua"
+
     # Same .env handling as the data layer's Settings (see env_file.py).
     model_config = SettingsConfigDict(env_file=ENV_FILE, env_file_encoding="utf-8", extra="ignore")
 
@@ -99,6 +106,15 @@ class ApiSettings(BaseSettings):
     def split_origins(cls, value: str | list[str]) -> list[str]:
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
+
+    @field_validator("church_timezone", mode="after")
+    @classmethod
+    def validate_church_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(f"unknown timezone {value!r}; use an IANA name like America/Managua") from exc
         return value
 
     @field_validator("auth_server_url", "jwt_issuer", "jwt_audience", mode="after")

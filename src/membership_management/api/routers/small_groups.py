@@ -1,7 +1,8 @@
-from datetime import UTC, date, datetime
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
+from membership_management.api.church_time import church_today
 from membership_management.api.dependencies import MembersSessionDep
 from membership_management.api.jwt_auth import get_current_claims
 from membership_management.api.rate_limit import default_user_rate_limit, rate_limit
@@ -137,14 +138,14 @@ def patch_small_group(
 def post_close_small_group(small_group_id: int, db: MembersSessionDep) -> SmallGroupDetailSchema:
     small_group = _get_or_404(db, small_group_id)
     try:
-        small_group = close_small_group(db, small_group, datetime.now(tz=UTC).date())
+        small_group = close_small_group(db, small_group, _today())
     except SmallGroupAlreadyClosedError as exc:
         raise HTTPException(status_code=409, detail="This small group is already closed.") from exc
     return _detail(db, small_group)
 
 
 def _today() -> date:
-    return datetime.now(tz=UTC).date()
+    return church_today()
 
 
 @router.post(
