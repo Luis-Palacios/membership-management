@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -83,6 +83,30 @@ def link_member_user(session: Session, member: Member, user_id: str) -> Member:
         raise
     session.commit()
     return member
+
+
+def link_member_by_accepted_invite(session: Session, user_id: str, email: str) -> int | None:
+    """Link the one unlinked member whose email matches (case-insensitive); return their id.
+
+    Changes nothing and returns None when the user is already linked or the email matches no member
+    or several. Never raises for those cases: the caller is an invite acceptance that must not fail.
+    """
+    if session.scalar(select(Member.id).where(Member.user_id == user_id)) is not None:
+        return None
+    candidates = session.scalars(
+        select(Member).where(func.lower(Member.email) == email.lower(), Member.user_id.is_(None)).limit(2)
+    ).all()
+    if len(candidates) != 1:
+        return None
+    member = candidates[0]
+    member.user_id = user_id
+    try:
+        session.commit()
+    except IntegrityError:
+        # Lost a race with another link of the same user; leave things as the winner set them.
+        session.rollback()
+        return None
+    return member.id
 
 
 def unlink_member_user(session: Session, member: Member) -> None:
