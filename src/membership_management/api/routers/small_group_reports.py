@@ -1,19 +1,28 @@
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from membership_management.api.access import SmallGroupScope, SmallGroupScopeDep
 from membership_management.api.church_time import church_today
+from membership_management.api.current_member import CurrentMemberDep
 from membership_management.api.dependencies import MembersSessionDep
 from membership_management.api.jwt_auth import get_current_claims
-from membership_management.api.rate_limit import default_user_rate_limit
+from membership_management.api.rate_limit import default_user_rate_limit, rate_limit
 from membership_management.api.schemas.small_group_reports import (
+    ReportAttendanceSchema,
+    ReportBodySchema,
+    ReportDetailSchema,
+    ReportGroupSchema,
+    ReportPermissionsSchema,
+    ReportPersonSchema,
     ReportRosterGroupSchema,
     ReportRosterPersonSchema,
     ReportRosterSchema,
+    ReportTotalsSchema,
 )
 from membership_management.data.small_groups.models import SmallGroup
+from membership_management.data.small_groups.results import AttendanceInput, ReportDetail, ReportInput
 from membership_management.data.small_groups.services import (
     AttendanceMismatchError,
     FutureMeetingDateError,
@@ -21,7 +30,10 @@ from membership_management.data.small_groups.services import (
     NotGroupLeaderOnDateError,
     ReportAlreadyExistsError,
     SmallGroupClosedError,
+    build_report_detail,
     church_sunday,
+    create_report,
+    get_report,
     get_report_roster,
     get_small_group,
 )
@@ -36,6 +48,14 @@ router = APIRouter(
 DUPLICATE_REPORT_DETAIL = "There's already a report for this group on that date."
 
 
+class DuplicateReportHTTPError(HTTPException):
+    """409 whose body also names the existing report (`existingReportId`); see its handler in `main.py`."""
+
+    def __init__(self, existing_report_id: int) -> None:
+        super().__init__(status_code=409, detail=DUPLICATE_REPORT_DETAIL)
+        self.existing_report_id = existing_report_id
+
+
 def _small_group_or_404(db: MembersSessionDep, small_group_id: int, scope: SmallGroupScope) -> SmallGroup:
     """404 for a missing group and for one outside the scope, with the same message."""
     small_group = get_small_group(db, small_group_id) if scope.includes(small_group_id) else None
@@ -47,7 +67,7 @@ def _small_group_or_404(db: MembersSessionDep, small_group_id: int, scope: Small
 def _http_error(exc: Exception) -> HTTPException:
     """Map a report domain error to its HTTP error (the staff app matches on status and `detail`)."""
     if isinstance(exc, ReportAlreadyExistsError):
-        return HTTPException(status_code=409, detail=DUPLICATE_REPORT_DETAIL)
+        return DuplicateReportHTTPError(exc.existing_id)
     if isinstance(exc, MemberRequiredToSubmitError):
         return HTTPException(status_code=409, detail="Link your account to a member to submit reports.")
     if isinstance(exc, SmallGroupClosedError):
@@ -101,3 +121,129 @@ def get_report_roster_for_date(
             for p in roster.people
         ],
     )
+
+
+def _to_input(body: ReportBodySchema) -> ReportInput:
+    return ReportInput(
+        meeting_date=body.meeting_date,
+        address=body.address,
+        group_prayer_request=body.group_prayer_request,
+        group_praise_report=body.group_praise_report,
+        group_relevant_discussion=body.group_relevant_discussion,
+        attendances=[
+            AttendanceInput(a.member_id, a.attended_group, a.attended_church, a.observation)
+            for a in body.attendances
+        ],
+    )
+
+
+def _detail_schema(detail: ReportDetail) -> ReportDetailSchema:
+    """Map the service's detail. Observation keys are only passed when visible, so they stay unset
+    (and are dropped by `response_model_exclude_unset`) when they aren't."""
+    visible = detail.observations_visible
+    open_group = detail.small_group_closed_at is None
+    attendances = [
+        ReportAttendanceSchema(
+            member_id=a.member_id,
+            name=a.member_name,
+            role=a.role,
+            attended_group=a.attended_group,
+            attended_church=a.attended_church,
+            missed_streak=a.missed_streak,
+            **({"observation": a.observation} if visible else {}),
+        )
+        for a in detail.attendances
+    ]
+    totals: dict[str, int] = {
+        "roster": len(attendances),
+        "attended_group": sum(a.attended_group for a in detail.attendances),
+        "attended_church": sum(a.attended_church for a in detail.attendances),
+    }
+    if visible:
+        totals["observations"] = sum(a.observation is not None for a in detail.attendances)
+    return ReportDetailSchema(
+        id=detail.id,
+        small_group=ReportGroupSchema(
+            id=detail.small_group_id,
+            name=detail.small_group_name,
+            meeting_address=detail.small_group_meeting_address,
+            closed_at=detail.small_group_closed_at,
+        ),
+        meeting_date=detail.meeting_date,
+        church_sunday=church_sunday(detail.meeting_date),
+        address=detail.address,
+        group_prayer_request=detail.group_prayer_request,
+        group_praise_report=detail.group_praise_report,
+        group_relevant_discussion=detail.group_relevant_discussion,
+        submitted_by=ReportPersonSchema(
+            member_id=detail.submitted_by_member_id, name=detail.submitted_by_name
+        ),
+        submitted_at=detail.submitted_at,
+        observations_visible=visible,
+        attendances=attendances,
+        totals=ReportTotalsSchema(**totals),
+        permissions=ReportPermissionsSchema(can_edit=open_group, can_delete=open_group),
+    )
+
+
+def _report_detail_or_404(
+    db: MembersSessionDep, report_id: int, scope: SmallGroupScope
+) -> ReportDetailSchema:
+    """The report's detail as this caller may see it; 404 when missing or outside the scope."""
+    report = get_report(db, report_id, None if scope.full else scope.group_ids)
+    if report is None:
+        raise HTTPException(status_code=404, detail=f"Small group report with ID {report_id} not found.")
+    return _detail_schema(
+        build_report_detail(db, report, sees_all_observations=scope.full, viewer_member_id=scope.member_id)
+    )
+
+
+@router.post(
+    "/small-groups/{small_group_id}/reports",
+    name="create_small_group_report",
+    description="File the report of a meeting; the caller's member is recorded as the submitter",
+    status_code=status.HTTP_201_CREATED,
+    response_model_exclude_unset=True,
+    dependencies=[Depends(rate_limit("20/minute", scope="create_small_group_report"))],
+)
+def post_small_group_report(
+    small_group_id: int,
+    body: ReportBodySchema,
+    db: MembersSessionDep,
+    scope: SmallGroupScopeDep,
+    member: CurrentMemberDep,
+) -> ReportDetailSchema:
+    small_group = _small_group_or_404(db, small_group_id, scope)
+    try:
+        if member is None:
+            raise MemberRequiredToSubmitError
+        report = create_report(
+            db,
+            small_group,
+            _to_input(body),
+            submitter_member_id=member.id,
+            caller_is_scoped=not scope.full,
+            today=church_today(),
+        )
+    except (
+        MemberRequiredToSubmitError,
+        SmallGroupClosedError,
+        FutureMeetingDateError,
+        ReportAlreadyExistsError,
+        AttendanceMismatchError,
+        NotGroupLeaderOnDateError,
+    ) as exc:
+        raise _http_error(exc) from exc
+    return _report_detail_or_404(db, report.id, scope)
+
+
+@router.get(
+    "/small-group-reports/{report_id}",
+    name="get_small_group_report",
+    description="A report with its attendance; observations only for admins, elders and the submitter",
+    response_model_exclude_unset=True,
+)
+def get_small_group_report(
+    report_id: int, db: MembersSessionDep, scope: SmallGroupScopeDep
+) -> ReportDetailSchema:
+    return _report_detail_or_404(db, report_id, scope)

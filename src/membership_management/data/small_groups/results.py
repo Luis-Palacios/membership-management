@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from typing import NamedTuple
 
 from membership_management.data.small_groups.models import SmallGroupRole
@@ -49,3 +49,50 @@ class RosterPerson(NamedTuple):
 class ReportRoster(NamedTuple):
     people: list[RosterPerson]
     existing_report_id: int | None
+
+
+class AttendanceInput(NamedTuple):
+    member_id: int
+    attended_group: bool
+    attended_church: bool
+    observation: str | None
+
+
+class ReportInput(NamedTuple):
+    """The body of a create or edit, already trimmed (blank text is None)."""
+
+    meeting_date: date
+    address: str | None
+    group_prayer_request: str | None
+    group_praise_report: str | None
+    group_relevant_discussion: str | None
+    attendances: list[AttendanceInput]
+
+
+class ReportAttendanceView(NamedTuple):
+    member_id: int
+    member_name: str
+    role: SmallGroupRole
+    attended_group: bool
+    attended_church: bool
+    missed_streak: int
+    # Always None when the viewer may not see observations (rule 9), so no mapping can leak one.
+    observation: str | None
+
+
+class ReportDetail(NamedTuple):
+    id: int
+    small_group_id: int
+    small_group_name: str
+    small_group_meeting_address: str | None
+    small_group_closed_at: date | None
+    meeting_date: date
+    address: str | None
+    group_prayer_request: str | None
+    group_praise_report: str | None
+    group_relevant_discussion: str | None
+    submitted_by_member_id: int
+    submitted_by_name: str
+    submitted_at: datetime
+    observations_visible: bool
+    attendances: list[ReportAttendanceView]

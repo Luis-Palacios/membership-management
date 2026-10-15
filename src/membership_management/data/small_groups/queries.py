@@ -1,7 +1,7 @@
 from datetime import date
 
 from sqlalchemy import ColumnElement, Select, and_, func, or_, select
-from sqlalchemy.orm import aliased
+from sqlalchemy.orm import aliased, joinedload, selectinload
 
 from membership_management.data.members.models import Member
 from membership_management.data.small_groups.models import (
@@ -109,6 +109,22 @@ def roster_periods_on_date_query(small_group_id: int, d: date) -> Select:
             or_(SmallGroupMember.left_at.is_(None), SmallGroupMember.left_at >= d),
         )
     )
+
+
+def report_in_scope_query(report_id: int, only_group_ids: frozenset[int] | None) -> Select:
+    """One report with what its detail needs; `only_group_ids` filters by group in SQL (None = all)."""
+    query = (
+        select(SmallGroupReport)
+        .where(SmallGroupReport.id == report_id)
+        .options(
+            joinedload(SmallGroupReport.small_group),
+            joinedload(SmallGroupReport.submitted_by),
+            selectinload(SmallGroupReport.attendances).joinedload(SmallGroupReportAttendance.member),
+        )
+    )
+    if only_group_ids is not None:
+        query = query.where(SmallGroupReport.small_group_id.in_(only_group_ids))
+    return query
 
 
 def report_id_on_date_query(small_group_id: int, d: date) -> Select:

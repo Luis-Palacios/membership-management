@@ -3,8 +3,9 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import anyio.to_thread
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.pool import QueuePool
@@ -80,6 +81,17 @@ app.include_router(members.router)
 app.include_router(small_groups.router)
 app.include_router(small_group_reports.router)
 app.include_router(internal.router)
+
+
+@app.exception_handler(small_group_reports.DuplicateReportHTTPError)
+async def duplicate_report_handler(
+    _request: Request, exc: small_group_reports.DuplicateReportHTTPError
+) -> JSONResponse:
+    # Same shape as any HTTPException, plus the id so the staff app can link to the existing report.
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail, "existingReportId": exc.existing_report_id},
+    )
 
 
 @app.get("/")
