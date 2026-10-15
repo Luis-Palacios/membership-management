@@ -1,4 +1,4 @@
-from sqlalchemy import Select, and_, func, select
+from sqlalchemy import ColumnElement, Select, and_, func, or_, select
 from sqlalchemy.orm import aliased
 
 from membership_management.data.members.models import Member
@@ -51,4 +51,26 @@ def small_group_active_members_query(small_group_id: int) -> Select:
         .join(Member, Member.id == SmallGroupMember.member_id)
         .where(SmallGroupMember.small_group_id == small_group_id, SmallGroupMember.left_at.is_(None))
         .order_by(Member.name, Member.id)
+    )
+
+
+def leads_in_scope_condition() -> ColumnElement[bool]:
+    """Filter on `small_group_members` joined to `small_groups`: leader/co-leader periods that count.
+
+    Active periods, or periods ended by the group closing (`left_at >= closed_at`, since closing
+    ends every active period on the close date). A leader who left before the close doesn't match.
+    """
+    return and_(
+        SmallGroupMember.role.in_([SmallGroupRole.LEADER, SmallGroupRole.CO_LEADER]),
+        or_(SmallGroupMember.left_at.is_(None), SmallGroupMember.left_at >= SmallGroup.closed_at),
+    )
+
+
+def led_small_group_ids_query(member_id: int) -> Select:
+    """Ids of the groups the member leads or co-led when they closed (the access scope)."""
+    return (
+        select(SmallGroup.id)
+        .join(SmallGroupMember, SmallGroupMember.small_group_id == SmallGroup.id)
+        .where(SmallGroupMember.member_id == member_id, leads_in_scope_condition())
+        .distinct()
     )
