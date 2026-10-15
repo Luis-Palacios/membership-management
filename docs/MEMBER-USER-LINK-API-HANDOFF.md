@@ -28,7 +28,8 @@ to HTTP codes.
 | 2. Role check for admin/elder | [ ] | |
 | 3. Link and unlink a user | [ ] | |
 | 4. Internal accept-invite endpoint | [ ] | |
-| 5. Docs | [ ] | |
+| 5. Current member and `GET /me` | [ ] | |
+| 6. Docs | [ ] | |
 
 ### Decisions and deviations
 
@@ -44,6 +45,7 @@ to HTTP codes.
 | Unlink dialog (member or user side) | `DELETE /members/{id}/user` |
 | Users list "Member" column; User detail "Linked member" | `GET /members` (find the member whose `userId` is the user) |
 | Invite accepted | auth-server → `POST /internal/member-links/accepted-invite` |
+| Every page: who the signed-in user is as a member, which groups they lead | `GET /me` |
 
 ## Stage 1: `userId` on member responses
 
@@ -102,17 +104,41 @@ Called by auth-server's `afterAcceptInvite` hook (see the auth-server handoff).
   `linked: false`. Always 200; this endpoint must never make the invite acceptance fail.
 - Per-IP rate limiting stays at the edge; the shared secret is the control here.
 
-## Stage 5: Docs
+## Stage 5: Current member and `GET /me`
+
+The link exists so this service can tell which member is behind a request (cross-repo spec, rule 9
+and *The current member*). The JWT stays `{ sub, role }`; the member is looked up here, never
+copied into auth-server. `docs/specs/small-group-leader-access.md` builds on this stage.
+
+**Files:** `data/members/queries.py`, `data/members/services.py`, a new `api/current_member.py` (or
+next to `jwt_auth.py`), a new `api/routers/me.py`, `api/schemas/`.
+
+- `get_current_member(db, claims) -> Member | None`: the member whose `user_id == claims.sub`, or
+  `None`. Expose it as a FastAPI dependency (`CurrentMemberDep`) for later routes. No user without
+  a member is an error here (rule 2).
+- `GET /me`, any authenticated role, default rate limit only. Response (`CamelModel`):
+  `{ userId, role, member: { id, name } | null, leads: [{ smallGroupId, name, role }] }`.
+  `userId`/`role` come from the claims. `leads` lists the member's **active** periods
+  (`left_at IS NULL`) with role `leader` or `co_leader`, closed groups included, ordered by group
+  name; empty when `member` is null. One query for the member, one for `leads` (or one joined
+  query); don't load full group details.
+- Try it in `/docs` with a token whose `sub` is linked (link one in Stage 3), one whose `sub`
+  isn't, and one whose member leads a group and co-leads another.
+
+## Stage 6: Docs
 
 - `CLAUDE.md`: extend the Members DB bullet by one sentence: `user_id` is a cross-service
   reference with no FK, set only through `PUT/DELETE /members/{id}/user` and the internal accept
   endpoint, which require `admin`/`elder` and the service token respectively.
 - `.env.example`: `INTERNAL_API_TOKEN`.
-- `ROADMAP.md`: note that `require_roles` exists and Phase 9 (role gating) should reuse it.
+- `CLAUDE.md`: one sentence that the current member is resolved from the JWT `sub` through
+  `members.user_id` (`get_current_member`, `GET /me`); the JWT carries no member id.
+- `ROADMAP.md`: note that `require_roles` and `get_current_member` exist and Phase 9 (role gating,
+  specified in `docs/specs/small-group-leader-access.md`) should reuse them.
 
 ## Not in this spec
 
 - Looking up users in auth-server from this service; checking that `userId` exists.
 - Clearing `user_id` when a user is deleted (D2 in the cross-repo spec).
-- Role gating on the other routes (Phase 9 of the auth integration roadmap).
+- Role gating and leader scoping on the other routes: `docs/specs/small-group-leader-access.md`.
 - Seeding linked members: seed data has no auth-server user ids to point to.
