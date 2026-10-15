@@ -93,9 +93,7 @@ def add_small_group_member(
     if _active_membership(session, small_group.id, member_id) is not None:
         raise MemberAlreadyInGroupError
     _ensure_leader_slot_free(session, small_group.id, role)
-    session.add(
-        SmallGroupMember(small_group_id=small_group.id, member_id=member_id, role=role, joined_at=today)
-    )
+    _add_membership(session, small_group.id, member_id, role, today)
     _commit_or_raise_conflict(session)
 
 
@@ -111,17 +109,34 @@ def change_small_group_member_role(
     if membership.role == role:
         return
     _ensure_leader_slot_free(session, small_group.id, role)
-    if membership.joined_at == today:
-        # Started today: a closed zero-length period would be noise, so correct it in place.
-        membership.role = role
-    else:
-        membership.left_at = today
-        # Inserts run before updates in a flush, so close the old period first or the partial
-        # unique indexes (one active row per member/leader) would see both as active.
-        session.flush()
-        session.add(
-            SmallGroupMember(small_group_id=small_group.id, member_id=member_id, role=role, joined_at=today)
+    _apply_role_change(session, membership, role, today)
+    _commit_or_raise_conflict(session)
+
+
+def set_small_group_leader(session: Session, small_group: SmallGroup, *, member_id: int, today: date) -> None:
+    """Make the member the leader in one transaction, demoting any current leader to co-leader."""
+    if small_group.closed_at is not None:
+        raise SmallGroupClosedError
+    if session.get(Member, member_id) is None:
+        raise MemberNotFoundError
+    current_leader = session.scalars(
+        select(SmallGroupMember).where(
+            SmallGroupMember.small_group_id == small_group.id,
+            SmallGroupMember.role == SmallGroupRole.LEADER,
+            SmallGroupMember.left_at.is_(None),
         )
+    ).one_or_none()
+    if current_leader is not None:
+        if current_leader.member_id == member_id:
+            return
+        _apply_role_change(session, current_leader, SmallGroupRole.CO_LEADER, today)
+        # Flush the demotion before the promotion so the active-leader index never sees two.
+        session.flush()
+    membership = _active_membership(session, small_group.id, member_id)
+    if membership is None:
+        _add_membership(session, small_group.id, member_id, SmallGroupRole.LEADER, today)
+    else:
+        _apply_role_change(session, membership, SmallGroupRole.LEADER, today)
     _commit_or_raise_conflict(session)
 
 
@@ -134,6 +149,29 @@ def remove_small_group_member(
         raise ActiveMembershipNotFoundError
     membership.left_at = today
     session.commit()
+
+
+def _add_membership(
+    session: Session, small_group_id: int, member_id: int, role: SmallGroupRole, today: date
+) -> None:
+    session.add(
+        SmallGroupMember(small_group_id=small_group_id, member_id=member_id, role=role, joined_at=today)
+    )
+
+
+def _apply_role_change(
+    session: Session, membership: SmallGroupMember, role: SmallGroupRole, today: date
+) -> None:
+    """Change an active membership's role, keeping history. Doesn't commit."""
+    if membership.joined_at == today:
+        # Started today: a closed zero-length period would be noise, so correct it in place.
+        membership.role = role
+        return
+    membership.left_at = today
+    # Inserts run before updates in a flush, so close the old period first or the partial
+    # unique indexes (one active row per member/leader) would see both as active.
+    session.flush()
+    _add_membership(session, membership.small_group_id, membership.member_id, role, today)
 
 
 def _active_membership(session: Session, small_group_id: int, member_id: int) -> SmallGroupMember | None:

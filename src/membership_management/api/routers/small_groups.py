@@ -8,6 +8,7 @@ from membership_management.api.rate_limit import default_user_rate_limit, rate_l
 from membership_management.api.schemas.small_groups import (
     SmallGroupCreateSchema,
     SmallGroupDetailSchema,
+    SmallGroupLeaderSchema,
     SmallGroupMemberAddSchema,
     SmallGroupMemberRoleSchema,
     SmallGroupMemberSchema,
@@ -30,6 +31,7 @@ from membership_management.data.small_groups.services import (
     get_small_group_active_members,
     list_small_groups,
     remove_small_group_member,
+    set_small_group_leader,
     update_small_group,
 )
 
@@ -181,6 +183,27 @@ def patch_small_group_member(
         raise HTTPException(status_code=409, detail="This small group is closed.") from exc
     except ActiveMembershipNotFoundError as exc:
         raise HTTPException(status_code=404, detail="This member is not in the small group.") from exc
+    except LeaderAlreadyExistsError as exc:
+        raise HTTPException(status_code=409, detail="This small group already has a leader.") from exc
+    return _detail(db, small_group)
+
+
+@router.put(
+    "/{small_group_id}/leader",
+    name="set_small_group_leader",
+    description="Make a member the leader; any current leader becomes co-leader, in one transaction",
+    dependencies=[Depends(rate_limit("30/minute", scope="set_small_group_leader"))],
+)
+def put_small_group_leader(
+    small_group_id: int, body: SmallGroupLeaderSchema, db: MembersSessionDep
+) -> SmallGroupDetailSchema:
+    small_group = _get_or_404(db, small_group_id)
+    try:
+        set_small_group_leader(db, small_group, member_id=body.member_id, today=_today())
+    except SmallGroupClosedError as exc:
+        raise HTTPException(status_code=409, detail="This small group is closed.") from exc
+    except MemberNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"Member with ID {body.member_id} not found.") from exc
     except LeaderAlreadyExistsError as exc:
         raise HTTPException(status_code=409, detail="This small group already has a leader.") from exc
     return _detail(db, small_group)

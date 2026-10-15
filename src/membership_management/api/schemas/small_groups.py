@@ -59,3 +59,7 @@ class SmallGroupMemberAddSchema(CamelModel):
 
 class SmallGroupMemberRoleSchema(CamelModel):
     role: SmallGroupRole
+
+
+class SmallGroupLeaderSchema(CamelModel):
+    member_id: int
