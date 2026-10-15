@@ -10,6 +10,15 @@ A single microservice — membership management (assimilation): membership appli
 - FastAPI surface to list, review, and approve membership applications.
 - Planned areas beyond applications: members management, small groups, and small-group reports.
 
+## Small group reports (built)
+
+A group files one report per meeting date: the group's text fields plus one attendance row for every member whose membership covers that date. Rules and contracts: `docs/specs/small-group-reports.md` (workspace repo) and `docs/SMALL-GROUP-REPORTS-API-HANDOFF.md`. Code: `api/routers/small_group_reports.py`, `data/small_groups/{queries,results,services}.py`.
+
+- Routes: `GET /small-group-reports` (filed reports and computed not-filed meetings, counts, paging), `GET /small-group-reports/summary` (dashboard), `GET /small-groups/{id}/report-roster?date=`, `POST /small-groups/{id}/reports`, `GET|PATCH|DELETE /small-group-reports/{id}`. Access is the leader access scope (`SmallGroupScopeDep`): admin/elder everything, smallGroupLeader/deacon only their groups (404 elsewhere), other roles 403; closed groups are read-only (409).
+- **Observations are private (rule 9).** An attendance row's pastoral `observation` is returned, and editable, only for admin/elder and for the report's submitter. `build_report_detail` decides it once per request and nulls every observation otherwise; the schema then omits the key. Lists and the summary never carry observations.
+- "Not filed" is computed, never stored (`not_filed_dates`): open groups with a meeting day, the last 28 days before today, with a leader or co-leader on that date and no report.
+- Names in these routes are the member's single stored `name` (members have no first/last name columns).
+
 ## Infra / deployment target
 - Docker → Kubernetes → Terraform, deployed to AWS or GCP.
 - Basic CI/CD, likely GitHub Actions.
