@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from typing import Annotated
 
 import jwt
@@ -55,3 +56,18 @@ def get_current_claims(
 
 
 CurrentClaimsDep = Annotated[AuthClaims, Depends(get_current_claims)]
+
+
+def require_roles(*allowed: str) -> Callable[[AuthClaims], AuthClaims]:
+    """Dependency factory: returns the claims if `role` is one of `allowed`, else 403.
+
+    Generic on purpose (takes role names) so the role-based gating planned in Phase 9 can reuse it.
+    Role names are auth-server's role keys, e.g. `require_roles("admin", "elder")`.
+    """
+
+    def dependency(claims: CurrentClaimsDep) -> AuthClaims:
+        if claims.role not in allowed:
+            raise HTTPException(status_code=403, detail="You don't have permission to do this.")
+        return claims
+
+    return dependency

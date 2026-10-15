@@ -25,7 +25,7 @@ to HTTP codes.
 | Stage | Status | Commit |
 | --- | --- | --- |
 | 1. `userId` on member responses | [x] | (this commit) |
-| 2. Role check for admin/elder | [ ] | |
+| 2. Role check for admin/elder | [x] | (this commit) |
 | 3. Link and unlink a user | [ ] | |
 | 4. Internal accept-invite endpoint | [ ] | |
 | 5. Current member and `GET /me` | [ ] | |
@@ -34,6 +34,7 @@ to HTTP codes.
 ### Decisions and deviations
 
 - Stage 1: `user_id` added to the `list_members` query, `MemberSummary` result and both schemas. Create/update schemas untouched (confirmed `userId` is absent from them in OpenAPI). Tried with `TestClient` against the local Postgres with the claims dependency overridden: `GET /members` and `GET /members/1` return `userId: null`. `ruff` and `ty` pass.
+- Stage 2: `require_roles(*allowed)` in `api/jwt_auth.py`, built on `CurrentClaimsDep`; exact match on `claims.role` (auth-server roles are single values, no comma lists). Not applied to any route yet (stage 3 does). Tried on a scratch FastAPI app with the claims dependency overridden: `admin` and `elder` get 200; `smallGroupLeader` and an empty role get 403 `You don't have permission to do this.`. `ruff` and `ty` pass.
 
 ## What the staff app does with these endpoints
 
