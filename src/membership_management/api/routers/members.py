@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from membership_management.api.dependencies import MembersSessionDep
-from membership_management.api.jwt_auth import get_current_claims
+from membership_management.api.jwt_auth import get_current_claims, require_roles
 from membership_management.api.rate_limit import default_user_rate_limit, rate_limit
 from membership_management.api.schemas.members import (
     MemberCreateSchema,
@@ -9,14 +9,19 @@ from membership_management.api.schemas.members import (
     MemberSmallGroupSchema,
     MemberSummarySchema,
     MemberUpdateSchema,
+    MemberUserLinkSchema,
 )
 from membership_management.data.members.models import Member
 from membership_management.data.members.services import (
     DuplicateMemberEmailError,
+    MemberAlreadyLinkedError,
+    UserAlreadyLinkedError,
     create_member,
     get_member,
     get_member_small_groups,
+    link_member_user,
     list_members,
+    unlink_member_user,
     update_member,
 )
 
@@ -106,3 +111,42 @@ def patch_member(member_id: int, body: MemberUpdateSchema, db: MembersSessionDep
     except DuplicateMemberEmailError as exc:
         raise HTTPException(status_code=409, detail="A member with this email already exists.") from exc
     return _detail(db, member)
+
+
+@router.put(
+    "/{member_id}/user",
+    name="link_member_user",
+    description="Link the member to a user account (admin and elder only)",
+    dependencies=[
+        Depends(require_roles("admin", "elder")),
+        Depends(rate_limit("20/minute", scope="link_member_user")),
+    ],
+)
+def put_member_user(member_id: int, body: MemberUserLinkSchema, db: MembersSessionDep) -> MemberDetailSchema:
+    member = get_member(db, member_id)
+    if member is None:
+        raise HTTPException(status_code=404, detail=f"Member with ID {member_id} not found.")
+    try:
+        member = link_member_user(db, member, body.user_id)
+    except MemberAlreadyLinkedError as exc:
+        raise HTTPException(status_code=409, detail="This member is already linked to another user.") from exc
+    except UserAlreadyLinkedError as exc:
+        raise HTTPException(status_code=409, detail="This user is already linked to another member.") from exc
+    return _detail(db, member)
+
+
+@router.delete(
+    "/{member_id}/user",
+    name="unlink_member_user",
+    description="Remove the member's user link (admin and elder only)",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[
+        Depends(require_roles("admin", "elder")),
+        Depends(rate_limit("20/minute", scope="unlink_member_user")),
+    ],
+)
+def delete_member_user(member_id: int, db: MembersSessionDep) -> None:
+    member = get_member(db, member_id)
+    if member is None:
+        raise HTTPException(status_code=404, detail=f"Member with ID {member_id} not found.")
+    unlink_member_user(db, member)

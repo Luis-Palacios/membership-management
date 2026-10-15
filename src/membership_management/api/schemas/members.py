@@ -9,6 +9,7 @@ from membership_management.data.small_groups.models import SmallGroupRole
 # Strip whitespace; limits match the member columns.
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
 Phone = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20)]
+UserId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
 Address = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
 
 
@@ -54,3 +55,7 @@ class MemberUpdateSchema(CamelModel):
     phone: Phone | None = None
     address: Address | None = None
     birth_date: date | None = None
+
+
+class MemberUserLinkSchema(CamelModel):
+    user_id: UserId
