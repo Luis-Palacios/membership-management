@@ -1,7 +1,7 @@
 from datetime import date, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
-from pydantic import BeforeValidator, StringConstraints
+from pydantic import BeforeValidator, Field, StringConstraints
 
 from membership_management.api.schemas.base import CamelModel
 from membership_management.data.small_groups.models import SmallGroupRole, Weekday
@@ -117,3 +117,63 @@ class ReportDetailSchema(CamelModel):
     attendances: list[ReportAttendanceSchema]
     totals: ReportTotalsSchema
     permissions: ReportPermissionsSchema
+
+
+class ReportListGroupSchema(CamelModel):
+    id: int
+    name: str
+    closed_at: date | None
+
+
+class FiledReportItemSchema(CamelModel):
+    kind: Literal["report"] = "report"
+    id: int
+    small_group: ReportListGroupSchema
+    meeting_date: date
+    submitted_by: ReportPersonSchema
+    submitted_at: datetime
+    roster_count: int
+    attended_group_count: int
+    attended_church_count: int
+
+
+class NotFiledItemSchema(CamelModel):
+    kind: Literal["notFiled"] = "notFiled"
+    small_group: ReportListGroupSchema
+    meeting_date: date
+
+
+class ReportCountsSchema(CamelModel):
+    all: int
+    filed: int
+    not_filed: int
+
+
+class ReportListSchema(CamelModel):
+    items: list[Annotated[FiledReportItemSchema | NotFiledItemSchema, Field(discriminator="kind")]]
+    counts: ReportCountsSchema
+    total: int
+    page: int
+    page_size: int
+
+
+class SummaryGroupSchema(CamelModel):
+    id: int
+    name: str
+    meeting_day: Weekday | None
+    closed_at: date | None
+
+
+class SummaryLastReportSchema(CamelModel):
+    id: int
+    meeting_date: date
+    roster_count: int
+    attended_group_count: int
+    submitted_by: ReportPersonSchema
+
+
+class ReportSummaryItemSchema(CamelModel):
+    small_group: SummaryGroupSchema
+    role: SmallGroupRole | None
+    last_report: SummaryLastReportSchema | None
+    not_filed_dates: list[date]

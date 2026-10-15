@@ -1,5 +1,7 @@
+import unicodedata
 from collections.abc import Sequence
 from datetime import date, timedelta
+from typing import Literal
 
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
@@ -15,9 +17,15 @@ from membership_management.data.small_groups.models import (
     SmallGroupRole,
 )
 from membership_management.data.small_groups.queries import (
+    filed_reports_query,
+    latest_report_ids_query,
+    leadership_periods_query,
     led_small_group_ids_query,
     list_small_groups_query,
+    member_active_roles_query,
     recent_attendance_marks_query,
+    report_dates_query,
+    report_groups_query,
     report_id_on_date_query,
     report_in_scope_query,
     roster_periods_on_date_query,
@@ -25,9 +33,18 @@ from membership_management.data.small_groups.queries import (
 )
 from membership_management.data.small_groups.results import (
     AttendanceMark,
+    FiledReportRow,
+    GroupReportSummary,
+    GroupRole,
+    LeadershipPeriod,
+    NotFiledMeeting,
     ReportAttendanceView,
+    ReportCounts,
+    ReportDate,
     ReportDetail,
+    ReportGroupRow,
     ReportInput,
+    ReportPage,
     ReportRoster,
     RosterPeriod,
     RosterPerson,
@@ -37,6 +54,10 @@ from membership_management.data.small_groups.results import (
 
 # Reports looked at for a "missed the last N meetings" hint (rule 11); plenty for a hint.
 MISSED_STREAK_REPORT_WINDOW = 12
+# How far back a meeting without a report still counts as "not filed" (rule 10).
+NOT_FILED_WINDOW_DAYS = 28
+
+ReportStatus = Literal["all", "filed", "notFiled"]
 
 
 class SmallGroupAlreadyClosedError(Exception):
@@ -330,6 +351,146 @@ def delete_report(session: Session, report: SmallGroupReport) -> None:
         raise SmallGroupClosedError
     session.delete(report)
     session.commit()
+
+
+def _fold(text: str) -> str:
+    """Lowercase and drop accents, so "jovenes" finds "Jóvenes"."""
+    decomposed = unicodedata.normalize("NFD", text.casefold())
+    return "".join(c for c in decomposed if not unicodedata.combining(c))
+
+
+def not_filed_dates(
+    session: Session, groups: Sequence[ReportGroupRow], start: date, end: date
+) -> dict[int, list[date]]:
+    """Rule 10, per open group with a meeting day: newest first, the dates in [start, end] that fall on
+    that weekday, had a leader or co-leader that day, and have no report. Closed groups get none (they
+    can't take a report, rule 8), nor do groups without a meeting day. `end` is the caller's "yesterday"
+    at the latest: today never counts.
+    """
+    candidates = [g for g in groups if g.closed_at is None and g.meeting_day is not None]
+    missing: dict[int, list[date]] = {g.id: [] for g in candidates}
+    if not candidates or start > end:
+        return missing
+    ids = frozenset(g.id for g in candidates)
+    filed = {
+        (r.small_group_id, r.meeting_date)
+        for r in all_as(session, report_dates_query(ids, start, end), ReportDate)
+    }
+    leadership: dict[int, list[LeadershipPeriod]] = {}
+    for period in all_as(session, leadership_periods_query(ids), LeadershipPeriod):
+        leadership.setdefault(period.small_group_id, []).append(period)
+    for group in candidates:
+        day = start
+        while day <= end:
+            if (
+                day.isoweekday() == group.meeting_day
+                and (group.id, day) not in filed
+                and any(
+                    p.joined_at <= day and (p.left_at is None or p.left_at >= day)
+                    for p in leadership.get(group.id, [])
+                )
+            ):
+                missing[group.id].append(day)
+            day += timedelta(days=1)
+        missing[group.id].reverse()
+    return missing
+
+
+def list_reports(
+    session: Session,
+    *,
+    only_group_ids: frozenset[int] | None,
+    small_group_id: int | None,
+    from_date: date,
+    to_date: date,
+    status: ReportStatus,
+    q: str | None,
+    page: int,
+    page_size: int,
+    today: date,
+) -> ReportPage:
+    """Filed reports and not-filed meetings of the groups in scope, newest first, one page of them.
+
+    `counts` ignore `status` (they feed the status filter); `total` is after it. `q` matches the group
+    or, for filed reports, the submitter, ignoring case and accents.
+    """
+    if only_group_ids is not None and not only_group_ids:
+        return ReportPage(items=[], counts=ReportCounts(0, 0, 0), total=0)
+    filed = all_as(
+        session,
+        filed_reports_query(
+            only_group_ids, small_group_id=small_group_id, from_date=from_date, to_date=to_date
+        ),
+        FiledReportRow,
+    )
+    groups = all_as(session, report_groups_query(only_group_ids, small_group_id), ReportGroupRow)
+    missing = not_filed_dates(
+        session,
+        groups,
+        max(from_date, today - timedelta(days=NOT_FILED_WINDOW_DAYS)),
+        min(to_date, today - timedelta(days=1)),
+    )
+    not_filed = [
+        NotFiledMeeting(g.id, g.name, g.closed_at, day) for g in groups for day in missing.get(g.id, [])
+    ]
+    if q is not None and q.strip():
+        needle = _fold(q.strip())
+        filed = [
+            r for r in filed if needle in _fold(r.small_group_name) or needle in _fold(r.submitted_by_name)
+        ]
+        not_filed = [m for m in not_filed if needle in _fold(m.small_group_name)]
+    counts = ReportCounts(all=len(filed) + len(not_filed), filed=len(filed), not_filed=len(not_filed))
+    items: list[FiledReportRow | NotFiledMeeting] = []
+    if status != "notFiled":
+        items.extend(filed)
+    if status != "filed":
+        items.extend(not_filed)
+    # Two stable passes: group name ascending inside each date, newest date first.
+    items.sort(key=lambda item: item.small_group_name.casefold())
+    items.sort(key=lambda item: item.meeting_date, reverse=True)
+    start = (page - 1) * page_size
+    return ReportPage(items=items[start : start + page_size], counts=counts, total=len(items))
+
+
+def get_report_summary(
+    session: Session,
+    *,
+    only_group_ids: frozenset[int] | None,
+    member_id: int | None,
+    today: date,
+) -> list[GroupReportSummary]:
+    """Per open group in scope: newest report and not-filed dates. `role` is the caller's current role in
+    the group for scoped callers (pass `only_group_ids`); full callers get None.
+    """
+    if only_group_ids is not None and not only_group_ids:
+        return []
+    groups = [
+        g for g in all_as(session, report_groups_query(only_group_ids), ReportGroupRow) if g.closed_at is None
+    ]
+    if not groups:
+        return []
+    ids = frozenset(g.id for g in groups)
+    latest = {
+        r.small_group_id: r
+        for r in all_as(
+            session, filed_reports_query(None, report_ids=latest_report_ids_query(ids)), FiledReportRow
+        )
+    }
+    roles: dict[int, SmallGroupRole] = {}
+    if only_group_ids is not None and member_id is not None:
+        roles = {
+            r.small_group_id: r.role
+            for r in all_as(session, member_active_roles_query(member_id, ids), GroupRole)
+        }
+    missing = not_filed_dates(
+        session, groups, today - timedelta(days=NOT_FILED_WINDOW_DAYS), today - timedelta(days=1)
+    )
+    return [
+        GroupReportSummary(
+            group=g, role=roles.get(g.id), last_report=latest.get(g.id), not_filed_dates=missing.get(g.id, [])
+        )
+        for g in groups
+    ]
 
 
 def _validated_roster(

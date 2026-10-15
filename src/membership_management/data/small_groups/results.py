@@ -96,3 +96,66 @@ class ReportDetail(NamedTuple):
     submitted_at: datetime
     observations_visible: bool
     attendances: list[ReportAttendanceView]
+
+
+class ReportGroupRow(NamedTuple):
+    id: int
+    name: str
+    meeting_day: int | None
+    closed_at: date | None
+
+
+class FiledReportRow(NamedTuple):
+    id: int
+    small_group_id: int
+    small_group_name: str
+    small_group_closed_at: date | None
+    meeting_date: date
+    submitted_by_member_id: int
+    submitted_by_name: str
+    submitted_at: datetime
+    roster_count: int
+    attended_group_count: int
+    attended_church_count: int
+
+
+class NotFiledMeeting(NamedTuple):
+    small_group_id: int
+    small_group_name: str
+    small_group_closed_at: date | None
+    meeting_date: date
+
+
+class ReportDate(NamedTuple):
+    small_group_id: int
+    meeting_date: date
+
+
+class LeadershipPeriod(NamedTuple):
+    small_group_id: int
+    joined_at: date
+    left_at: date | None
+
+
+class GroupRole(NamedTuple):
+    small_group_id: int
+    role: SmallGroupRole
+
+
+class ReportCounts(NamedTuple):
+    all: int
+    filed: int
+    not_filed: int
+
+
+class ReportPage(NamedTuple):
+    items: list[FiledReportRow | NotFiledMeeting]
+    counts: ReportCounts
+    total: int
+
+
+class GroupReportSummary(NamedTuple):
+    group: ReportGroupRow
+    role: SmallGroupRole | None
+    last_report: FiledReportRow | None
+    not_filed_dates: list[date]
