@@ -10,6 +10,7 @@ def list_members_query() -> Select:
         Member.name.label("name"),
         Member.email.label("email"),
         Member.phone.label("phone"),
+        Member.user_id.label("user_id"),
     ).order_by(Member.id)
 
 

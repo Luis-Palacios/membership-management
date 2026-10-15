@@ -24,7 +24,7 @@ to HTTP codes.
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. `userId` on member responses | [ ] | |
+| 1. `userId` on member responses | [x] | (this commit) |
 | 2. Role check for admin/elder | [ ] | |
 | 3. Link and unlink a user | [ ] | |
 | 4. Internal accept-invite endpoint | [ ] | |
@@ -33,7 +33,7 @@ to HTTP codes.
 
 ### Decisions and deviations
 
-- (none yet)
+- Stage 1: `user_id` added to the `list_members` query, `MemberSummary` result and both schemas. Create/update schemas untouched (confirmed `userId` is absent from them in OpenAPI). Tried with `TestClient` against the local Postgres with the claims dependency overridden: `GET /members` and `GET /members/1` return `userId: null`. `ruff` and `ty` pass.
 
 ## What the staff app does with these endpoints
 
