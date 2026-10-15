@@ -24,7 +24,7 @@ to HTTP codes.
 | --- | --- | --- |
 | 1. Leader on the groups list | [x] | (this commit) |
 | 2. Set the leader in one call | [x] | (this commit) |
-| 3. Closed groups are read-only | [ ] | |
+| 3. Closed groups are read-only | [x] | (this commit) |
 | 4. Docs | [ ] | |
 
 ### Decisions and deviations
@@ -44,6 +44,11 @@ closed/opened; `D` (not in group) -> added as leader, B co-leader; `D` again -> 
 joined today, corrected in place; unknown member and a closed group raise the 404/409 errors. The HTTP route
 (`PUT /small-groups/{id}/leader`) was not called through `/docs`; its error mapping mirrors the member routes.
 The existing POST/PATCH endpoints weren't re-run; their logic is moved unchanged.
+
+**Stage 3.** `update_small_group` raises `SmallGroupClosedError` for a closed group and the PATCH route maps it
+to 409 "This small group is closed.". Tried via the service in a rolled-back transaction: an active group
+renames as before; after closing, the update raises and leaves the name unchanged. The HTTP route wasn't
+called through `/docs`.
 
 _(fill in per stage)_
 
