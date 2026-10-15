@@ -30,7 +30,7 @@ work stay plain `def`. Put report code next to the small group code (`data/small
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. Roster for a date, church Sunday, missed streaks | [ ] | |
+| 1. Roster for a date, church Sunday, missed streaks | [x] | see git log |
 | 2. Create and detail (observation visibility) | [ ] | |
 | 3. Edit and delete | [ ] | |
 | 4. List with not-filed meetings, and the summary | [ ] | |
@@ -38,7 +38,18 @@ work stay plain `def`. Put report code next to the small group code (`data/small
 
 ### Decisions and deviations
 
-- (none yet)
+- Verification: no test runner, so each stage was tried with scratch scripts (kept outside the repo)
+  that seed `ZZ`-prefixed members, groups and reports in the local members DB, call the API through
+  `TestClient` with `get_current_claims` overridden, and delete the rows afterwards. Actors: admin and
+  elder (linked and unlinked), leader and co-leader in scope, leader of another group, former leader,
+  leader of a closed group, deacon with no member, deacon who is only a plain member, `user`.
+- **Names are one `name`, not `firstName`/`lastName`.** `members.name` is a single column (and the
+  staff app's `initialsOf(name)` takes a full name), so every person in a report shape is
+  `{ memberId, name }` instead of `{ memberId, firstName, lastName }`. Applies to `submittedBy`,
+  attendance rows, roster people and the summary. The staff-app session must use `name`.
+- Stage 1: `church_sunday` lives in `data/small_groups/services.py` (the data layer can't import from
+  `api/`); the router imports it. The roster's `date` query parameter is required.
+- Stage 1: the roster checks closed (409) before future (422), the same order as create.
 
 ## Who can do what
 
