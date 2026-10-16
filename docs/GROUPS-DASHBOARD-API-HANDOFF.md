@@ -25,9 +25,9 @@ blocking database work stay plain `def`. Everything goes next to the report code
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. Summary: `hasLeader` and `recentMeetings` | [x] | (stage 1 commit) |
-| 2. Week endpoint | [x] | (stage 2 commit) |
-| 3. Docs | [ ] | |
+| 1. Summary: `hasLeader` and `recentMeetings` | [x] | `556ab75` |
+| 2. Week endpoint | [x] | `2c74b60` |
+| 3. Docs | [x] | this commit |
 
 ### Decisions and deviations
 
@@ -56,6 +56,8 @@ blocking database work stay plain `def`. Everything goes next to the report code
   `observationCount` equals the elder's report detail total and the body contains no observation
   text; admin and elder (linked and unlinked) 200, leader, former leader, deacon without a member
   and `user` 403.
+- **Shapes:** nothing moved from the cross-repo spec. `alembic check` on the dev database: no new
+  upgrade operations, no migration.
 
 ## Who can do what
 
