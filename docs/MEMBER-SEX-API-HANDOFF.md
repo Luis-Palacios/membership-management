@@ -20,9 +20,9 @@ Keep the existing conventions: routes call `data/members/services.py` directly, 
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. Model, migration and seed | ✅ | d275643 |
-| 2. API fields | ✅ | see `git log` |
-| 3. Docs | ✅ | see `git log` |
+| 1. Model, migration and seed | ✅ | 4ee5e36 |
+| 2. API fields | ✅ | bf4dcaa |
+| 3. Docs | ✅ | 8b77c31 |
 
 ### Decisions and deviations
 
@@ -35,6 +35,9 @@ Keep the existing conventions: routes call `data/members/services.py` directly, 
   without `sex`; PATCH set, clear with `null`, and a PATCH without `sex` leaves it; `"Male"` and
   `"other"` give 422 on POST and PATCH; `GET /members` has no `sex`; OpenAPI shows
   `MemberSex` as `male | female`. `""` was not checked on its own.
+- The three commits were made on `member-sex` and then landed on `main` as 4ee5e36, bf4dcaa and
+  8b77c31, so `main` is the reference. `"sex": ""` checked with `TestClient` (claims overridden, rows
+  deleted afterwards): POST and PATCH both give 422.
 
 ## Stage 1: model, migration and seed
 
