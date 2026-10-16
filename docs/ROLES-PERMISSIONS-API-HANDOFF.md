@@ -25,11 +25,12 @@ are domain exceptions the router maps to HTTP codes.
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. Claims and guard | [x] | aee816a |
-| 2. Replace role checks | [x] | b0ec676 |
-| 3. Gate the open routers | [x] | 4ff0cd7 |
-| 4. Members scope and picker | [x] | 8c5005b |
-| 5. Docs | [x] | (this commit) |
+| 1. Claims and guard | [x] | c54ae9e |
+| 2. Replace role checks | [x] | 19d6af3 |
+| 3. Gate the open routers | [x] | a36d3b1 |
+| 4. Members scope and picker | [x] | 7f245e6 |
+| 5. Docs | [x] | 9ba1315 |
+| 6. Own member always readable (found in review) | [x] | (this commit) |
 
 ### Decisions and deviations
 
@@ -106,6 +107,14 @@ are domain exceptions the router maps to HTTP codes.
   rule). Afterwards the scratch auth users were deleted (no sessions left), and the members DB
   matched its starting counts (3 links, 8 groups / 3 closed, 40 reports, 55 memberships). `ruff`
   and `ty` pass.
+- Stage 6 (review fix): staff-app's My profile loads the caller's own member with `GET /members/{id}`,
+  which stage 4 made `members: view` + scope, so a linked `user` got 403 (error page) and a leader not
+  active in an open group they lead got 404 (shown as not linked). Spec rule 11: the caller's own
+  member (`get_current_member`) is always readable, whatever the permissions; read only, `PATCH` is
+  unchanged. The route-level `require_permission` moved into the handler so the own-member case runs
+  first. Tried with `TestClient` against the dev members DB, overriding only the claims and the current
+  member: user own 200, user other 403, user unlinked 403, leader own 200, leader in-scope 200, leader
+  other group 404, deacon own 200, admin any 200, admin missing 404. `ruff` and `ty` pass.
 - **Not tried:** the assimilation-backed routes past the gate (local ODBC/OpenSSL issue, not this
   change), and a token with no `perms` claim end to end (auth-server only mints tokens with it;
   covered at the model level in stage 1).

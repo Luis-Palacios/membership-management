@@ -48,7 +48,7 @@ records with 404 elsewhere, — 403). `smallGroupLeader` and `deacon` are the sa
 | `GET /small-group-reports/week` | `smallGroups: all` + `smallGroupReports: viewObservations` | ✓ | — |
 | `GET /members` | `members: view` + `all` | ✓ | — |
 | `GET /members/options` | `members: search` | ✓ | ✓ (id and name only) |
-| `GET /members/{id}` | `members: view` + members scope | ✓ | scope |
+| `GET /members/{id}` | Own member: none (any role, rule 11). Others: `members: view` + members scope | ✓ | own + scope |
 | `POST /members` | `members: create` | ✓ | — |
 | `PATCH /members/{id}` | `members: update` + members scope; `email` needs `all` | ✓ | scope, no `email` |
 | `PUT`, `DELETE /members/{id}/user` | `members: link` | ✓ | — |

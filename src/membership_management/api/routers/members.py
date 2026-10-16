@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from membership_management.api.access import MemberScope, MemberScopeDep
+from membership_management.api.current_member import CurrentMemberDep
 from membership_management.api.dependencies import MembersSessionDep
 from membership_management.api.jwt_auth import (
     CurrentClaimsDep,
@@ -98,10 +99,20 @@ def get_member_options(db: MembersSessionDep) -> list[MemberOptionSchema]:
 @router.get(
     "/{member_id}",
     name="get_member",
-    description="Get a member with their current small groups (within the caller's members scope)",
-    dependencies=[Depends(require_permission("members", "view"))],
+    description="Get a member with their current small groups (your own, or within your members scope)",
 )
-def get_member_detail(member_id: int, db: MembersSessionDep, scope: MemberScopeDep) -> MemberDetailSchema:
+def get_member_detail(
+    member_id: int,
+    db: MembersSessionDep,
+    claims: CurrentClaimsDep,
+    current_member: CurrentMemberDep,
+    scope: MemberScopeDep,
+) -> MemberDetailSchema:
+    # The caller's own member is always readable (rule 11), whatever the role: My profile loads it.
+    if current_member is not None and current_member.id == member_id:
+        return _detail(db, current_member)
+    if not has_permission(claims, "members", "view"):
+        raise HTTPException(status_code=403, detail="You don't have permission to do this.")
     return _detail(db, _get_or_404(db, member_id, scope))
 
 
