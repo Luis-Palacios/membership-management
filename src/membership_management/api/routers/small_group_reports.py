@@ -7,7 +7,13 @@ from membership_management.api.access import SmallGroupScope, SmallGroupScopeDep
 from membership_management.api.church_time import church_today
 from membership_management.api.current_member import CurrentMemberDep
 from membership_management.api.dependencies import MembersSessionDep
-from membership_management.api.jwt_auth import get_current_claims, require_roles
+from membership_management.api.jwt_auth import (
+    AuthClaims,
+    CurrentClaimsDep,
+    get_current_claims,
+    has_permission,
+    require_permission,
+)
 from membership_management.api.rate_limit import default_user_rate_limit, rate_limit
 from membership_management.api.schemas.small_group_reports import (
     FiledReportItemSchema,
@@ -118,6 +124,7 @@ def _http_error(exc: Exception) -> HTTPException:
     "/small-groups/{small_group_id}/report-roster",
     name="get_small_group_report_roster",
     description="Who goes in a report for a meeting date, plus the church Sunday and any existing report",
+    dependencies=[Depends(require_permission("smallGroupReports", "view"))],
 )
 def get_report_roster_for_date(
     small_group_id: int,
@@ -218,15 +225,21 @@ def _detail_schema(detail: ReportDetail) -> ReportDetailSchema:
     )
 
 
+def _sees_all_observations(claims: AuthClaims) -> bool:
+    return has_permission(claims, "smallGroupReports", "viewObservations")
+
+
 def _report_detail_or_404(
-    db: MembersSessionDep, report_id: int, scope: SmallGroupScope
+    db: MembersSessionDep, report_id: int, scope: SmallGroupScope, claims: AuthClaims
 ) -> ReportDetailSchema:
     """The report's detail as this caller may see it; 404 when missing or outside the scope."""
     report = get_report(db, report_id, None if scope.full else scope.group_ids)
     if report is None:
         raise HTTPException(status_code=404, detail=f"Small group report with ID {report_id} not found.")
     return _detail_schema(
-        build_report_detail(db, report, sees_all_observations=scope.full, viewer_member_id=scope.member_id)
+        build_report_detail(
+            db, report, sees_all_observations=_sees_all_observations(claims), viewer_member_id=scope.member_id
+        )
     )
 
 
@@ -235,6 +248,7 @@ def _report_detail_or_404(
     "/small-group-reports",
     name="list_small_group_reports",
     description="Filed reports and not-filed meetings of the groups in scope, newest first, with counts",
+    dependencies=[Depends(require_permission("smallGroupReports", "view"))],
 )
 def get_small_group_reports(
     db: MembersSessionDep,
@@ -297,6 +311,7 @@ def get_small_group_reports(
     "/small-group-reports/summary",
     name="get_small_group_reports_summary",
     description="Per open group in scope: the latest report and the meetings still without one",
+    dependencies=[Depends(require_permission("smallGroupReports", "view"))],
 )
 def get_small_group_reports_summary(
     db: MembersSessionDep, scope: SmallGroupScopeDep
@@ -343,8 +358,11 @@ def get_small_group_reports_summary(
 @router.get(
     "/small-group-reports/week",
     name="get_small_group_reports_week",
-    description="Every open group's report status for a Sunday-to-Saturday week (admins and elders only)",
-    dependencies=[Depends(require_roles("admin", "elder"))],
+    description="Every open group's report status for a Sunday-to-Saturday week",
+    dependencies=[
+        Depends(require_permission("smallGroups", "all")),
+        Depends(require_permission("smallGroupReports", "viewObservations")),
+    ],
 )
 def get_small_group_reports_week(
     db: MembersSessionDep, week_date: Annotated[date | None, Query(alias="date")] = None
@@ -395,12 +413,16 @@ def get_small_group_reports_week(
     description="File the report of a meeting; the caller's member is recorded as the submitter",
     status_code=status.HTTP_201_CREATED,
     response_model_exclude_unset=True,
-    dependencies=[Depends(rate_limit("20/minute", scope="create_small_group_report"))],
+    dependencies=[
+        Depends(require_permission("smallGroupReports", "create")),
+        Depends(rate_limit("20/minute", scope="create_small_group_report")),
+    ],
 )
 def post_small_group_report(
     small_group_id: int,
     body: ReportBodySchema,
     db: MembersSessionDep,
+    claims: CurrentClaimsDep,
     scope: SmallGroupScopeDep,
     member: CurrentMemberDep,
 ) -> ReportDetailSchema:
@@ -425,19 +447,20 @@ def post_small_group_report(
         NotGroupLeaderOnDateError,
     ) as exc:
         raise _http_error(exc) from exc
-    return _report_detail_or_404(db, report.id, scope)
+    return _report_detail_or_404(db, report.id, scope, claims)
 
 
 @router.get(
     "/small-group-reports/{report_id}",
     name="get_small_group_report",
-    description="A report with its attendance; observations only for admins, elders and the submitter",
+    description="A report with its attendance; observations only with viewObservations or for the submitter",
     response_model_exclude_unset=True,
+    dependencies=[Depends(require_permission("smallGroupReports", "view"))],
 )
 def get_small_group_report(
-    report_id: int, db: MembersSessionDep, scope: SmallGroupScopeDep
+    report_id: int, db: MembersSessionDep, claims: CurrentClaimsDep, scope: SmallGroupScopeDep
 ) -> ReportDetailSchema:
-    return _report_detail_or_404(db, report_id, scope)
+    return _report_detail_or_404(db, report_id, scope, claims)
 
 
 @router.patch(
@@ -445,10 +468,17 @@ def get_small_group_report(
     name="update_small_group_report",
     description="Replace a report's content and attendance; the submitter and submission time never change",
     response_model_exclude_unset=True,
-    dependencies=[Depends(rate_limit("30/minute", scope="update_small_group_report"))],
+    dependencies=[
+        Depends(require_permission("smallGroupReports", "update")),
+        Depends(rate_limit("30/minute", scope="update_small_group_report")),
+    ],
 )
 def patch_small_group_report(
-    report_id: int, body: ReportBodySchema, db: MembersSessionDep, scope: SmallGroupScopeDep
+    report_id: int,
+    body: ReportBodySchema,
+    db: MembersSessionDep,
+    claims: CurrentClaimsDep,
+    scope: SmallGroupScopeDep,
 ) -> ReportDetailSchema:
     report = get_report(db, report_id, None if scope.full else scope.group_ids)
     if report is None:
@@ -458,7 +488,7 @@ def patch_small_group_report(
             db,
             report,
             _to_input(body),
-            sees_all_observations=scope.full,
+            sees_all_observations=_sees_all_observations(claims),
             viewer_member_id=scope.member_id,
             today=church_today(),
         )
@@ -469,7 +499,7 @@ def patch_small_group_report(
         AttendanceMismatchError,
     ) as exc:
         raise _http_error(exc) from exc
-    return _report_detail_or_404(db, report_id, scope)
+    return _report_detail_or_404(db, report_id, scope, claims)
 
 
 @router.delete(
@@ -477,7 +507,10 @@ def patch_small_group_report(
     name="delete_small_group_report",
     description="Delete a report and its attendance",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(rate_limit("20/minute", scope="delete_small_group_report"))],
+    dependencies=[
+        Depends(require_permission("smallGroupReports", "delete")),
+        Depends(rate_limit("20/minute", scope="delete_small_group_report")),
+    ],
 )
 def delete_small_group_report(report_id: int, db: MembersSessionDep, scope: SmallGroupScopeDep) -> Response:
     report = get_report(db, report_id, None if scope.full else scope.group_ids)

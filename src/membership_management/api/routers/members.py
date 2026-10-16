@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from membership_management.api.dependencies import MembersSessionDep
-from membership_management.api.jwt_auth import get_current_claims, require_roles
+from membership_management.api.jwt_auth import get_current_claims, require_permission
 from membership_management.api.rate_limit import default_user_rate_limit, rate_limit
 from membership_management.api.schemas.members import (
     MemberCreateSchema,
@@ -118,9 +118,9 @@ def patch_member(member_id: int, body: MemberUpdateSchema, db: MembersSessionDep
 @router.put(
     "/{member_id}/user",
     name="link_member_user",
-    description="Link the member to a user account (admin and elder only)",
+    description="Link the member to a user account (members: link)",
     dependencies=[
-        Depends(require_roles("admin", "elder")),
+        Depends(require_permission("members", "link")),
         Depends(rate_limit("20/minute", scope="link_member_user")),
     ],
 )
@@ -140,10 +140,10 @@ def put_member_user(member_id: int, body: MemberUserLinkSchema, db: MembersSessi
 @router.delete(
     "/{member_id}/user",
     name="unlink_member_user",
-    description="Remove the member's user link (admin and elder only)",
+    description="Remove the member's user link (members: link)",
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[
-        Depends(require_roles("admin", "elder")),
+        Depends(require_permission("members", "link")),
         Depends(rate_limit("20/minute", scope="unlink_member_user")),
     ],
 )
