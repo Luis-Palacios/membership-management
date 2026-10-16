@@ -40,7 +40,7 @@ of a closed group, deacon with no member, user). Keep every convention from the 
 | 1. Migration and model | ✅ | see `git log` (stage 1 commit) |
 | 2. Create / edit / delete a no meeting, replace on create | ✅ | see `git log` (stage 2 commit) |
 | 3. Reads: detail, list, summary, week, roster | ✅ | see `git log` (stage 3 commit) |
-| 4. Counting fixes (last report, streaks, filed counts) | ⬜ | |
+| 4. Counting fixes (last report, streaks, filed counts) | ✅ | see `git log` (stage 4 commit) |
 | 5. Seed and docs | ⬜ | |
 
 ### Decisions and deviations
@@ -66,6 +66,9 @@ of a closed group, deacon with no member, user). Keep every convention from the 
   `ReportDate` (from `report_dates_query`, still unfiltered) carries `held`, which feeds
   `RecentMeeting.held`. Week `reports` are sorted held first, no meetings after. `last_report` still
   needs the `held = true` filter: Stage 4.
+- Stage 4: only two queries needed the `held = true` filter (`latest_report_ids_query` and the
+  `latest_reports` window in `recent_attendance_marks_query`). A grep for `attended_group` and
+  `SmallGroupReport` found no other attendance averages or counts; filed counts were done in Stage 3.
 - Replacing a no meeting flushes the delete before inserting the report (the unit of work inserts
   first and would hit the unique constraint).
 
