@@ -29,6 +29,14 @@ class AuthClaims(BaseModel):
     # Deliberately a plain str, not a Literal/enum of the known roles -- validating it against
     # the known role set is Phase 9's authorization job, not this phase's authentication job.
     role: str
+    # auth-server's computed permissions for `role` (`permissionsFor` in statements.ts), as
+    # resource -> actions. Missing (a token minted before auth-server shipped `perms`) means no
+    # permissions at all: fail closed. Routes check these, never `role`.
+    perms: dict[str, list[str]] = {}
+
+
+def has_permission(claims: AuthClaims, resource: str, action: str) -> bool:
+    return action in claims.perms.get(resource, ())
 
 
 def get_current_claims(
@@ -67,6 +75,20 @@ def require_roles(*allowed: str) -> Callable[[AuthClaims], AuthClaims]:
 
     def dependency(claims: CurrentClaimsDep) -> AuthClaims:
         if claims.role not in allowed:
+            raise HTTPException(status_code=403, detail="You don't have permission to do this.")
+        return claims
+
+    return dependency
+
+
+def require_permission(resource: str, *actions: str) -> Callable[[AuthClaims], AuthClaims]:
+    """Dependency factory: returns the claims if `perms[resource]` has every one of `actions`, else 403.
+
+    All-of, like staff-app's `can(...)`: `require_permission("members", "view", "all")` needs both.
+    """
+
+    def dependency(claims: CurrentClaimsDep) -> AuthClaims:
+        if not all(has_permission(claims, resource, action) for action in actions):
             raise HTTPException(status_code=403, detail="You don't have permission to do this.")
         return claims
 

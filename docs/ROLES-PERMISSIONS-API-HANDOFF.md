@@ -25,7 +25,7 @@ are domain exceptions the router maps to HTTP codes.
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. Claims and guard | [ ] | |
+| 1. Claims and guard | [x] | (this commit) |
 | 2. Replace role checks | [ ] | |
 | 3. Gate the open routers | [ ] | |
 | 4. Members scope and picker | [ ] | |
@@ -33,7 +33,16 @@ are domain exceptions the router maps to HTTP codes.
 
 ### Decisions and deviations
 
-(Filled in per stage.)
+- Tokens for every check are real: one scratch user + session per role inserted in auth-server's
+  dev DB (`rp-test-<role>`, no email sent), the session cookie signed with `BETTER_AUTH_SECRET`,
+  and `GET :5000/api/auth/token` called with it. The scratch users are deleted after stage 5.
+- Stage 1: `perms` defaults to `{}`; `has_permission` is a plain lookup, `require_permission` is
+  all-of. Tried on a scratch FastAPI app with the real `get_current_claims` (JWKS from `:5000`):
+  `members: view+all`, `members: search`, `smallGroups: view`, `smallGroups: setLeader`,
+  `smallGroupReports: viewObservations`, `user: list` give 200 for admin and elder on all six;
+  smallGroupLeader and deacon 200 only on `search` and `smallGroups: view`; user and pending 403
+  on all. No token / garbage token 401. A payload without `perms` validates to `{}`; a list instead
+  of a dict fails validation (so 401). `ruff` and `ty` pass.
 
 ## The JWT this API receives (auth-server stage 2)
 
