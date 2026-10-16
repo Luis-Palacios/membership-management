@@ -10,14 +10,64 @@ A single microservice — membership management (assimilation): membership appli
 - FastAPI surface to list, review, and approve membership applications.
 - Planned areas beyond applications: members management, small groups, and small-group reports.
 
+## Permissions (built)
+
+Rules: `docs/specs/roles-and-permissions.md` (workspace repo); this side:
+`docs/ROLES-PERMISSIONS-API-HANDOFF.md`. **No role names are checked here.** auth-server's
+`statements.ts` is the only role → permission map; it puts the caller's permissions in the JWT as
+`perms` (`Record<resource, action[]>`), and every route checks those:
+
+- `api/jwt_auth.py`: `AuthClaims.perms` (missing → `{}`, fail closed), `has_permission(claims,
+  resource, action)` and `require_permission(resource, *actions)` (all-of, 403).
+- **Permissions say what, scope says on which records** (`api/access.py`). `SmallGroupScopeDep`:
+  403 without `smallGroups: view`; with `smallGroups: all` every group, otherwise the groups the
+  caller's member leads or co-led when they closed. `MemberScopeDep`: with `members: all` every
+  member, otherwise members active in an open group of that small group scope. Out of scope is 404
+  (same message as missing); a missing permission is 403.
+- Leadership rule 9: adding, promoting to or changing a `leader` row needs `smallGroups:
+  setLeader`; without `smallGroups: all` you can't change your own row. Report observations need
+  `smallGroupReports: viewObservations`, or being the submitter. A member's `email` can be changed
+  only with `members: all`.
+- Not permission-gated: `GET /me` (any valid JWT, `pending` included), `GET /health`,
+  `/internal/*` (shared `X-Internal-Token`).
+
+What each role gets today (from auth-server's statements; ✓ all records, *scope* only its
+records with 404 elsewhere, — 403). `smallGroupLeader` and `deacon` are the same for now; `user` and
+`pending` have no permissions and get 403 on every route below.
+
+| Route | Permission | admin, elder | smallGroupLeader, deacon |
+| --- | --- | --- | --- |
+| `GET /small-groups`, `GET /small-groups/{id}` | `smallGroups: view` (+ scope) | ✓ | scope |
+| `POST /small-groups` | `smallGroups: create` | ✓ | — |
+| `PATCH /small-groups/{id}` | `smallGroups: update` + scope | ✓ | scope |
+| `POST /small-groups/{id}/close` | `smallGroups: close` + scope | ✓ | — |
+| `PUT /small-groups/{id}/leader` | `smallGroups: setLeader` + scope | ✓ | — |
+| `POST`, `PATCH`, `DELETE /small-groups/{id}/members[/{memberId}]` | `smallGroups: manageMembers` + scope, rule 9 | ✓ | scope, no leader rows, not own row |
+| `GET /small-group-reports`, `/summary`, `/{id}`, `GET /small-groups/{id}/report-roster` | `smallGroupReports: view` + scope | ✓ (observations) | scope (own observations) |
+| `POST /small-groups/{id}/reports`, `PATCH`, `DELETE /small-group-reports/{id}` | `smallGroupReports: create` / `update` / `delete` + scope | ✓ | scope |
+| `GET /small-group-reports/week` | `smallGroups: all` + `smallGroupReports: viewObservations` | ✓ | — |
+| `GET /members` | `members: view` + `all` | ✓ | — |
+| `GET /members/options` | `members: search` | ✓ | ✓ (id and name only) |
+| `GET /members/{id}` | `members: view` + members scope | ✓ | scope |
+| `POST /members` | `members: create` | ✓ | — |
+| `PATCH /members/{id}` | `members: update` + members scope; `email` needs `all` | ✓ | scope, no `email` |
+| `PUT`, `DELETE /members/{id}/user` | `members: link` | ✓ | — |
+| `GET /applications/recents`, `/recents/count`, `/{id}` | `membershipApplications: view` | ✓ | — |
+| `POST /applications/approve`, `/reject` | `membershipApplications: approve` / `reject` | ✓ | — |
+| `GET /people/{id}/events`, `/first-assistance` | `membershipApplications: view` | ✓ | — |
+| `GET /me` | none (any valid JWT) | ✓ | ✓ |
+
+A new role, or a change to what a role can do, is an auth-server change only; nothing here
+changes unless a new *action* needs a new check.
+
 ## Small group reports (built)
 
 A group files one report per meeting date: the group's text fields plus one attendance row for every member whose membership covers that date. Rules and contracts: `docs/specs/small-group-reports.md` (workspace repo) and `docs/SMALL-GROUP-REPORTS-API-HANDOFF.md`. Code: `api/routers/small_group_reports.py`, `data/small_groups/{queries,results,services}.py`.
 
-- Routes: `GET /small-group-reports` (filed reports and computed not-filed meetings, counts, paging), `GET /small-group-reports/summary` (dashboard), `GET /small-groups/{id}/report-roster?date=`, `POST /small-groups/{id}/reports`, `GET|PATCH|DELETE /small-group-reports/{id}`. Access is the leader access scope (`SmallGroupScopeDep`): admin/elder everything, smallGroupLeader/deacon only their groups (404 elsewhere), other roles 403; closed groups are read-only (409).
-- **Observations are private (rule 9).** An attendance row's pastoral `observation` is returned, and editable, only for admin/elder and for the report's submitter. `build_report_detail` decides it once per request and nulls every observation otherwise; the schema then omits the key. Lists and the summary never carry observations.
+- Routes: `GET /small-group-reports` (filed reports and computed not-filed meetings, counts, paging), `GET /small-group-reports/summary` (dashboard), `GET /small-groups/{id}/report-roster?date=`, `POST /small-groups/{id}/reports`, `GET|PATCH|DELETE /small-group-reports/{id}`. Access is `smallGroupReports` permissions plus the small group scope (`SmallGroupScopeDep`, see *Permissions*); closed groups are read-only (409).
+- **Observations are private (rule 9).** An attendance row's pastoral `observation` is returned, and editable, only with `smallGroupReports: viewObservations` and for the report's submitter. `build_report_detail` decides it once per request and nulls every observation otherwise; the schema then omits the key. Lists and the summary never carry observations.
 - "Not filed" is computed, never stored: `recent_meetings` returns, per open group with a meeting day, every date in the last 28 days before today that had a leader or co-leader, with the report id on it or None; `not_filed_dates` is the entries without one.
-- **Groups dashboard** (`docs/specs/groups-dashboard.md`, `docs/GROUPS-DASHBOARD-API-HANDOFF.md`). The summary adds `hasLeader` (an open leader or co-leader period today) and `recentMeetings` (the list above, newest first). `GET /small-group-reports/week?date=` (admin/elder only, since it carries observation *counts*, rule 9) gives every open group's status for the Sunday-to-Saturday week of `date` (default today): `submitted`, `notFiled`, `today`, `upcoming`, `noLeader` or `noMeetingDay`, first match wins (`get_report_week`). A week after the current one is 422; closed groups never appear.
+- **Groups dashboard** (`docs/specs/groups-dashboard.md`, `docs/GROUPS-DASHBOARD-API-HANDOFF.md`). The summary adds `hasLeader` (an open leader or co-leader period today) and `recentMeetings` (the list above, newest first). `GET /small-group-reports/week?date=` (`smallGroups: all` + `smallGroupReports: viewObservations`, since it carries observation *counts*, rule 9) gives every open group's status for the Sunday-to-Saturday week of `date` (default today): `submitted`, `notFiled`, `today`, `upcoming`, `noLeader` or `noMeetingDay`, first match wins (`get_report_week`). A week after the current one is 422; closed groups never appear.
 - Names in these routes are the member's single stored `name` (members have no first/last name columns).
 
 ## Infra / deployment target
