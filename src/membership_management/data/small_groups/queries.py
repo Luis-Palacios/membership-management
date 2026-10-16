@@ -215,8 +215,9 @@ def filed_reports_query(
 
 
 def report_dates_query(group_ids: frozenset[int], from_date: date, to_date: date) -> Select:
-    """(group, meeting date) of every report in the range, to tell filed meetings from not-filed ones."""
+    """(report, group, meeting date) of every report in the range: filed meetings vs not-filed ones."""
     return select(
+        SmallGroupReport.id.label("report_id"),
         SmallGroupReport.small_group_id.label("small_group_id"),
         SmallGroupReport.meeting_date.label("meeting_date"),
     ).where(

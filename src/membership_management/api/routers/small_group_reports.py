@@ -12,6 +12,7 @@ from membership_management.api.rate_limit import default_user_rate_limit, rate_l
 from membership_management.api.schemas.small_group_reports import (
     FiledReportItemSchema,
     NotFiledItemSchema,
+    RecentMeetingSchema,
     ReportAttendanceSchema,
     ReportBodySchema,
     ReportCountsSchema,
@@ -321,6 +322,10 @@ def get_small_group_reports_summary(
                 else None
             ),
             not_filed_dates=row.not_filed_dates,
+            has_leader=row.has_leader,
+            recent_meetings=[
+                RecentMeetingSchema(date=m.date, report_id=m.report_id) for m in row.recent_meetings
+            ],
         )
         for row in summary
     ]
