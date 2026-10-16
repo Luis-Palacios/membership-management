@@ -25,13 +25,22 @@ blocking database work stay plain `def`. Everything goes next to the report code
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. Summary: `hasLeader` and `recentMeetings` | [ ] | |
+| 1. Summary: `hasLeader` and `recentMeetings` | [x] | (stage 1 commit) |
 | 2. Week endpoint | [ ] | |
 | 3. Docs | [ ] | |
 
 ### Decisions and deviations
 
-- [Anything decided during implementation, or where the build differs from this document, and why.]
+- **How it was tried:** no test runner, so a throwaway `TestClient` script (not committed) with
+  `get_current_claims` overridden per role, against a scratch Postgres database (migrated, seeded,
+  plus fixture groups for each case, today = 2026-10-16). The dev database was not touched.
+- **Stage 1:** `recent_meetings` replaces the body of `not_filed_dates`, which stays as a thin
+  wrapper over it (`list_reports` is untouched). Leadership periods are loaded once per summary and
+  shared with the helper, so `has_leader` costs no extra query. `notFiledDates` and `lastReport`
+  were compared with `main` for every role on the seed: identical. Tried: leader since 10 days ago,
+  co-leader only (`hasLeader` true), only leader gone (`hasLeader` false, dates kept while they led),
+  Sunday group, today never listed, no meeting day gives `[]`; admin, elder (linked and unlinked),
+  leader (1 group), former leader and deacon without a member (empty), `user` 403.
 
 ## Who can do what
 

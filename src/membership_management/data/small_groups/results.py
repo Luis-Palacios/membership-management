@@ -129,6 +129,7 @@ class NotFiledMeeting(NamedTuple):
 
 
 class ReportDate(NamedTuple):
+    report_id: int
     small_group_id: int
     meeting_date: date
 
@@ -137,6 +138,13 @@ class LeadershipPeriod(NamedTuple):
     small_group_id: int
     joined_at: date
     left_at: date | None
+
+
+class RecentMeeting(NamedTuple):
+    """A date rule 10 looks at, with the report filed on it (None when not filed)."""
+
+    date: date
+    report_id: int | None
 
 
 class GroupRole(NamedTuple):
@@ -161,3 +169,7 @@ class GroupReportSummary(NamedTuple):
     role: SmallGroupRole | None
     last_report: FiledReportRow | None
     not_filed_dates: list[date]
+    # An active leader or co-leader today.
+    has_leader: bool
+    # Newest first; `not_filed_dates` is the entries without a report.
+    recent_meetings: list[RecentMeeting]

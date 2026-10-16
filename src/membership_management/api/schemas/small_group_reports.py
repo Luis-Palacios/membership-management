@@ -174,8 +174,15 @@ class SummaryLastReportSchema(CamelModel):
     submitted_by: ReportPersonSchema
 
 
+class RecentMeetingSchema(CamelModel):
+    date: date
+    report_id: int | None
+
+
 class ReportSummaryItemSchema(CamelModel):
     small_group: SummaryGroupSchema
     role: SmallGroupRole | None
     last_report: SummaryLastReportSchema | None
     not_filed_dates: list[date]
+    has_leader: bool
+    recent_meetings: list[RecentMeetingSchema]

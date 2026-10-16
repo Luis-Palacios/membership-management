@@ -38,6 +38,7 @@ from membership_management.data.small_groups.results import (
     GroupRole,
     LeadershipPeriod,
     NotFiledMeeting,
+    RecentMeeting,
     ReportAttendanceView,
     ReportCounts,
     ReportDate,
@@ -360,41 +361,58 @@ def _fold(text: str) -> str:
     return "".join(c for c in decomposed if not unicodedata.combining(c))
 
 
-def not_filed_dates(
-    session: Session, groups: Sequence[ReportGroupRow], start: date, end: date
-) -> dict[int, list[date]]:
-    """Rule 10, per open group with a meeting day: newest first, the dates in [start, end] that fall on
-    that weekday, had a leader or co-leader that day, and have no report. Closed groups get none (they
-    can't take a report, rule 8), nor do groups without a meeting day. `end` is the caller's "yesterday"
-    at the latest: today never counts.
+def _leadership_by_group(session: Session, group_ids: frozenset[int]) -> dict[int, list[LeadershipPeriod]]:
+    leadership: dict[int, list[LeadershipPeriod]] = {}
+    for period in all_as(session, leadership_periods_query(group_ids), LeadershipPeriod):
+        leadership.setdefault(period.small_group_id, []).append(period)
+    return leadership
+
+
+def recent_meetings(
+    session: Session,
+    groups: Sequence[ReportGroupRow],
+    start: date,
+    end: date,
+    leadership: dict[int, list[LeadershipPeriod]] | None = None,
+) -> dict[int, list[RecentMeeting]]:
+    """Rule 10's candidate meetings, per open group with a meeting day: newest first, every date in
+    [start, end] that falls on that weekday and had a leader or co-leader that day, with the id of the
+    report filed on it (None = not filed). Closed groups get none (they can't take a report, rule 8),
+    nor do groups without a meeting day. `end` is the caller's "yesterday" at the latest: today never
+    counts. Pass `leadership` (from `_leadership_by_group`) when the caller already loaded it.
     """
     candidates = [g for g in groups if g.closed_at is None and g.meeting_day is not None]
-    missing: dict[int, list[date]] = {g.id: [] for g in candidates}
+    meetings: dict[int, list[RecentMeeting]] = {g.id: [] for g in candidates}
     if not candidates or start > end:
-        return missing
+        return meetings
     ids = frozenset(g.id for g in candidates)
     filed = {
-        (r.small_group_id, r.meeting_date)
+        (r.small_group_id, r.meeting_date): r.report_id
         for r in all_as(session, report_dates_query(ids, start, end), ReportDate)
     }
-    leadership: dict[int, list[LeadershipPeriod]] = {}
-    for period in all_as(session, leadership_periods_query(ids), LeadershipPeriod):
-        leadership.setdefault(period.small_group_id, []).append(period)
+    if leadership is None:
+        leadership = _leadership_by_group(session, ids)
     for group in candidates:
         day = start
         while day <= end:
-            if (
-                day.isoweekday() == group.meeting_day
-                and (group.id, day) not in filed
-                and any(
-                    p.joined_at <= day and (p.left_at is None or p.left_at >= day)
-                    for p in leadership.get(group.id, [])
-                )
+            if day.isoweekday() == group.meeting_day and any(
+                p.joined_at <= day and (p.left_at is None or p.left_at >= day)
+                for p in leadership.get(group.id, [])
             ):
-                missing[group.id].append(day)
+                meetings[group.id].append(RecentMeeting(day, filed.get((group.id, day))))
             day += timedelta(days=1)
-        missing[group.id].reverse()
-    return missing
+        meetings[group.id].reverse()
+    return meetings
+
+
+def not_filed_dates(
+    session: Session, groups: Sequence[ReportGroupRow], start: date, end: date
+) -> dict[int, list[date]]:
+    """Rule 10: `recent_meetings` without a report, as dates."""
+    return {
+        group_id: [m.date for m in meetings if m.report_id is None]
+        for group_id, meetings in recent_meetings(session, groups, start, end).items()
+    }
 
 
 def list_reports(
@@ -460,8 +478,10 @@ def get_report_summary(
     member_id: int | None,
     today: date,
 ) -> list[GroupReportSummary]:
-    """Per open group in scope: newest report and not-filed dates. `role` is the caller's current role in
-    the group for scoped callers (pass `only_group_ids`); full callers get None.
+    """Per open group in scope: newest report, rule 10's recent meetings and whether anyone leads today.
+
+    `role` is the caller's current role in the group for scoped callers (pass `only_group_ids`); full
+    callers get None.
     """
     if only_group_ids is not None and not only_group_ids:
         return []
@@ -483,12 +503,18 @@ def get_report_summary(
             r.small_group_id: r.role
             for r in all_as(session, member_active_roles_query(member_id, ids), GroupRole)
         }
-    missing = not_filed_dates(
-        session, groups, today - timedelta(days=NOT_FILED_WINDOW_DAYS), today - timedelta(days=1)
+    leadership = _leadership_by_group(session, ids)
+    meetings = recent_meetings(
+        session, groups, today - timedelta(days=NOT_FILED_WINDOW_DAYS), today - timedelta(days=1), leadership
     )
     return [
         GroupReportSummary(
-            group=g, role=roles.get(g.id), last_report=latest.get(g.id), not_filed_dates=missing.get(g.id, [])
+            group=g,
+            role=roles.get(g.id),
+            last_report=latest.get(g.id),
+            not_filed_dates=[m.date for m in meetings.get(g.id, []) if m.report_id is None],
+            has_leader=any(p.left_at is None for p in leadership.get(g.id, [])),
+            recent_meetings=meetings.get(g.id, []),
         )
         for g in groups
     ]
