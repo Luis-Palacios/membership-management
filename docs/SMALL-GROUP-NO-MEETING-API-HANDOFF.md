@@ -135,7 +135,7 @@ Add `existing_report_held: bool | null` next to `existing_report_id`, so the dat
 `DuplicateReportHTTPError` body adds `existingReportHeld: bool`:
 `{ "detail": "There's already a report…", "existingReportId": 12, "existingReportHeld": false }`.
 
-## Rules (add to the cross-repo spec as rule 13, "No meeting")
+## Rules (rule 13 in the cross-repo spec, already added; summary)
 
 1. A leader or co-leader of an open group can record that the group didn't meet on a date (today or
    earlier), with an optional reason (≤ 255). It occupies the date like a report.
@@ -209,8 +209,8 @@ Every place that treats "a report" as "a meeting with attendance" must filter `h
 - `data/seed/small_group_reports.py` already skips some weeks ("holidays, rain…"). Turn about a third
   of those skips into no meetings with a reason (Spanish, matching the seed's Managua flavour), so
   dashboards show all three states.
-- `docs/ARCHITECTURE.md` (*Small group reports*), `CLAUDE.md` one line, and the cross-repo spec's
-  rule 13. Mark this log done.
+- `docs/ARCHITECTURE.md` (*Small group reports*) and one line in `CLAUDE.md`. Rule 13 is already in
+  the cross-repo spec; only fix it if the implementation had to differ. Mark this log done.
 
 ## Not in this spec
 
