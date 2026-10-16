@@ -26,7 +26,7 @@ are domain exceptions the router maps to HTTP codes.
 | Stage | Status | Commit |
 | --- | --- | --- |
 | 1. Claims and guard | [x] | (this commit) |
-| 2. Replace role checks | [ ] | |
+| 2. Replace role checks | [x] | (this commit) |
 | 3. Gate the open routers | [ ] | |
 | 4. Members scope and picker | [ ] | |
 | 5. Docs | [ ] | |
@@ -43,6 +43,26 @@ are domain exceptions the router maps to HTTP codes.
   smallGroupLeader and deacon 200 only on `search` and `smallGroups: view`; user and pending 403
   on all. No token / garbage token 401. A payload without `perms` validates to `{}`; a list instead
   of a dict fails validation (so 401). `ruff` and `ty` pass.
+- Stage 2: `get_small_group_scope` 403s without `smallGroups: view`, `full` is `smallGroups: all`.
+  Rule 9 helpers renamed `ensure_caller_can_add_member` / `ensure_caller_can_change_member` and
+  take the claims: the own-row check still keys on `scope.full` (`all`), the leader checks on
+  `setLeader`, so admin/elder behave as before. **Close and set-leader now also go through the
+  scope** (they skipped it because only full roles reached them): rule 3 says an action without
+  `all` is scoped, so a future role with `close` but not `all` stays inside its groups.
+  `_get_or_404` therefore always takes a scope. The report roster (`GET
+  /small-groups/{id}/report-roster`) is read-only, so it needs `smallGroupReports: view`, not
+  `create`. `caller_is_scoped` on report create (the submitter must have led on that date) stays
+  `not scope.full`: it's about records, not an action. Observations: `sees_all_observations` is
+  `smallGroupReports: viewObservations`; the submitter still sees their own. `require_roles`
+  deleted; `members: link` on the two link routes. Tried with the role runner (real app, real
+  tokens, one rolled-back members-DB transaction per role, leader linked to member 6, deacon to
+  41): admin and elder unchanged on every small group, report and link route; leader sees groups
+  1 and closed 6, deacon only 2, others 404; leader can update, add, change and remove in group 1,
+  gets 403 on adding a leader, changing their own row, promoting to leader, set-leader, close and
+  create; deacon 404 in group 1; week 403 for both; report observations visible to the leader on
+  their own report 8 and not on 37, to the deacon not on 14; user and pending 403 everywhere; link
+  routes 403 for everyone but admin/elder. Dev data checked unchanged afterwards. `ruff` and `ty`
+  pass.
 
 ## The JWT this API receives (auth-server stage 2)
 

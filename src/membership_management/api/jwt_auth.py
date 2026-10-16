@@ -26,8 +26,7 @@ _jwks_client = jwt.PyJWKClient(_JWKS_URL, cache_keys=True, lifespan=300)
 
 class AuthClaims(BaseModel):
     sub: str
-    # Deliberately a plain str, not a Literal/enum of the known roles -- validating it against
-    # the known role set is Phase 9's authorization job, not this phase's authentication job.
+    # Display only (`GET /me`). Nothing checks it: routes check `perms`.
     role: str
     # auth-server's computed permissions for `role` (`permissionsFor` in statements.ts), as
     # resource -> actions. Missing (a token minted before auth-server shipped `perms`) means no
@@ -64,21 +63,6 @@ def get_current_claims(
 
 
 CurrentClaimsDep = Annotated[AuthClaims, Depends(get_current_claims)]
-
-
-def require_roles(*allowed: str) -> Callable[[AuthClaims], AuthClaims]:
-    """Dependency factory: returns the claims if `role` is one of `allowed`, else 403.
-
-    Generic on purpose (takes role names) so the role-based gating planned in Phase 9 can reuse it.
-    Role names are auth-server's role keys, e.g. `require_roles("admin", "elder")`.
-    """
-
-    def dependency(claims: CurrentClaimsDep) -> AuthClaims:
-        if claims.role not in allowed:
-            raise HTTPException(status_code=403, detail="You don't have permission to do this.")
-        return claims
-
-    return dependency
 
 
 def require_permission(resource: str, *actions: str) -> Callable[[AuthClaims], AuthClaims]:

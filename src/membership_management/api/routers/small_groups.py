@@ -5,12 +5,12 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from membership_management.api.access import (
     SmallGroupScope,
     SmallGroupScopeDep,
-    ensure_scoped_caller_can_add_member,
-    ensure_scoped_caller_can_change_member,
+    ensure_caller_can_add_member,
+    ensure_caller_can_change_member,
 )
 from membership_management.api.church_time import church_today
 from membership_management.api.dependencies import MembersSessionDep
-from membership_management.api.jwt_auth import get_current_claims, require_roles
+from membership_management.api.jwt_auth import CurrentClaimsDep, get_current_claims, require_permission
 from membership_management.api.rate_limit import default_user_rate_limit, rate_limit
 from membership_management.api.schemas.small_groups import (
     SmallGroupCreateSchema,
@@ -69,15 +69,9 @@ def _detail(db: MembersSessionDep, small_group: SmallGroup) -> SmallGroupDetailS
     )
 
 
-def _get_or_404(
-    db: MembersSessionDep, small_group_id: int, scope: SmallGroupScope | None = None
-) -> SmallGroup:
+def _get_or_404(db: MembersSessionDep, small_group_id: int, scope: SmallGroupScope) -> SmallGroup:
     """404 when the group doesn't exist or is outside the scope, with the same message for both."""
-    small_group = (
-        None
-        if scope is not None and not scope.includes(small_group_id)
-        else get_small_group(db, small_group_id)
-    )
+    small_group = get_small_group(db, small_group_id) if scope.includes(small_group_id) else None
     if small_group is None:
         raise HTTPException(status_code=404, detail=f"Small group with ID {small_group_id} not found.")
     return small_group
@@ -115,7 +109,7 @@ def get_small_group_detail(
     description="Create a small group",
     status_code=status.HTTP_201_CREATED,
     dependencies=[
-        Depends(require_roles("admin", "elder")),
+        Depends(require_permission("smallGroups", "create")),
         Depends(rate_limit("20/minute", scope="create_small_group")),
     ],
 )
@@ -130,7 +124,10 @@ def post_small_group(body: SmallGroupCreateSchema, db: MembersSessionDep) -> Sma
     "/{small_group_id}",
     name="update_small_group",
     description="Update the given fields of a small group",
-    dependencies=[Depends(rate_limit("30/minute", scope="update_small_group"))],
+    dependencies=[
+        Depends(require_permission("smallGroups", "update")),
+        Depends(rate_limit("30/minute", scope="update_small_group")),
+    ],
 )
 def patch_small_group(
     small_group_id: int, body: SmallGroupUpdateSchema, db: MembersSessionDep, scope: SmallGroupScopeDep
@@ -152,12 +149,14 @@ def patch_small_group(
     name="close_small_group",
     description="Close a small group today and end all its active memberships",
     dependencies=[
-        Depends(require_roles("admin", "elder")),
+        Depends(require_permission("smallGroups", "close")),
         Depends(rate_limit("10/minute", scope="close_small_group")),
     ],
 )
-def post_close_small_group(small_group_id: int, db: MembersSessionDep) -> SmallGroupDetailSchema:
-    small_group = _get_or_404(db, small_group_id)
+def post_close_small_group(
+    small_group_id: int, db: MembersSessionDep, scope: SmallGroupScopeDep
+) -> SmallGroupDetailSchema:
+    small_group = _get_or_404(db, small_group_id, scope)
     try:
         small_group = close_small_group(db, small_group, _today())
     except SmallGroupAlreadyClosedError as exc:
@@ -174,13 +173,20 @@ def _today() -> date:
     name="add_small_group_member",
     description="Add a member to a small group, joining today",
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(rate_limit("30/minute", scope="add_small_group_member"))],
+    dependencies=[
+        Depends(require_permission("smallGroups", "manageMembers")),
+        Depends(rate_limit("30/minute", scope="add_small_group_member")),
+    ],
 )
 def post_small_group_member(
-    small_group_id: int, body: SmallGroupMemberAddSchema, db: MembersSessionDep, scope: SmallGroupScopeDep
+    small_group_id: int,
+    body: SmallGroupMemberAddSchema,
+    db: MembersSessionDep,
+    claims: CurrentClaimsDep,
+    scope: SmallGroupScopeDep,
 ) -> SmallGroupDetailSchema:
     small_group = _get_or_404(db, small_group_id, scope)
-    ensure_scoped_caller_can_add_member(scope, body.role)
+    ensure_caller_can_add_member(claims, body.role)
     try:
         add_small_group_member(db, small_group, member_id=body.member_id, role=body.role, today=_today())
     except SmallGroupClosedError as exc:
@@ -198,17 +204,21 @@ def post_small_group_member(
     "/{small_group_id}/members/{member_id}",
     name="change_small_group_member_role",
     description="Change a member's role; the previous period is kept as history",
-    dependencies=[Depends(rate_limit("30/minute", scope="change_small_group_member_role"))],
+    dependencies=[
+        Depends(require_permission("smallGroups", "manageMembers")),
+        Depends(rate_limit("30/minute", scope="change_small_group_member_role")),
+    ],
 )
 def patch_small_group_member(
     small_group_id: int,
     member_id: int,
     body: SmallGroupMemberRoleSchema,
     db: MembersSessionDep,
+    claims: CurrentClaimsDep,
     scope: SmallGroupScopeDep,
 ) -> SmallGroupDetailSchema:
     small_group = _get_or_404(db, small_group_id, scope)
-    ensure_scoped_caller_can_change_member(db, scope, small_group_id, member_id, body.role)
+    ensure_caller_can_change_member(db, claims, scope, small_group_id, member_id, body.role)
     try:
         change_small_group_member_role(db, small_group, member_id=member_id, role=body.role, today=_today())
     except SmallGroupClosedError as exc:
@@ -225,14 +235,14 @@ def patch_small_group_member(
     name="set_small_group_leader",
     description="Make a member the leader; any current leader becomes co-leader, in one transaction",
     dependencies=[
-        Depends(require_roles("admin", "elder")),
+        Depends(require_permission("smallGroups", "setLeader")),
         Depends(rate_limit("30/minute", scope="set_small_group_leader")),
     ],
 )
 def put_small_group_leader(
-    small_group_id: int, body: SmallGroupLeaderSchema, db: MembersSessionDep
+    small_group_id: int, body: SmallGroupLeaderSchema, db: MembersSessionDep, scope: SmallGroupScopeDep
 ) -> SmallGroupDetailSchema:
-    small_group = _get_or_404(db, small_group_id)
+    small_group = _get_or_404(db, small_group_id, scope)
     try:
         set_small_group_leader(db, small_group, member_id=body.member_id, today=_today())
     except SmallGroupClosedError as exc:
@@ -249,13 +259,20 @@ def put_small_group_leader(
     name="remove_small_group_member",
     description="Remove a member by ending their membership today; the row is kept as history",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(rate_limit("30/minute", scope="remove_small_group_member"))],
+    dependencies=[
+        Depends(require_permission("smallGroups", "manageMembers")),
+        Depends(rate_limit("30/minute", scope="remove_small_group_member")),
+    ],
 )
 def delete_small_group_member(
-    small_group_id: int, member_id: int, db: MembersSessionDep, scope: SmallGroupScopeDep
+    small_group_id: int,
+    member_id: int,
+    db: MembersSessionDep,
+    claims: CurrentClaimsDep,
+    scope: SmallGroupScopeDep,
 ) -> Response:
     small_group = _get_or_404(db, small_group_id, scope)
-    ensure_scoped_caller_can_change_member(db, scope, small_group_id, member_id, None)
+    ensure_caller_can_change_member(db, claims, scope, small_group_id, member_id, None)
     try:
         remove_small_group_member(db, small_group, member_id=member_id, today=_today())
     except ActiveMembershipNotFoundError as exc:
