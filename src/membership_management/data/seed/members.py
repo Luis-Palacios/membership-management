@@ -2,7 +2,7 @@ import random
 import unicodedata
 from datetime import date, timedelta
 
-from membership_management.data.members.models import Member
+from membership_management.data.members.models import Member, MemberSex
 from membership_management.data.seed import fixtures
 from membership_management.data.seed.context import SeedContext
 
@@ -10,6 +10,8 @@ MEMBER_COUNT = 55
 # Share of members with an email/phone on file; the rest are left null, as in real data.
 EMAIL_RATE = 0.8
 PHONE_RATE = 0.95
+# Share of members with a sex on file.
+SEX_RATE = 0.9
 
 
 def seed_members(ctx: SeedContext) -> None:
@@ -17,7 +19,8 @@ def seed_members(ctx: SeedContext) -> None:
     names: set[str] = set()
     emails: set[str] = set()
     while len(names) < MEMBER_COUNT:
-        given = rng.choice(fixtures.FEMALE_GIVEN_NAMES if rng.random() < 0.55 else fixtures.MALE_GIVEN_NAMES)
+        female = rng.random() < 0.55
+        given = rng.choice(fixtures.FEMALE_GIVEN_NAMES if female else fixtures.MALE_GIVEN_NAMES)
         first_surname, second_surname = rng.sample(fixtures.SURNAMES, 2)
         name = f"{given} {first_surname} {second_surname}"
         if name in names:
@@ -30,6 +33,7 @@ def seed_members(ctx: SeedContext) -> None:
                 phone=_phone(rng) if rng.random() < PHONE_RATE else None,
                 address=managua_address(rng),
                 birth_date=_birth_date(rng, ctx.today),
+                sex=(MemberSex.FEMALE if female else MemberSex.MALE) if rng.random() < SEX_RATE else None,
             )
         )
     ctx.session.flush()

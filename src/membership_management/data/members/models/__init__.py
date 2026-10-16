@@ -1,3 +1,3 @@
-from membership_management.data.members.models.member import Member
+from membership_management.data.members.models.member import Member, MemberSex
 
-__all__ = ["Member"]
+__all__ = ["Member", "MemberSex"]
