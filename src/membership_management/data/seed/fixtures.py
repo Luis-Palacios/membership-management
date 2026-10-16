@@ -85,6 +85,15 @@ GROUP_DISCUSSIONS = [
     "Se planificó un convivio para fin de mes.",
 ]
 
+NOT_HELD_REASONS = [
+    "Lluvia fuerte; casi nadie pudo llegar.",
+    "Feriado; el grupo acordó no reunirse.",
+    "El líder estaba de viaje y no hubo quién dirigiera.",
+    "Corte de energía en la zona.",
+    "Última semana del mes: sin reunión.",
+    None,
+]
+
 ABSENCE_OBSERVATIONS = [
     "Avisó que estaba enfermo; se le llamó para orar.",
     "Turno de trabajo; dijo que vendrá la otra semana.",

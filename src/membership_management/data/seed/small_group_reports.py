@@ -13,8 +13,10 @@ from membership_management.data.small_groups.models import (
 )
 
 WEEKS_OF_REPORTS = 8
-# Chance a given week has no meeting/report (holidays, rain, the leader travelling...).
-SKIPPED_WEEK_RATE = 0.1
+# Chance a given week has no report (holidays, rain, the leader travelling...). About a third of
+# those weeks are recorded as a "no meeting"; the rest stay not filed, so dashboards show all three.
+SKIPPED_WEEK_RATE = 0.15
+NO_MEETING_SHARE = 1 / 3
 ATTENDED_GROUP_RATE = 0.8
 ATTENDED_CHURCH_RATE = 0.85
 
@@ -28,7 +30,9 @@ def seed_small_group_reports(ctx: SeedContext) -> None:
             session.scalars(select(SmallGroupMember).where(SmallGroupMember.small_group_id == group.id))
         )
         for meeting_date in _meeting_dates(group, ctx.today):
-            if rng.random() < SKIPPED_WEEK_RATE:
+            skipped = rng.random() < SKIPPED_WEEK_RATE
+            no_meeting = skipped and rng.random() < NO_MEETING_SHARE
+            if skipped and not no_meeting:
                 continue
             active = [row for row in rows if _active_on(row, meeting_date)]
             leaders = [row for row in active if row.role != SmallGroupRole.MEMBER]
@@ -43,6 +47,18 @@ def seed_small_group_reports(ctx: SeedContext) -> None:
                 datetime.combine(meeting_date, time(21, 0), MANAGUA_TZ) + timedelta(hours=rng.randint(0, 40)),
                 datetime.combine(ctx.today, time(8, 0), MANAGUA_TZ),
             )
+            if no_meeting:
+                session.add(
+                    SmallGroupReport(
+                        small_group=group,
+                        meeting_date=meeting_date,
+                        held=False,
+                        not_held_reason=rng.choice(fixtures.NOT_HELD_REASONS),
+                        submitted_by_member_id=submitter.member_id,
+                        submitted_at=submitted_at,
+                    )
+                )
+                continue
             report = SmallGroupReport(
                 small_group=group,
                 meeting_date=meeting_date,
