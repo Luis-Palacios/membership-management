@@ -26,7 +26,7 @@ def upgrade() -> None:
     )
     op.add_column("small_group_reports", sa.Column("not_held_reason", sa.String(length=255), nullable=True))
     op.create_check_constraint(
-        "not_held_reason_only_when_not_held", "small_group_reports", "held OR not_held_reason IS NULL"
+        "not_held_reason_only_when_not_held", "small_group_reports", "NOT held OR not_held_reason IS NULL"
     )
     op.create_check_constraint(
         "not_held_has_no_texts",
