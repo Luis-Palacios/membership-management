@@ -7,7 +7,7 @@ from membership_management.api.access import SmallGroupScope, SmallGroupScopeDep
 from membership_management.api.church_time import church_today
 from membership_management.api.current_member import CurrentMemberDep
 from membership_management.api.dependencies import MembersSessionDep
-from membership_management.api.jwt_auth import get_current_claims
+from membership_management.api.jwt_auth import get_current_claims, require_roles
 from membership_management.api.rate_limit import default_user_rate_limit, rate_limit
 from membership_management.api.schemas.small_group_reports import (
     FiledReportItemSchema,
@@ -27,8 +27,13 @@ from membership_management.api.schemas.small_group_reports import (
     ReportRosterSchema,
     ReportSummaryItemSchema,
     ReportTotalsSchema,
+    ReportWeekSchema,
     SummaryGroupSchema,
     SummaryLastReportSchema,
+    WeekGroupSchema,
+    WeekLeaderSchema,
+    WeekReportSchema,
+    WeekSmallGroupSchema,
 )
 from membership_management.data.small_groups.models import SmallGroup
 from membership_management.data.small_groups.results import (
@@ -40,6 +45,7 @@ from membership_management.data.small_groups.results import (
 from membership_management.data.small_groups.services import (
     AttendanceMismatchError,
     FutureMeetingDateError,
+    FutureWeekError,
     MemberRequiredToSubmitError,
     NotGroupLeaderOnDateError,
     ReportAlreadyExistsError,
@@ -52,6 +58,7 @@ from membership_management.data.small_groups.services import (
     get_report,
     get_report_roster,
     get_report_summary,
+    get_report_week,
     get_small_group,
     list_reports,
     update_report,
@@ -96,6 +103,8 @@ def _http_error(exc: Exception) -> HTTPException:
         return HTTPException(status_code=409, detail="This small group is closed.")
     if isinstance(exc, FutureMeetingDateError):
         return HTTPException(status_code=422, detail="The meeting date can't be in the future.")
+    if isinstance(exc, FutureWeekError):
+        return HTTPException(status_code=422, detail="The week can't be in the future.")
     if isinstance(exc, AttendanceMismatchError):
         return HTTPException(
             status_code=422, detail="The attendance doesn't match the group's members on that date."
@@ -329,6 +338,55 @@ def get_small_group_reports_summary(
         )
         for row in summary
     ]
+
+
+@router.get(
+    "/small-group-reports/week",
+    name="get_small_group_reports_week",
+    description="Every open group's report status for a Sunday-to-Saturday week (admins and elders only)",
+    dependencies=[Depends(require_roles("admin", "elder"))],
+)
+def get_small_group_reports_week(
+    db: MembersSessionDep, week_date: Annotated[date | None, Query(alias="date")] = None
+) -> ReportWeekSchema:
+    today = church_today()
+    try:
+        week = get_report_week(db, day=week_date if week_date is not None else today, today=today)
+    except FutureWeekError as exc:
+        raise _http_error(exc) from exc
+    return ReportWeekSchema(
+        week_start=week.week_start,
+        week_end=week.week_end,
+        today=week.today,
+        is_current_week=week.is_current_week,
+        groups=[
+            WeekGroupSchema(
+                small_group=WeekSmallGroupSchema(
+                    id=g.group.id, name=g.group.name, meeting_day=g.group.meeting_day
+                ),
+                leaders=[
+                    WeekLeaderSchema(member_id=l.member_id, name=l.name, role=l.role) for l in g.leaders
+                ],
+                status=g.status,
+                meeting_date=g.meeting_date,
+                reports=[
+                    WeekReportSchema(
+                        id=r.id,
+                        meeting_date=r.meeting_date,
+                        roster_count=r.roster_count,
+                        attended_group_count=r.attended_group_count,
+                        attended_church_count=r.attended_church_count,
+                        observation_count=r.observation_count,
+                        submitted_by=ReportPersonSchema(
+                            member_id=r.submitted_by_member_id, name=r.submitted_by_name
+                        ),
+                    )
+                    for r in g.reports
+                ],
+            )
+            for g in week.groups
+        ],
+    )
 
 
 @router.post(

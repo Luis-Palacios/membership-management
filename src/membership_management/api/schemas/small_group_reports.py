@@ -186,3 +186,41 @@ class ReportSummaryItemSchema(CamelModel):
     not_filed_dates: list[date]
     has_leader: bool
     recent_meetings: list[RecentMeetingSchema]
+
+
+class WeekSmallGroupSchema(CamelModel):
+    id: int
+    name: str
+    meeting_day: Weekday | None
+
+
+class WeekLeaderSchema(CamelModel):
+    member_id: int
+    name: str
+    role: SmallGroupRole
+
+
+class WeekReportSchema(CamelModel):
+    id: int
+    meeting_date: date
+    roster_count: int
+    attended_group_count: int
+    attended_church_count: int
+    observation_count: int
+    submitted_by: ReportPersonSchema
+
+
+class WeekGroupSchema(CamelModel):
+    small_group: WeekSmallGroupSchema
+    leaders: list[WeekLeaderSchema]
+    status: Literal["submitted", "notFiled", "today", "upcoming", "noLeader", "noMeetingDay"]
+    meeting_date: date | None
+    reports: list[WeekReportSchema]
+
+
+class ReportWeekSchema(CamelModel):
+    week_start: date
+    week_end: date
+    today: date
+    is_current_week: bool
+    groups: list[WeekGroupSchema]

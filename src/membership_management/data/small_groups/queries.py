@@ -266,3 +266,55 @@ def member_active_roles_query(member_id: int, group_ids: frozenset[int]) -> Sele
         SmallGroupMember.small_group_id.in_(group_ids),
         SmallGroupMember.left_at.is_(None),
     )
+
+
+def week_reports_query(from_date: date, to_date: date) -> Select:
+    """Reports dated in [from_date, to_date] with attendance counts, newest first. Counts only: the
+    observation text is never selected (rule 9), just how many rows have one."""
+    attendance = SmallGroupReportAttendance
+    return (
+        select(
+            SmallGroupReport.id.label("id"),
+            SmallGroupReport.small_group_id.label("small_group_id"),
+            SmallGroupReport.meeting_date.label("meeting_date"),
+            func.count(attendance.id).label("roster_count"),
+            func.count(attendance.id)
+            .filter(attendance.attended_group.is_(True))
+            .label("attended_group_count"),
+            func.count(attendance.id)
+            .filter(attendance.attended_church.is_(True))
+            .label("attended_church_count"),
+            func.count(attendance.id).filter(attendance.observation.is_not(None)).label("observation_count"),
+            Member.id.label("submitted_by_member_id"),
+            Member.name.label("submitted_by_name"),
+        )
+        .join(Member, Member.id == SmallGroupReport.submitted_by_member_id)
+        .outerjoin(attendance, attendance.report_id == SmallGroupReport.id)
+        .where(SmallGroupReport.meeting_date >= from_date, SmallGroupReport.meeting_date <= to_date)
+        .group_by(SmallGroupReport.id, Member.id)
+        .order_by(SmallGroupReport.meeting_date.desc(), SmallGroupReport.id.desc())
+    )
+
+
+def active_leaders_query(group_ids: frozenset[int]) -> Select:
+    """Who leads or co-leads each group today (open periods), leader first, then co-leaders by name."""
+    return (
+        select(
+            SmallGroupMember.small_group_id.label("small_group_id"),
+            Member.id.label("member_id"),
+            Member.name.label("member_name"),
+            SmallGroupMember.role.label("role"),
+        )
+        .join(Member, Member.id == SmallGroupMember.member_id)
+        .where(
+            SmallGroupMember.small_group_id.in_(group_ids),
+            SmallGroupMember.role.in_([SmallGroupRole.LEADER, SmallGroupRole.CO_LEADER]),
+            SmallGroupMember.left_at.is_(None),
+        )
+        .order_by(
+            # 'co_leader' < 'leader' alphabetically, so sort the leader explicitly first.
+            (SmallGroupMember.role != SmallGroupRole.LEADER),
+            Member.name,
+            Member.id,
+        )
+    )

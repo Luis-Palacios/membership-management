@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 from membership_management.data.small_groups.models import SmallGroupRole
 
@@ -173,3 +173,50 @@ class GroupReportSummary(NamedTuple):
     has_leader: bool
     # Newest first; `not_filed_dates` is the entries without a report.
     recent_meetings: list[RecentMeeting]
+
+
+WeekStatus = Literal["submitted", "notFiled", "today", "upcoming", "noLeader", "noMeetingDay"]
+
+
+class WeekReportRow(NamedTuple):
+    """A report dated in the week, with counts only: observation text never leaves the database."""
+
+    id: int
+    small_group_id: int
+    meeting_date: date
+    roster_count: int
+    attended_group_count: int
+    attended_church_count: int
+    observation_count: int
+    submitted_by_member_id: int
+    submitted_by_name: str
+
+
+class ActiveLeaderRow(NamedTuple):
+    small_group_id: int
+    member_id: int
+    member_name: str
+    role: SmallGroupRole
+
+
+class WeekLeader(NamedTuple):
+    member_id: int
+    name: str
+    role: SmallGroupRole
+
+
+class WeekGroup(NamedTuple):
+    group: ReportGroupRow
+    leaders: list[WeekLeader]
+    status: WeekStatus
+    # The week's date on the group's meeting day (even when the report is on another day).
+    meeting_date: date | None
+    reports: list[WeekReportRow]
+
+
+class ReportWeek(NamedTuple):
+    week_start: date
+    week_end: date
+    today: date
+    is_current_week: bool
+    groups: list[WeekGroup]

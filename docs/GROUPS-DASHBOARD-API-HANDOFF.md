@@ -26,7 +26,7 @@ blocking database work stay plain `def`. Everything goes next to the report code
 | Stage | Status | Commit |
 | --- | --- | --- |
 | 1. Summary: `hasLeader` and `recentMeetings` | [x] | (stage 1 commit) |
-| 2. Week endpoint | [ ] | |
+| 2. Week endpoint | [x] | (stage 2 commit) |
 | 3. Docs | [ ] | |
 
 ### Decisions and deviations
@@ -41,6 +41,21 @@ blocking database work stay plain `def`. Everything goes next to the report code
   co-leader only (`hasLeader` true), only leader gone (`hasLeader` false, dates kept while they led),
   Sunday group, today never listed, no meeting day gives `[]`; admin, elder (linked and unlinked),
   leader (1 group), former leader and deacon without a member (empty), `user` 403.
+- **Stage 2:** `week_reports_query` is separate from `filed_reports_query`, so the summary and list
+  queries are unchanged; it selects only the observation *count* (`count(...) filter (observation is
+  not null)`), never the text. `WeekLeaderSchema.role` uses `SmallGroupRole` like the rest of the
+  API (`"leader"` / `"co_leader"`). `date` is applied through `church_sunday`, so any day of a week
+  gives the same response; a malformed `date` is FastAPI's standard 422 (no "future" in `detail`).
+  Tried against the scratch DB: Sunday, Wednesday and Saturday of the current week give identical
+  bodies; `2026-10-18` and later 422 "The week can't be in the future."; a past week has only
+  `submitted`, `notFiled`, `noLeader`, `noMeetingDay`; two reports in a week (one on a non-meeting
+  day) give `submitted` with both newest first; a report only on a non-meeting day gives `submitted`
+  with `meetingDate` still the group's day; a leader who left after `D` gives `notFiled`, before `D`
+  `noLeader`; a Friday group on Friday gives `today`; a closed group is absent; no meeting day gives
+  `noMeetingDay`, or `submitted` with a report; no leaders at all and `D` ahead gives `noLeader`;
+  `observationCount` equals the elder's report detail total and the body contains no observation
+  text; admin and elder (linked and unlinked) 200, leader, former leader, deacon without a member
+  and `user` 403.
 
 ## Who can do what
 
