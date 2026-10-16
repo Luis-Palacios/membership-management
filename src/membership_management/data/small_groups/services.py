@@ -17,6 +17,7 @@ from membership_management.data.small_groups.models import (
     SmallGroupRole,
 )
 from membership_management.data.small_groups.queries import (
+    active_leaders_query,
     filed_reports_query,
     latest_report_ids_query,
     leadership_periods_query,
@@ -30,8 +31,10 @@ from membership_management.data.small_groups.queries import (
     report_in_scope_query,
     roster_periods_on_date_query,
     small_group_active_members_query,
+    week_reports_query,
 )
 from membership_management.data.small_groups.results import (
+    ActiveLeaderRow,
     AttendanceMark,
     FiledReportRow,
     GroupReportSummary,
@@ -47,10 +50,15 @@ from membership_management.data.small_groups.results import (
     ReportInput,
     ReportPage,
     ReportRoster,
+    ReportWeek,
     RosterPeriod,
     RosterPerson,
     SmallGroupActiveMember,
     SmallGroupSummary,
+    WeekGroup,
+    WeekLeader,
+    WeekReportRow,
+    WeekStatus,
 )
 
 # Reports looked at for a "missed the last N meetings" hint (rule 11); plenty for a hint.
@@ -107,6 +115,10 @@ class AttendanceMismatchError(Exception):
 
 class NotGroupLeaderOnDateError(Exception):
     """A scoped caller didn't hold leader or co-leader in the group on the meeting date (rule 5)."""
+
+
+class FutureWeekError(Exception):
+    """The requested week starts after the current church week (groups dashboard rule 4)."""
 
 
 def church_sunday(d: date) -> date:
@@ -518,6 +530,76 @@ def get_report_summary(
         )
         for g in groups
     ]
+
+
+def get_report_week(session: Session, *, day: date, today: date) -> ReportWeek:
+    """Every open group's status for the Sunday-to-Saturday week containing `day` (dashboard rule 6).
+
+    A week after the current one is refused; any later day of the current week is the same week. Only
+    counts of observations are read (rule 9), so the caller must be a full role.
+    """
+    week_start = church_sunday(day)
+    current_week_start = church_sunday(today)
+    if week_start > current_week_start:
+        raise FutureWeekError
+    week_end = week_start + timedelta(days=6)
+    groups = [g for g in all_as(session, report_groups_query(None), ReportGroupRow) if g.closed_at is None]
+    if not groups:
+        return ReportWeek(week_start, week_end, today, week_start == current_week_start, [])
+    ids = frozenset(g.id for g in groups)
+    reports: dict[int, list[WeekReportRow]] = {}
+    for report in all_as(session, week_reports_query(week_start, week_end), WeekReportRow):
+        if report.small_group_id in ids:
+            reports.setdefault(report.small_group_id, []).append(report)
+    leadership = _leadership_by_group(session, ids)
+    leaders: dict[int, list[WeekLeader]] = {}
+    for row in all_as(session, active_leaders_query(ids), ActiveLeaderRow):
+        leaders.setdefault(row.small_group_id, []).append(
+            WeekLeader(row.member_id, row.member_name, row.role)
+        )
+    return ReportWeek(
+        week_start=week_start,
+        week_end=week_end,
+        today=today,
+        is_current_week=week_start == current_week_start,
+        groups=[
+            _week_group(
+                g, week_start, today, reports.get(g.id, []), leaders.get(g.id, []), leadership.get(g.id, [])
+            )
+            for g in groups
+        ],
+    )
+
+
+def _week_group(
+    group: ReportGroupRow,
+    week_start: date,
+    today: date,
+    reports: list[WeekReportRow],
+    leaders: list[WeekLeader],
+    leadership: list[LeadershipPeriod],
+) -> WeekGroup:
+    # The week starts on Sunday and `meeting_day` is ISO (Mon 1 .. Sun 7): Sunday (7) is day 0.
+    meeting_date = (
+        week_start + timedelta(days=group.meeting_day % 7) if group.meeting_day is not None else None
+    )
+    status: WeekStatus
+    if reports:
+        status = "submitted"
+    elif meeting_date is None:
+        status = "noMeetingDay"
+    else:
+        # Same per-date test as rule 10, but a meeting still ahead is judged by who leads today.
+        check = min(meeting_date, today)
+        if not any(p.joined_at <= check and (p.left_at is None or p.left_at >= check) for p in leadership):
+            status = "noLeader"
+        elif meeting_date < today:
+            status = "notFiled"
+        elif meeting_date == today:
+            status = "today"
+        else:
+            status = "upcoming"
+    return WeekGroup(group=group, leaders=leaders, status=status, meeting_date=meeting_date, reports=reports)
 
 
 def _validated_roster(
