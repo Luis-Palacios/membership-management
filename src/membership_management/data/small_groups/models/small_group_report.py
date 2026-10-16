@@ -1,7 +1,18 @@
 from datetime import date, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Date, DateTime, ForeignKey, Identity, String, UniqueConstraint, func
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Date,
+    DateTime,
+    ForeignKey,
+    Identity,
+    String,
+    UniqueConstraint,
+    func,
+    true,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from membership_management.data.database import MemberManagementBase
@@ -16,11 +27,23 @@ if TYPE_CHECKING:
 
 class SmallGroupReport(MemberManagementBase):
     __tablename__ = "small_group_reports"
-    __table_args__ = (UniqueConstraint("small_group_id", "meeting_date"),)
+    __table_args__ = (
+        UniqueConstraint("small_group_id", "meeting_date"),
+        CheckConstraint("held OR not_held_reason IS NULL", name="not_held_reason_only_when_not_held"),
+        CheckConstraint(
+            "held OR (address IS NULL AND group_prayer_request IS NULL"
+            " AND group_praise_report IS NULL AND group_relevant_discussion IS NULL)",
+            name="not_held_has_no_texts",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Identity(always=True), primary_key=True)
     small_group_id: Mapped[int] = mapped_column(ForeignKey("small_groups.id"), index=True)
     meeting_date: Mapped[date] = mapped_column(Date)
+    # False = the group didn't meet on meeting_date (a "no meeting"). It still occupies the date, so
+    # the date isn't "not filed"; it has no attendance and no group texts.
+    held: Mapped[bool] = mapped_column(Boolean, server_default=true())
+    not_held_reason: Mapped[str | None] = mapped_column(String(255))
     # Normally the same address from the small group but could vary for this particular meeting.
     address: Mapped[str | None] = mapped_column(String(255))
     group_prayer_request: Mapped[str | None] = mapped_column(String(1024))

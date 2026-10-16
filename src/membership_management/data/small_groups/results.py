@@ -49,6 +49,7 @@ class RosterPerson(NamedTuple):
 class ReportRoster(NamedTuple):
     people: list[RosterPerson]
     existing_report_id: int | None
+    existing_report_held: bool | None = None
 
 
 class AttendanceInput(NamedTuple):
@@ -98,6 +99,8 @@ class ReportDetail(NamedTuple):
     submitted_at: datetime
     observations_visible: bool
     attendances: list[ReportAttendanceView]
+    held: bool = True
+    not_held_reason: str | None = None
 
 
 class ReportGroupRow(NamedTuple):
@@ -119,6 +122,8 @@ class FiledReportRow(NamedTuple):
     roster_count: int
     attended_group_count: int
     attended_church_count: int
+    held: bool = True
+    not_held_reason: str | None = None
 
 
 class NotFiledMeeting(NamedTuple):
@@ -145,6 +150,8 @@ class RecentMeeting(NamedTuple):
 
     date: date
     report_id: int | None
+    # None when not filed.
+    held: bool | None = None
 
 
 class GroupRole(NamedTuple):
@@ -190,6 +197,8 @@ class WeekReportRow(NamedTuple):
     observation_count: int
     submitted_by_member_id: int
     submitted_by_name: str
+    held: bool = True
+    not_held_reason: str | None = None
 
 
 class ActiveLeaderRow(NamedTuple):

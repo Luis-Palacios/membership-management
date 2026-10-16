@@ -37,7 +37,7 @@ of a closed group, deacon with no member, user). Keep every convention from the 
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. Migration and model | ⬜ | |
+| 1. Migration and model | ✅ | see `git log` (stage 1 commit) |
 | 2. Create / edit / delete a no meeting, replace on create | ⬜ | |
 | 3. Reads: detail, list, summary, week, roster | ⬜ | |
 | 4. Counting fixes (last report, streaks, filed counts) | ⬜ | |
@@ -45,7 +45,10 @@ of a closed group, deacon with no member, user). Keep every convention from the 
 
 ### Decisions and deviations
 
-- [Record anything decided during implementation here.]
+- Stage 1: the new fields on the results tuples (`ReportRoster.existing_report_held`,
+  `ReportDetail`/`FiledReportRow`/`WeekReportRow` `held` + `not_held_reason`, `RecentMeeting.held`)
+  are added **at the end with defaults** (`True`/`None`) so existing constructors and `all_as`
+  mappings keep working until stages 2-3 fill them in; drop the defaults if you want them enforced.
 
 ## Data model
 
