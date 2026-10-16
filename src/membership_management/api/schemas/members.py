@@ -4,6 +4,7 @@ from typing import Annotated
 from pydantic import EmailStr, StringConstraints
 
 from membership_management.api.schemas.base import CamelModel
+from membership_management.data.members.models import MemberSex
 from membership_management.data.small_groups.models import SmallGroupRole
 
 # Strip whitespace; limits match the member columns.
@@ -35,6 +36,7 @@ class MemberDetailSchema(CamelModel):
     phone: str | None
     address: str | None
     birth_date: date | None
+    sex: MemberSex | None
     user_id: str | None
     small_groups: list[MemberSmallGroupSchema]
 
@@ -45,6 +47,7 @@ class MemberCreateSchema(CamelModel):
     phone: Phone | None = None
     address: Address | None = None
     birth_date: date | None = None
+    sex: MemberSex | None = None
 
 
 class MemberUpdateSchema(CamelModel):
@@ -55,6 +58,7 @@ class MemberUpdateSchema(CamelModel):
     phone: Phone | None = None
     address: Address | None = None
     birth_date: date | None = None
+    sex: MemberSex | None = None
 
 
 class MemberUserLinkSchema(CamelModel):

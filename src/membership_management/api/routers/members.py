@@ -41,6 +41,7 @@ def _detail(db: MembersSessionDep, member: Member) -> MemberDetailSchema:
         phone=member.phone,
         address=member.address,
         birth_date=member.birth_date,
+        sex=member.sex,
         user_id=member.user_id,
         small_groups=[
             MemberSmallGroupSchema(
@@ -86,6 +87,7 @@ def post_member(body: MemberCreateSchema, db: MembersSessionDep) -> MemberDetail
             phone=body.phone,
             address=body.address,
             birth_date=body.birth_date,
+            sex=body.sex,
         )
     except DuplicateMemberEmailError as exc:
         raise HTTPException(status_code=409, detail="A member with this email already exists.") from exc

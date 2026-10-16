@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from membership_management.data.members.models import Member
+from membership_management.data.members.models import Member, MemberSex
 from membership_management.data.members.queries import (
     list_members_query,
     member_active_leads_query,
@@ -57,8 +57,9 @@ def create_member(
     phone: str | None,
     address: str | None,
     birth_date: date | None,
+    sex: MemberSex | None,
 ) -> Member:
-    member = Member(name=name, email=email, phone=phone, address=address, birth_date=birth_date)
+    member = Member(name=name, email=email, phone=phone, address=address, birth_date=birth_date, sex=sex)
     session.add(member)
     _flush_or_raise_duplicate(session)
     session.commit()
