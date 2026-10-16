@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter, Depends
 
 from membership_management.api.dependencies import SessionDep
-from membership_management.api.jwt_auth import get_current_claims
+from membership_management.api.jwt_auth import get_current_claims, require_permission
 from membership_management.api.rate_limit import default_user_rate_limit
 from membership_management.api.schemas.people import PersonEventSchema, PersonFirstAssistanceSchema
 from membership_management.data.assimilation.models.assistance.results import PersonFirstAssistanceResult
@@ -18,10 +18,16 @@ if TYPE_CHECKING:
     )
     from membership_management.data.assimilation.models.person.results import PersonEventResult
 
+# People are the assimilation DB's records behind membership applications, so they share its
+# permission.
 router = APIRouter(
     prefix="/people",
     tags=["people"],
-    dependencies=[Depends(get_current_claims), Depends(default_user_rate_limit)],
+    dependencies=[
+        Depends(get_current_claims),
+        Depends(default_user_rate_limit),
+        Depends(require_permission("membershipApplications", "view")),
+    ],
 )
 
 

@@ -55,7 +55,12 @@ def _detail(db: MembersSessionDep, member: Member) -> MemberDetailSchema:
     )
 
 
-@router.get("", name="list_members", description="List all members")
+@router.get(
+    "",
+    name="list_members",
+    description="List all members, with email and phone",
+    dependencies=[Depends(require_permission("members", "view", "all"))],
+)
 def get_members(db: MembersSessionDep) -> list[MemberSummarySchema]:
     return [
         MemberSummarySchema(id=m.id, name=m.name, email=m.email, phone=m.phone, user_id=m.user_id)
@@ -63,7 +68,12 @@ def get_members(db: MembersSessionDep) -> list[MemberSummarySchema]:
     ]
 
 
-@router.get("/{member_id}", name="get_member", description="Get a member with their current small groups")
+@router.get(
+    "/{member_id}",
+    name="get_member",
+    description="Get a member with their current small groups",
+    dependencies=[Depends(require_permission("members", "view", "all"))],
+)
 def get_member_detail(member_id: int, db: MembersSessionDep) -> MemberDetailSchema:
     member = get_member(db, member_id)
     if member is None:
@@ -76,7 +86,10 @@ def get_member_detail(member_id: int, db: MembersSessionDep) -> MemberDetailSche
     name="create_member",
     description="Create a member",
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(rate_limit("20/minute", scope="create_member"))],
+    dependencies=[
+        Depends(require_permission("members", "create")),
+        Depends(rate_limit("20/minute", scope="create_member")),
+    ],
 )
 def post_member(body: MemberCreateSchema, db: MembersSessionDep) -> MemberDetailSchema:
     try:
@@ -98,7 +111,10 @@ def post_member(body: MemberCreateSchema, db: MembersSessionDep) -> MemberDetail
     "/{member_id}",
     name="update_member",
     description="Update the given fields of a member",
-    dependencies=[Depends(rate_limit("30/minute", scope="update_member"))],
+    dependencies=[
+        Depends(require_permission("members", "update", "all")),
+        Depends(rate_limit("30/minute", scope="update_member")),
+    ],
 )
 def patch_member(member_id: int, body: MemberUpdateSchema, db: MembersSessionDep) -> MemberDetailSchema:
     member = get_member(db, member_id)
