@@ -29,7 +29,7 @@ class SmallGroupReport(MemberManagementBase):
     __tablename__ = "small_group_reports"
     __table_args__ = (
         UniqueConstraint("small_group_id", "meeting_date"),
-        CheckConstraint("held OR not_held_reason IS NULL", name="not_held_reason_only_when_not_held"),
+        CheckConstraint("NOT held OR not_held_reason IS NULL", name="not_held_reason_only_when_not_held"),
         CheckConstraint(
             "held OR (address IS NULL AND group_prayer_request IS NULL"
             " AND group_praise_report IS NULL AND group_relevant_discussion IS NULL)",
