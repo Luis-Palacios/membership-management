@@ -3,7 +3,7 @@ from datetime import date, timedelta
 
 from sqlalchemy import select
 
-from membership_management.data.members.models import Member
+from membership_management.data.members.models import Member, MemberSex
 from membership_management.data.seed import fixtures
 from membership_management.data.seed.context import SeedContext
 from membership_management.data.seed.members import managua_address
@@ -21,12 +21,17 @@ def seed_small_groups(ctx: SeedContext) -> None:
     rng, today = ctx.rng, ctx.today
     members = list(ctx.session.scalars(select(Member).order_by(Member.id)))
     rng.shuffle(members)
+    # Seed data only: leaders and co-leaders are always men (members with a known male sex).
+    men = [m for m in members if m.sex == MemberSex.MALE]
 
     groups: list[tuple[SmallGroup, date]] = []
     current_rows: list[SmallGroupMember] = []
     for name, neighborhood, meeting_day in fixtures.SMALL_GROUPS:
         size = rng.randint(*GROUP_SIZE_RANGE)
-        leader, co_leader, *regulars = (members.pop() for _ in range(size))
+        leader, co_leader = men.pop(), men.pop()
+        members.remove(leader)
+        members.remove(co_leader)
+        regulars = [members.pop() for _ in range(size - 2)]
         started = today - timedelta(days=rng.randint(400, 1100))
         # The group meets at the leader's home, so move the leader into the group's neighborhood.
         leader.address = managua_address(rng, neighborhood)
