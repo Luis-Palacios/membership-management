@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter, Depends, HTTPException
 
 from membership_management.api.dependencies import SessionDep
-from membership_management.api.jwt_auth import get_current_claims
+from membership_management.api.jwt_auth import get_current_claims, require_permission
 from membership_management.api.rate_limit import default_user_rate_limit, rate_limit
 from membership_management.api.schemas.applications import (
     ApplicationApproval,
@@ -29,7 +29,15 @@ router = APIRouter(
 )
 
 
-@router.get("/recents", name="get_recent_applications", description="Get recent membership applications")
+_view = Depends(require_permission("membershipApplications", "view"))
+
+
+@router.get(
+    "/recents",
+    name="get_recent_applications",
+    description="Get recent membership applications",
+    dependencies=[_view],
+)
 def get_recent_applications(
     db: SessionDep, status: ApplicationStatus | None = None
 ) -> list[MembershipApplicationBase]:
@@ -53,6 +61,7 @@ def get_recent_applications(
     "/recents/count",
     name="get_recent_applications_count",
     description="Get the count of recent membership applications",
+    dependencies=[_view],
 )
 def get_recent_applications_count(db: SessionDep) -> int:
     from membership_management.data.assimilation.models.membership_applications.services import (
@@ -66,7 +75,10 @@ def get_recent_applications_count(db: SessionDep) -> int:
     "/approve",
     name="approve_application",
     description="Approve a membership application",
-    dependencies=[Depends(rate_limit("10/minute", scope="approve"))],
+    dependencies=[
+        Depends(require_permission("membershipApplications", "approve")),
+        Depends(rate_limit("10/minute", scope="approve")),
+    ],
 )
 async def approve_application(application: ApplicationApproval) -> dict[str, str]:
     return {
@@ -81,7 +93,10 @@ async def approve_application(application: ApplicationApproval) -> dict[str, str
     "/reject",
     name="reject_application",
     description="Reject a membership application",
-    dependencies=[Depends(rate_limit("10/minute", scope="reject"))],
+    dependencies=[
+        Depends(require_permission("membershipApplications", "reject")),
+        Depends(rate_limit("10/minute", scope="reject")),
+    ],
 )
 async def reject_application(application: ApplicationRejection) -> dict[str, str]:
     return {
@@ -91,7 +106,7 @@ async def reject_application(application: ApplicationRejection) -> dict[str, str
     }
 
 
-@router.get("/{application_id}")
+@router.get("/{application_id}", dependencies=[_view])
 def get_application(application_id: int, db: SessionDep) -> MembershipApplicationDetailSchema:
     membership_application: MembershipApplicationDetails | None = get_membership_application_detail_by_id(
         db, application_id=application_id

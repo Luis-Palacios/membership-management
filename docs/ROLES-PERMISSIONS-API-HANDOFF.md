@@ -27,7 +27,7 @@ are domain exceptions the router maps to HTTP codes.
 | --- | --- | --- |
 | 1. Claims and guard | [x] | (this commit) |
 | 2. Replace role checks | [x] | (this commit) |
-| 3. Gate the open routers | [ ] | |
+| 3. Gate the open routers | [x] | (this commit) |
 | 4. Members scope and picker | [ ] | |
 | 5. Docs | [ ] | |
 
@@ -63,6 +63,17 @@ are domain exceptions the router maps to HTTP codes.
   their own report 8 and not on 37, to the deacon not on 14; user and pending 403 everywhere; link
   routes 403 for everyone but admin/elder. Dev data checked unchanged afterwards. `ruff` and `ty`
   pass.
+- Stage 3: permissions as in the table above; people take `membershipApplications: view` on the
+  router (both its routes need it), applications per route. Member detail and update need `all` for
+  now so the branch never exposes other members to leaders between stages; stage 4 swaps that for
+  the members scope. Tried with the role runner: `GET /members`, member detail, create, update
+  (phone and email) 200/201 for admin and elder and 403 for the other four; approve / reject
+  200 for admin and elder (still placeholders) and 403 for the rest; `GET /me` 200 for all six
+  (`pending` too), with `member` 6 / 41 for the linked leader and deacon. **The assimilation DB
+  isn't reachable from this machine** (ODBC Driver 18: `OpenSSL library could not be loaded`), so
+  the applications and people reads were only checked as far as the gate: 403 for leader,
+  deacon, user and pending, and past the gate (500 from the DB connection) for admin and elder.
+  `ruff` and `ty` pass.
 
 ## The JWT this API receives (auth-server stage 2)
 
