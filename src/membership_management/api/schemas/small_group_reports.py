@@ -80,6 +80,8 @@ class ReportAttendanceSchema(CamelModel):
     member_id: int
     name: str
     role: SmallGroupRole
+    # Null when the member's membership no longer covers the meeting date (memberships edited later).
+    joined_at: date | None
     attended_group: bool
     attended_church: bool
     missed_streak: int

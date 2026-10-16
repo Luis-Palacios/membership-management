@@ -223,7 +223,7 @@ def build_report_detail(
     observations_visible = observations_visible_to(
         report, sees_all_observations=sees_all_observations, viewer_member_id=viewer_member_id
     )
-    roles = {p.member_id: p.role for p in roster_on_date(session, report.small_group_id, report.meeting_date)}
+    roster = {p.member_id: p for p in roster_on_date(session, report.small_group_id, report.meeting_date)}
     streaks = missed_streaks(
         session, report.small_group_id, [a.member_id for a in report.attendances], report.meeting_date
     )
@@ -232,7 +232,8 @@ def build_report_detail(
             member_id=a.member_id,
             member_name=a.member.name,
             # Memberships edited after the report could drop someone from the roster: show a member.
-            role=roles.get(a.member_id, SmallGroupRole.MEMBER),
+            role=roster[a.member_id].role if a.member_id in roster else SmallGroupRole.MEMBER,
+            joined_at=roster[a.member_id].joined_at if a.member_id in roster else None,
             attended_group=a.attended_group,
             attended_church=a.attended_church,
             missed_streak=streaks[a.member_id],

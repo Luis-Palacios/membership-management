@@ -73,6 +73,8 @@ class ReportAttendanceView(NamedTuple):
     member_id: int
     member_name: str
     role: SmallGroupRole
+    # Start of the membership period covering the meeting date; None if memberships were edited since.
+    joined_at: date | None
     attended_group: bool
     attended_church: bool
     missed_streak: int

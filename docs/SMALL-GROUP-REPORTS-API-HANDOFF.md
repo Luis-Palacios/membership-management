@@ -116,6 +116,7 @@ as stored; the staff app builds initials.
   "attendances": [
     { "memberId": 214, "firstName": "Andrea", "lastName": "Gutiérrez",
       "role": "leader",                     // role in the group on the meeting date
+      "joinedAt": "2026-02-02",             // start of the membership period covering the meeting date; null if memberships changed since
       "attendedGroup": true, "attendedChurch": true,
       "missedStreak": 0,                    // rule 11, before this meeting
       "observation": null }                 // key omitted entirely when observationsVisible is false

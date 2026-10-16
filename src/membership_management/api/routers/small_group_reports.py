@@ -168,6 +168,7 @@ def _detail_schema(detail: ReportDetail) -> ReportDetailSchema:
             member_id=a.member_id,
             name=a.member_name,
             role=a.role,
+            joined_at=a.joined_at,
             attended_group=a.attended_group,
             attended_church=a.attended_church,
             missed_streak=a.missed_streak,
