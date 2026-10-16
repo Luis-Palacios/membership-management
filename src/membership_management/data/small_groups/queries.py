@@ -135,10 +135,15 @@ def report_on_date_query(small_group_id: int, d: date) -> Select:
 
 
 def recent_attendance_marks_query(small_group_id: int, before: date, report_limit: int) -> Select:
-    """Attendance rows of the group's latest `report_limit` reports strictly before `before`, newest first."""
+    """Attendance rows of the group's latest `report_limit` held reports strictly before `before`, newest
+    first. A no meeting has no attendance, so it must not take one of the window's slots."""
     latest_reports = (
         select(SmallGroupReport.id)
-        .where(SmallGroupReport.small_group_id == small_group_id, SmallGroupReport.meeting_date < before)
+        .where(
+            SmallGroupReport.small_group_id == small_group_id,
+            SmallGroupReport.meeting_date < before,
+            SmallGroupReport.held.is_(True),
+        )
         .order_by(SmallGroupReport.meeting_date.desc())
         .limit(report_limit)
     )
@@ -245,7 +250,7 @@ def leadership_periods_query(group_ids: frozenset[int]) -> Select:
 
 
 def latest_report_ids_query(group_ids: frozenset[int]) -> Select:
-    """The id of each group's newest report (by meeting date)."""
+    """The id of each group's newest held report (by meeting date); a no meeting is never the last report."""
     ranked = (
         select(
             SmallGroupReport.id.label("id"),
@@ -256,7 +261,7 @@ def latest_report_ids_query(group_ids: frozenset[int]) -> Select:
             )
             .label("rank"),
         )
-        .where(SmallGroupReport.small_group_id.in_(group_ids))
+        .where(SmallGroupReport.small_group_id.in_(group_ids), SmallGroupReport.held.is_(True))
         .subquery()
     )
     return select(ranked.c.id).where(ranked.c.rank == 1)
