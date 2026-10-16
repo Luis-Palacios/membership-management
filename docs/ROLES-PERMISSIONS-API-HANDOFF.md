@@ -28,7 +28,7 @@ are domain exceptions the router maps to HTTP codes.
 | 1. Claims and guard | [x] | (this commit) |
 | 2. Replace role checks | [x] | (this commit) |
 | 3. Gate the open routers | [x] | (this commit) |
-| 4. Members scope and picker | [ ] | |
+| 4. Members scope and picker | [x] | (this commit) |
 | 5. Docs | [ ] | |
 
 ### Decisions and deviations
@@ -74,6 +74,25 @@ are domain exceptions the router maps to HTTP codes.
   the applications and people reads were only checked as far as the gate: 403 for leader,
   deacon, user and pending, and past the gate (500 from the DB connection) for admin and elder.
   `ruff` and `ty` pass.
+- Stage 4: `MemberScope` / `get_member_scope` in `api/access.py`, next to the small group scope it
+  builds on (`_small_group_scope`, shared with `get_small_group_scope`, returns None instead of
+  403 so a caller with `members: view` but no `smallGroups: view` just gets an empty scope).
+  `group_ids=None` means "any open group" (a caller with `smallGroups: all` but not `members:
+  all`; no role has that today). The check is one `LIMIT 1` query
+  (`member_active_in_open_groups_query`), run only for a single record; there's no scoped list
+  (out of this spec). Detail and update dropped the stage 3 `all`. The email rule is literal: a
+  body with `email` is 403 without `members: all` **even when the value is unchanged**, so
+  staff-app's leader form must leave the key out, not send it back. `GET /members/{id}` still
+  returns `email` to leaders (rule 8 only stops them changing it). `GET /members/options` is
+  ordered by name then id. Tried with the role runner (groups section first, so member 14 has been
+  removed from group 1, and member 13 given a membership in closed group 6, both inside the
+  rolled-back transaction): options 200 with 58 `{id, name}` for admin, elder, leader and deacon,
+  403 for user and pending; leader 200 on members 6 (self), 7, 8, 30 (group 1 and closed group 6)
+  and 9 (added to group 1 earlier in the run), 404 on 14 (former), 13 (only in the closed group),
+  23 and 41 (group 2); deacon the mirror image (23, 41 yes; group 1 members no); leader and
+  deacon phone updates 200 in scope and 404 out of it; email updates 403 in scope (also with the
+  value unchanged), 404 out of scope; admin and elder 200 on all of it; `GET /members` still 403
+  for leader and deacon. `ruff` and `ty` pass.
 
 ## The JWT this API receives (auth-server stage 2)
 

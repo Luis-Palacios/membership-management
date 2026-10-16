@@ -1,11 +1,18 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from membership_management.api.access import MemberScope, MemberScopeDep
 from membership_management.api.dependencies import MembersSessionDep
-from membership_management.api.jwt_auth import get_current_claims, require_permission
+from membership_management.api.jwt_auth import (
+    CurrentClaimsDep,
+    get_current_claims,
+    has_permission,
+    require_permission,
+)
 from membership_management.api.rate_limit import default_user_rate_limit, rate_limit
 from membership_management.api.schemas.members import (
     MemberCreateSchema,
     MemberDetailSchema,
+    MemberOptionSchema,
     MemberSmallGroupSchema,
     MemberSummarySchema,
     MemberUpdateSchema,
@@ -20,6 +27,7 @@ from membership_management.data.members.services import (
     get_member,
     get_member_small_groups,
     link_member_user,
+    list_member_options,
     list_members,
     unlink_member_user,
     update_member,
@@ -55,6 +63,14 @@ def _detail(db: MembersSessionDep, member: Member) -> MemberDetailSchema:
     )
 
 
+def _get_or_404(db: MembersSessionDep, member_id: int, scope: MemberScope | None = None) -> Member:
+    """404 when the member doesn't exist or is outside the scope, with the same message for both."""
+    member = get_member(db, member_id) if scope is None or scope.includes(db, member_id) else None
+    if member is None:
+        raise HTTPException(status_code=404, detail=f"Member with ID {member_id} not found.")
+    return member
+
+
 @router.get(
     "",
     name="list_members",
@@ -68,17 +84,25 @@ def get_members(db: MembersSessionDep) -> list[MemberSummarySchema]:
     ]
 
 
+# Declared before `/{member_id}` so "options" is never read as a member id.
+@router.get(
+    "/options",
+    name="list_member_options",
+    description="Every member's id and name, by name (the add-member picker)",
+    dependencies=[Depends(require_permission("members", "search"))],
+)
+def get_member_options(db: MembersSessionDep) -> list[MemberOptionSchema]:
+    return [MemberOptionSchema(id=m.id, name=m.name) for m in list_member_options(db)]
+
+
 @router.get(
     "/{member_id}",
     name="get_member",
-    description="Get a member with their current small groups",
-    dependencies=[Depends(require_permission("members", "view", "all"))],
+    description="Get a member with their current small groups (within the caller's members scope)",
+    dependencies=[Depends(require_permission("members", "view"))],
 )
-def get_member_detail(member_id: int, db: MembersSessionDep) -> MemberDetailSchema:
-    member = get_member(db, member_id)
-    if member is None:
-        raise HTTPException(status_code=404, detail=f"Member with ID {member_id} not found.")
-    return _detail(db, member)
+def get_member_detail(member_id: int, db: MembersSessionDep, scope: MemberScopeDep) -> MemberDetailSchema:
+    return _detail(db, _get_or_404(db, member_id, scope))
 
 
 @router.post(
@@ -110,17 +134,25 @@ def post_member(body: MemberCreateSchema, db: MembersSessionDep) -> MemberDetail
 @router.patch(
     "/{member_id}",
     name="update_member",
-    description="Update the given fields of a member",
+    description="Update the given fields of a member (within the caller's members scope)",
     dependencies=[
-        Depends(require_permission("members", "update", "all")),
+        Depends(require_permission("members", "update")),
         Depends(rate_limit("30/minute", scope="update_member")),
     ],
 )
-def patch_member(member_id: int, body: MemberUpdateSchema, db: MembersSessionDep) -> MemberDetailSchema:
-    member = get_member(db, member_id)
-    if member is None:
-        raise HTTPException(status_code=404, detail=f"Member with ID {member_id} not found.")
+def patch_member(
+    member_id: int,
+    body: MemberUpdateSchema,
+    db: MembersSessionDep,
+    claims: CurrentClaimsDep,
+    scope: MemberScopeDep,
+) -> MemberDetailSchema:
+    member = _get_or_404(db, member_id, scope)
     changes = body.model_dump(exclude_unset=True)
+    # Email is what an accepted invite matches to link a member to a user, so only callers with
+    # `members: all` may change it (rule 8). After the scope check: out of scope stays 404.
+    if "email" in changes and not has_permission(claims, "members", "all"):
+        raise HTTPException(status_code=403, detail="Ask an admin or elder to change a member's email.")
     # name is NOT NULL: an explicit null would otherwise surface as a DB error (500).
     if "name" in changes and changes["name"] is None:
         raise HTTPException(status_code=422, detail="name cannot be null.")
@@ -141,9 +173,7 @@ def patch_member(member_id: int, body: MemberUpdateSchema, db: MembersSessionDep
     ],
 )
 def put_member_user(member_id: int, body: MemberUserLinkSchema, db: MembersSessionDep) -> MemberDetailSchema:
-    member = get_member(db, member_id)
-    if member is None:
-        raise HTTPException(status_code=404, detail=f"Member with ID {member_id} not found.")
+    member = _get_or_404(db, member_id)
     try:
         member = link_member_user(db, member, body.user_id)
     except MemberAlreadyLinkedError as exc:
@@ -164,7 +194,5 @@ def put_member_user(member_id: int, body: MemberUserLinkSchema, db: MembersSessi
     ],
 )
 def delete_member_user(member_id: int, db: MembersSessionDep) -> None:
-    member = get_member(db, member_id)
-    if member is None:
-        raise HTTPException(status_code=404, detail=f"Member with ID {member_id} not found.")
+    member = _get_or_404(db, member_id)
     unlink_member_user(db, member)

@@ -15,6 +15,31 @@ def list_members_query() -> Select:
     ).order_by(Member.id)
 
 
+def member_options_query() -> Select:
+    """Every member's id and name, by name (the add-member picker)."""
+    return select(Member.id.label("id"), Member.name.label("name")).order_by(Member.name, Member.id)
+
+
+def member_active_in_open_groups_query(member_id: int, only_group_ids: frozenset[int] | None) -> Select:
+    """One row if the member has an active membership in an open group (among `only_group_ids`).
+
+    The members scope of a caller without `members: all`; `None` means any open group.
+    """
+    query = (
+        select(SmallGroupMember.id)
+        .join(SmallGroup, SmallGroup.id == SmallGroupMember.small_group_id)
+        .where(
+            SmallGroupMember.member_id == member_id,
+            SmallGroupMember.left_at.is_(None),
+            SmallGroup.closed_at.is_(None),
+        )
+        .limit(1)
+    )
+    if only_group_ids is not None:
+        query = query.where(SmallGroup.id.in_(only_group_ids))
+    return query
+
+
 def member_active_small_groups_query(member_id: int) -> Select:
     """The groups the member currently belongs to (open membership periods only)."""
     return (

@@ -2,10 +2,13 @@ from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import Depends, HTTPException
+from sqlalchemy.orm import Session
 
 from membership_management.api.current_member import CurrentMemberDep
 from membership_management.api.dependencies import MembersSessionDep
 from membership_management.api.jwt_auth import AuthClaims, CurrentClaimsDep, has_permission
+from membership_management.data.members.models import Member
+from membership_management.data.members.services import is_member_active_in_open_groups
 from membership_management.data.small_groups.models import SmallGroupRole
 from membership_management.data.small_groups.services import get_active_membership, get_led_small_group_ids
 
@@ -26,12 +29,10 @@ class SmallGroupScope:
         return self.full or small_group_id in self.group_ids
 
 
-def get_small_group_scope(
-    claims: CurrentClaimsDep, member: CurrentMemberDep, db: MembersSessionDep
-) -> SmallGroupScope:
-    """403 without `smallGroups: view`: leading a group grants nothing by itself."""
+def _small_group_scope(claims: AuthClaims, member: Member | None, db: Session) -> SmallGroupScope | None:
+    """None without `smallGroups: view`: leading a group grants nothing by itself."""
     if not has_permission(claims, "smallGroups", "view"):
-        raise HTTPException(status_code=403, detail="You don't have permission to do this.")
+        return None
     member_id = member.id if member is not None else None
     if has_permission(claims, "smallGroups", "all"):
         return SmallGroupScope(full=True, group_ids=frozenset(), member_id=member_id)
@@ -39,7 +40,47 @@ def get_small_group_scope(
     return SmallGroupScope(full=False, group_ids=group_ids, member_id=member_id)
 
 
+def get_small_group_scope(
+    claims: CurrentClaimsDep, member: CurrentMemberDep, db: MembersSessionDep
+) -> SmallGroupScope:
+    """The caller's small group scope; 403 without `smallGroups: view`."""
+    scope = _small_group_scope(claims, member, db)
+    if scope is None:
+        raise HTTPException(status_code=403, detail="You don't have permission to do this.")
+    return scope
+
+
 SmallGroupScopeDep = Annotated[SmallGroupScope, Depends(get_small_group_scope)]
+
+
+@dataclass(frozen=True)
+class MemberScope:
+    """Which members the caller may see and edit (rule 3).
+
+    `full` is `members: all`. Without it: members with an active membership in an open group of
+    the caller's small group scope, `group_ids` (`None` when that scope is every group; empty
+    without `smallGroups: view`). Former members and members of closed groups are out.
+    """
+
+    full: bool
+    group_ids: frozenset[int] | None
+
+    def includes(self, db: Session, member_id: int) -> bool:
+        return self.full or is_member_active_in_open_groups(db, member_id, self.group_ids)
+
+
+def get_member_scope(
+    claims: CurrentClaimsDep, member: CurrentMemberDep, db: MembersSessionDep
+) -> MemberScope:
+    if has_permission(claims, "members", "all"):
+        return MemberScope(full=True, group_ids=None)
+    group_scope = _small_group_scope(claims, member, db)
+    if group_scope is None:
+        return MemberScope(full=False, group_ids=frozenset())
+    return MemberScope(full=False, group_ids=None if group_scope.full else group_scope.group_ids)
+
+
+MemberScopeDep = Annotated[MemberScope, Depends(get_member_scope)]
 
 
 _OWN_ROW = "Ask an admin or elder to change your own role in this group."

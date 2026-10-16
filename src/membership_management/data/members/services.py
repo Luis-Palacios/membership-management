@@ -8,11 +8,18 @@ from sqlalchemy.orm import Session
 from membership_management.data.members.models import Member, MemberSex
 from membership_management.data.members.queries import (
     list_members_query,
+    member_active_in_open_groups_query,
     member_active_leads_query,
     member_active_small_groups_query,
     member_by_user_id_query,
+    member_options_query,
 )
-from membership_management.data.members.results import MemberLead, MemberSmallGroup, MemberSummary
+from membership_management.data.members.results import (
+    MemberLead,
+    MemberOption,
+    MemberSmallGroup,
+    MemberSummary,
+)
 from membership_management.data.query_helpers import all_as
 
 
@@ -30,6 +37,19 @@ class UserAlreadyLinkedError(Exception):
 
 def list_members(session: Session) -> Sequence[MemberSummary]:
     return all_as(session, list_members_query(), MemberSummary)
+
+
+def list_member_options(session: Session) -> Sequence[MemberOption]:
+    return all_as(session, member_options_query(), MemberOption)
+
+
+def is_member_active_in_open_groups(
+    session: Session, member_id: int, only_group_ids: frozenset[int] | None
+) -> bool:
+    """Whether the member is active in an open group among `only_group_ids` (`None`: any open group)."""
+    if only_group_ids is not None and not only_group_ids:
+        return False
+    return session.scalar(member_active_in_open_groups_query(member_id, only_group_ids)) is not None
 
 
 def get_member(session: Session, member_id: int) -> Member | None:
