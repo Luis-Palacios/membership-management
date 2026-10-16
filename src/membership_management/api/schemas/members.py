@@ -14,6 +14,11 @@ UserId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, m
 Address = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
 
 
+class MemberOptionSchema(CamelModel):
+    id: int
+    name: str
+
+
 class MemberSummarySchema(CamelModel):
     id: int
     name: str

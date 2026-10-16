@@ -12,6 +12,11 @@ class MemberSummary(NamedTuple):
     user_id: str | None
 
 
+class MemberOption(NamedTuple):
+    id: int
+    name: str
+
+
 class MemberSmallGroup(NamedTuple):
     small_group_id: int
     small_group_name: str
