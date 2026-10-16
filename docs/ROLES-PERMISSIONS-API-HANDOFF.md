@@ -25,11 +25,11 @@ are domain exceptions the router maps to HTTP codes.
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. Claims and guard | [x] | (this commit) |
-| 2. Replace role checks | [x] | (this commit) |
-| 3. Gate the open routers | [x] | (this commit) |
-| 4. Members scope and picker | [x] | (this commit) |
-| 5. Docs | [ ] | |
+| 1. Claims and guard | [x] | aee816a |
+| 2. Replace role checks | [x] | b0ec676 |
+| 3. Gate the open routers | [x] | 4ff0cd7 |
+| 4. Members scope and picker | [x] | 8c5005b |
+| 5. Docs | [x] | (this commit) |
 
 ### Decisions and deviations
 
@@ -93,6 +93,22 @@ are domain exceptions the router maps to HTTP codes.
   deacon phone updates 200 in scope and 404 out of it; email updates 403 in scope (also with the
   value unchanged), 404 out of scope; admin and elder 200 on all of it; `GET /members` still 403
   for leader and deacon. `ruff` and `ty` pass.
+- Stage 5: `ARCHITECTURE.md` gets a *Permissions* section with the role × route table, and its
+  report bullets name permissions instead of roles; `ROADMAP.md` item 4 (Phase 9) marked done,
+  pointing at the spec; `CLAUDE.md`'s access paragraph rewritten (permissions, the two scopes,
+  where the table is). Error messages that say "admin or elder" stay: display text (rule 1).
+  **Full run, every role against every route** (57 cases × 6 roles, fresh tokens from `:5000`,
+  rolled back per role): every result matched the table in `ARCHITECTURE.md`. user and pending:
+  403 on every route except `GET /me` (200). The only non-permission failures: the five
+  assimilation reads (applications recents / count / detail, both people routes) are 500 for admin
+  and elder because the assimilation DB can't be reached here (see stage 3); admin and elder get
+  409 on report create because the scratch admin and elder users have no linked member (existing
+  rule). Afterwards the scratch auth users were deleted (no sessions left), and the members DB
+  matched its starting counts (3 links, 8 groups / 3 closed, 40 reports, 55 memberships). `ruff`
+  and `ty` pass.
+- **Not tried:** the assimilation-backed routes past the gate (local ODBC/OpenSSL issue, not this
+  change), and a token with no `perms` claim end to end (auth-server only mints tokens with it;
+  covered at the model level in stage 1).
 
 ## The JWT this API receives (auth-server stage 2)
 

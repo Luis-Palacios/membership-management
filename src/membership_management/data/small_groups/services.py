@@ -223,7 +223,7 @@ def get_report(
 def observations_visible_to(
     report: SmallGroupReport, *, sees_all_observations: bool, viewer_member_id: int | None
 ) -> bool:
-    """Rule 9: admins and elders (`sees_all_observations`), and the report's submitter. Nobody else."""
+    """Rule 9: `sees_all_observations` (`smallGroupReports: viewObservations`), and the submitter."""
     return sees_all_observations or (
         viewer_member_id is not None and viewer_member_id == report.submitted_by_member_id
     )
