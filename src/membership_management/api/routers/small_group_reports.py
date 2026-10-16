@@ -17,7 +17,9 @@ from membership_management.api.jwt_auth import (
 from membership_management.api.rate_limit import default_user_rate_limit, rate_limit
 from membership_management.api.schemas.small_group_reports import (
     FiledReportItemSchema,
+    HeldReportBodySchema,
     NotFiledItemSchema,
+    NotHeldReportBodySchema,
     RecentMeetingSchema,
     ReportAttendanceSchema,
     ReportBodySchema,
@@ -55,6 +57,7 @@ from membership_management.data.small_groups.services import (
     MemberRequiredToSubmitError,
     NotGroupLeaderOnDateError,
     ReportAlreadyExistsError,
+    ReportKindChangeError,
     ReportStatus,
     SmallGroupClosedError,
     build_report_detail,
@@ -86,9 +89,10 @@ DUPLICATE_REPORT_DETAIL = "There's already a report for this group on that date.
 class DuplicateReportHTTPError(HTTPException):
     """409 whose body also names the existing report (`existingReportId`); see its handler in `main.py`."""
 
-    def __init__(self, existing_report_id: int) -> None:
+    def __init__(self, existing_report_id: int, existing_report_held: bool) -> None:
         super().__init__(status_code=409, detail=DUPLICATE_REPORT_DETAIL)
         self.existing_report_id = existing_report_id
+        self.existing_report_held = existing_report_held
 
 
 def _small_group_or_404(db: MembersSessionDep, small_group_id: int, scope: SmallGroupScope) -> SmallGroup:
@@ -102,7 +106,7 @@ def _small_group_or_404(db: MembersSessionDep, small_group_id: int, scope: Small
 def _http_error(exc: Exception) -> HTTPException:
     """Map a report domain error to its HTTP error (the staff app matches on status and `detail`)."""
     if isinstance(exc, ReportAlreadyExistsError):
-        return DuplicateReportHTTPError(exc.existing_id)
+        return DuplicateReportHTTPError(exc.existing_id, exc.existing_held)
     if isinstance(exc, MemberRequiredToSubmitError):
         return HTTPException(status_code=409, detail="Link your account to a member to submit reports.")
     if isinstance(exc, SmallGroupClosedError):
@@ -117,6 +121,11 @@ def _http_error(exc: Exception) -> HTTPException:
         )
     if isinstance(exc, NotGroupLeaderOnDateError):
         return HTTPException(status_code=422, detail="You didn't lead this group on that date.")
+    if isinstance(exc, ReportKindChangeError):
+        return HTTPException(
+            status_code=422,
+            detail="A report can't change between a meeting and a no meeting. Delete it and add the other.",
+        )
     raise exc
 
 
@@ -148,6 +157,7 @@ def get_report_roster_for_date(
         meeting_date=meeting_date,
         church_sunday=church_sunday(meeting_date),
         existing_report_id=roster.existing_report_id,
+        existing_report_held=roster.existing_report_held,
         people=[
             ReportRosterPersonSchema(
                 member_id=p.member_id,
@@ -161,7 +171,18 @@ def get_report_roster_for_date(
     )
 
 
-def _to_input(body: ReportBodySchema) -> ReportInput:
+def _to_input(body: HeldReportBodySchema | NotHeldReportBodySchema) -> ReportInput:
+    if isinstance(body, NotHeldReportBodySchema):
+        return ReportInput(
+            meeting_date=body.meeting_date,
+            address=None,
+            group_prayer_request=None,
+            group_praise_report=None,
+            group_relevant_discussion=None,
+            attendances=[],
+            held=False,
+            not_held_reason=body.not_held_reason,
+        )
     return ReportInput(
         meeting_date=body.meeting_date,
         address=body.address,
@@ -172,6 +193,7 @@ def _to_input(body: ReportBodySchema) -> ReportInput:
             AttendanceInput(a.member_id, a.attended_group, a.attended_church, a.observation)
             for a in body.attendances
         ],
+        replaces_no_meeting=body.replaces_no_meeting,
     )
 
 
@@ -210,6 +232,8 @@ def _detail_schema(detail: ReportDetail) -> ReportDetailSchema:
         ),
         meeting_date=detail.meeting_date,
         church_sunday=church_sunday(detail.meeting_date),
+        held=detail.held,
+        not_held_reason=detail.not_held_reason,
         address=detail.address,
         group_prayer_request=detail.group_prayer_request,
         group_praise_report=detail.group_praise_report,
@@ -497,6 +521,7 @@ def patch_small_group_report(
         FutureMeetingDateError,
         ReportAlreadyExistsError,
         AttendanceMismatchError,
+        ReportKindChangeError,
     ) as exc:
         raise _http_error(exc) from exc
     return _report_detail_or_404(db, report_id, scope, claims)
