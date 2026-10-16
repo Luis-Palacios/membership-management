@@ -318,12 +318,17 @@ def get_small_group_reports(
                     roster_count=item.roster_count,
                     attended_group_count=item.attended_group_count,
                     attended_church_count=item.attended_church_count,
+                    held=item.held,
+                    not_held_reason=item.not_held_reason,
                 )
             )
     return ReportListSchema(
         items=items,
         counts=ReportCountsSchema(
-            all=result.counts.all, filed=result.counts.filed, not_filed=result.counts.not_filed
+            all=result.counts.all,
+            filed=result.counts.filed,
+            not_held=result.counts.not_held,
+            not_filed=result.counts.not_filed,
         ),
         total=result.total,
         page=page,
@@ -372,7 +377,8 @@ def get_small_group_reports_summary(
             not_filed_dates=row.not_filed_dates,
             has_leader=row.has_leader,
             recent_meetings=[
-                RecentMeetingSchema(date=m.date, report_id=m.report_id) for m in row.recent_meetings
+                RecentMeetingSchema(date=m.date, report_id=m.report_id, held=m.held)
+                for m in row.recent_meetings
             ],
         )
         for row in summary
@@ -419,6 +425,8 @@ def get_small_group_reports_week(
                         attended_group_count=r.attended_group_count,
                         attended_church_count=r.attended_church_count,
                         observation_count=r.observation_count,
+                        held=r.held,
+                        not_held_reason=r.not_held_reason,
                         submitted_by=ReportPersonSchema(
                             member_id=r.submitted_by_member_id, name=r.submitted_by_name
                         ),

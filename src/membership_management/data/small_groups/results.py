@@ -142,6 +142,7 @@ class ReportDate(NamedTuple):
     report_id: int
     small_group_id: int
     meeting_date: date
+    held: bool
 
 
 class LeadershipPeriod(NamedTuple):
@@ -166,7 +167,9 @@ class GroupRole(NamedTuple):
 
 class ReportCounts(NamedTuple):
     all: int
+    # Held reports only; a no meeting counts under `not_held`.
     filed: int
+    not_held: int
     not_filed: int
 
 
@@ -187,7 +190,7 @@ class GroupReportSummary(NamedTuple):
     recent_meetings: list[RecentMeeting]
 
 
-WeekStatus = Literal["submitted", "notFiled", "today", "upcoming", "noLeader", "noMeetingDay"]
+WeekStatus = Literal["submitted", "notHeld", "notFiled", "today", "upcoming", "noLeader", "noMeetingDay"]
 
 
 class WeekReportRow(NamedTuple):

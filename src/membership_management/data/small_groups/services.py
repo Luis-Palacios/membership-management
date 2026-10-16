@@ -66,7 +66,7 @@ MISSED_STREAK_REPORT_WINDOW = 12
 # How far back a meeting without a report still counts as "not filed" (rule 10).
 NOT_FILED_WINDOW_DAYS = 28
 
-ReportStatus = Literal["all", "filed", "notFiled"]
+ReportStatus = Literal["all", "filed", "notHeld", "notFiled"]
 
 
 class SmallGroupAlreadyClosedError(Exception):
@@ -438,7 +438,7 @@ def recent_meetings(
         return meetings
     ids = frozenset(g.id for g in candidates)
     filed = {
-        (r.small_group_id, r.meeting_date): r.report_id
+        (r.small_group_id, r.meeting_date): r
         for r in all_as(session, report_dates_query(ids, start, end), ReportDate)
     }
     if leadership is None:
@@ -450,7 +450,10 @@ def recent_meetings(
                 p.joined_at <= day and (p.left_at is None or p.left_at >= day)
                 for p in leadership.get(group.id, [])
             ):
-                meetings[group.id].append(RecentMeeting(day, filed.get((group.id, day))))
+                report = filed.get((group.id, day))
+                meetings[group.id].append(
+                    RecentMeeting(day, report.report_id if report else None, report.held if report else None)
+                )
             day += timedelta(days=1)
         meetings[group.id].reverse()
     return meetings
@@ -482,10 +485,10 @@ def list_reports(
     """Filed reports and not-filed meetings of the groups in scope, newest first, one page of them.
 
     `counts` ignore `status` (they feed the status filter); `total` is after it. `q` matches the group
-    or, for filed reports, the submitter, ignoring case and accents.
+    or, for filed reports, the submitter or a no meeting's reason, ignoring case and accents.
     """
     if only_group_ids is not None and not only_group_ids:
-        return ReportPage(items=[], counts=ReportCounts(0, 0, 0), total=0)
+        return ReportPage(items=[], counts=ReportCounts(0, 0, 0, 0), total=0)
     filed = all_as(
         session,
         filed_reports_query(
@@ -506,14 +509,24 @@ def list_reports(
     if q is not None and q.strip():
         needle = _fold(q.strip())
         filed = [
-            r for r in filed if needle in _fold(r.small_group_name) or needle in _fold(r.submitted_by_name)
+            r
+            for r in filed
+            if needle in _fold(r.small_group_name)
+            or needle in _fold(r.submitted_by_name)
+            or needle in _fold(r.not_held_reason or "")
         ]
         not_filed = [m for m in not_filed if needle in _fold(m.small_group_name)]
-    counts = ReportCounts(all=len(filed) + len(not_filed), filed=len(filed), not_filed=len(not_filed))
+    held = [r for r in filed if r.held]
+    not_held = [r for r in filed if not r.held]
+    counts = ReportCounts(
+        all=len(filed) + len(not_filed), filed=len(held), not_held=len(not_held), not_filed=len(not_filed)
+    )
     items: list[FiledReportRow | NotFiledMeeting] = []
-    if status != "notFiled":
-        items.extend(filed)
-    if status != "filed":
+    if status in ("all", "filed"):
+        items.extend(held)
+    if status in ("all", "notHeld"):
+        items.extend(not_held)
+    if status in ("all", "notFiled"):
         items.extend(not_filed)
     # Two stable passes: group name ascending inside each date, newest date first.
     items.sort(key=lambda item: item.small_group_name.casefold())
@@ -623,8 +636,10 @@ def _week_group(
         week_start + timedelta(days=group.meeting_day % 7) if group.meeting_day is not None else None
     )
     status: WeekStatus
-    if reports:
+    if any(r.held for r in reports):
         status = "submitted"
+    elif reports:
+        status = "notHeld"
     elif meeting_date is None:
         status = "noMeetingDay"
     else:
@@ -638,6 +653,8 @@ def _week_group(
             status = "today"
         else:
             status = "upcoming"
+    # Meetings first, then no meetings; stable, so each keeps its newest-first order.
+    reports = sorted(reports, key=lambda r: not r.held)
     return WeekGroup(group=group, leaders=leaders, status=status, meeting_date=meeting_date, reports=reports)
 
 

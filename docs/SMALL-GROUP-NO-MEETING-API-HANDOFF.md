@@ -39,7 +39,7 @@ of a closed group, deacon with no member, user). Keep every convention from the 
 | --- | --- | --- |
 | 1. Migration and model | ✅ | see `git log` (stage 1 commit) |
 | 2. Create / edit / delete a no meeting, replace on create | ✅ | see `git log` (stage 2 commit) |
-| 3. Reads: detail, list, summary, week, roster | ⬜ | |
+| 3. Reads: detail, list, summary, week, roster | ✅ | see `git log` (stage 3 commit) |
 | 4. Counting fixes (last report, streaks, filed counts) | ⬜ | |
 | 5. Seed and docs | ⬜ | |
 
@@ -62,6 +62,10 @@ of a closed group, deacon with no member, user). Keep every convention from the 
 - Stage 2 also added `held`/`notHeldReason` to the detail response (create returns it),
   `existingReportHeld` to the duplicate 409 and to the roster response, since those code paths
   were touched anyway; Stage 3 still owns list, summary, week and the roster tests.
+- Stage 3: `ReportCounts` is `(all, filed, not_held, not_filed)`; `filed` is held reports only.
+  `ReportDate` (from `report_dates_query`, still unfiltered) carries `held`, which feeds
+  `RecentMeeting.held`. Week `reports` are sorted held first, no meetings after. `last_report` still
+  needs the `held = true` filter: Stage 4.
 - Replacing a no meeting flushes the delete before inserting the report (the unit of work inserts
   first and would hit the unique constraint).
 
