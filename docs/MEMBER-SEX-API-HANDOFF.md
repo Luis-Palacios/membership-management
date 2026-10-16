@@ -20,13 +20,21 @@ Keep the existing conventions: routes call `data/members/services.py` directly, 
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. Model, migration and seed | ⬜ | |
-| 2. API fields | ⬜ | |
-| 3. Docs | ⬜ | |
+| 1. Model, migration and seed | ✅ | d275643 |
+| 2. API fields | ✅ | see `git log` |
+| 3. Docs | ✅ | see `git log` |
 
 ### Decisions and deviations
 
-- [Anything decided during implementation, and how it was tried.]
+- Autogenerate emitted the CHECK itself; `upgrade head --sql` shows `ADD COLUMN sex VARCHAR(10)` and
+  `ck_members_sex CHECK (sex IN ('male', 'female'))`, so no hand-written constraint. `upgrade head`,
+  `downgrade -1`, `upgrade head` and `alembic check` all pass against the local DB.
+- Seed: the sex draw is the last `rng` call per member, and the existing female/male coin flip is now
+  kept in a variable, so names, emails and phones for a given seed are unchanged.
+- Tried with `TestClient` (claims overridden, local DB, rows deleted afterwards): create with and
+  without `sex`; PATCH set, clear with `null`, and a PATCH without `sex` leaves it; `"Male"` and
+  `"other"` give 422 on POST and PATCH; `GET /members` has no `sex`; OpenAPI shows
+  `MemberSex` as `male | female`. `""` was not checked on its own.
 
 ## Stage 1: model, migration and seed
 
