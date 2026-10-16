@@ -27,8 +27,8 @@ from membership_management.data.small_groups.queries import (
     recent_attendance_marks_query,
     report_dates_query,
     report_groups_query,
-    report_id_on_date_query,
     report_in_scope_query,
+    report_on_date_query,
     roster_periods_on_date_query,
     small_group_active_members_query,
     week_reports_query,
@@ -96,9 +96,14 @@ class LeaderAlreadyExistsError(Exception):
 class ReportAlreadyExistsError(Exception):
     """The group already has a report for that meeting date (rule 1)."""
 
-    def __init__(self, existing_id: int) -> None:
+    def __init__(self, existing_id: int, existing_held: bool) -> None:
         super().__init__(existing_id)
         self.existing_id = existing_id
+        self.existing_held = existing_held
+
+
+class ReportKindChangeError(Exception):
+    """An edit would turn a meeting into a no meeting or back, or asked to replace one (rule 13)."""
 
 
 class MemberRequiredToSubmitError(Exception):
@@ -205,9 +210,11 @@ def get_report_roster(session: Session, small_group: SmallGroup, d: date, *, tod
         raise FutureMeetingDateError
     people = roster_on_date(session, small_group.id, d)
     streaks = missed_streaks(session, small_group.id, [p.member_id for p in people], d)
+    existing = session.execute(report_on_date_query(small_group.id, d)).one_or_none()
     return ReportRoster(
         people=[p._replace(missed_streak=streaks[p.member_id]) for p in people],
-        existing_report_id=session.scalars(report_id_on_date_query(small_group.id, d)).one_or_none(),
+        existing_report_id=existing[0] if existing is not None else None,
+        existing_report_held=existing[1] if existing is not None else None,
     )
 
 
@@ -271,6 +278,8 @@ def build_report_detail(
         submitted_at=report.submitted_at,
         observations_visible=observations_visible,
         attendances=views,
+        held=report.held,
+        not_held_reason=report.not_held_reason,
     )
 
 
@@ -283,7 +292,15 @@ def create_report(
     caller_is_scoped: bool,
     today: date,
 ) -> SmallGroupReport:
-    roster = _validated_roster(session, small_group, body, today=today, ignore_report_id=None)
+    replaced = _validate_date(
+        session,
+        small_group,
+        body.meeting_date,
+        today=today,
+        ignore_report_id=None,
+        replaces_no_meeting=body.replaces_no_meeting and body.held,
+    )
+    roster = _validated_roster(session, small_group, body)
     if caller_is_scoped and not any(
         p.member_id == submitter_member_id and p.role != SmallGroupRole.MEMBER for p in roster
     ):
@@ -291,6 +308,8 @@ def create_report(
     report = SmallGroupReport(
         small_group_id=small_group.id,
         meeting_date=body.meeting_date,
+        held=body.held,
+        not_held_reason=body.not_held_reason,
         address=body.address,
         group_prayer_request=body.group_prayer_request,
         group_praise_report=body.group_praise_report,
@@ -306,6 +325,11 @@ def create_report(
             for a in body.attendances
         ],
     )
+    if replaced is not None:
+        # Flush the delete first: the unit of work would otherwise insert before deleting and
+        # trip the (group, meeting date) unique constraint.
+        session.delete(replaced)
+        session.flush()
     session.add(report)
     _commit_report_or_raise_conflict(session, small_group.id, body.meeting_date)
     return report
@@ -325,7 +349,22 @@ def update_report(
     Attendance rows are updated in place by member so stored observations survive. A caller who
     can't see observations (rule 9) can't change them either: theirs are ignored, stored ones kept.
     """
-    _validated_roster(session, report.small_group, body, today=today, ignore_report_id=report.id)
+    if body.held != report.held or body.replaces_no_meeting:
+        raise ReportKindChangeError
+    _validate_date(
+        session,
+        report.small_group,
+        body.meeting_date,
+        today=today,
+        ignore_report_id=report.id,
+        replaces_no_meeting=False,
+    )
+    if not report.held:
+        report.meeting_date = body.meeting_date
+        report.not_held_reason = body.not_held_reason
+        _commit_report_or_raise_conflict(session, report.small_group_id, body.meeting_date)
+        return report
+    _validated_roster(session, report.small_group, body)
     may_edit_observations = observations_visible_to(
         report, sees_all_observations=sees_all_observations, viewer_member_id=viewer_member_id
     )
@@ -602,18 +641,36 @@ def _week_group(
     return WeekGroup(group=group, leaders=leaders, status=status, meeting_date=meeting_date, reports=reports)
 
 
-def _validated_roster(
-    session: Session, small_group: SmallGroup, body: ReportInput, *, today: date, ignore_report_id: int | None
-) -> list[RosterPerson]:
-    """Rules 1, 2, 3 and 8 for a create or edit; returns the roster on the meeting date."""
+def _validate_date(
+    session: Session,
+    small_group: SmallGroup,
+    meeting_date: date,
+    *,
+    today: date,
+    ignore_report_id: int | None,
+    replaces_no_meeting: bool,
+) -> SmallGroupReport | None:
+    """Rules 1, 2 and 8 for a create or edit (closed, future, duplicate, in that order).
+
+    Returns the no meeting the new report replaces (rule 13.5), or None. A held report is never replaced.
+    """
     if small_group.closed_at is not None:
         raise SmallGroupClosedError
-    if body.meeting_date > today:
+    if meeting_date > today:
         raise FutureMeetingDateError
-    existing_id = session.scalars(report_id_on_date_query(small_group.id, body.meeting_date)).one_or_none()
-    if existing_id is not None and existing_id != ignore_report_id:
-        raise ReportAlreadyExistsError(existing_id)
+    existing = session.execute(report_on_date_query(small_group.id, meeting_date)).one_or_none()
+    if existing is None or existing.id == ignore_report_id:
+        return None
+    if replaces_no_meeting and not existing.held:
+        return session.get(SmallGroupReport, existing.id)
+    raise ReportAlreadyExistsError(existing.id, existing.held)
+
+
+def _validated_roster(session: Session, small_group: SmallGroup, body: ReportInput) -> list[RosterPerson]:
+    """Rule 3 for a held report; a no meeting has no attendance. Returns the roster on the meeting date."""
     roster = roster_on_date(session, small_group.id, body.meeting_date)
+    if not body.held:
+        return roster
     sent_ids = [a.member_id for a in body.attendances]
     # Exactly one row per person on the roster: no missing, extra or repeated members.
     if len(sent_ids) != len(set(sent_ids)) or set(sent_ids) != {p.member_id for p in roster}:
@@ -628,9 +685,9 @@ def _commit_report_or_raise_conflict(session: Session, small_group_id: int, meet
     except IntegrityError as exc:
         session.rollback()
         if "uq_small_group_reports_small_group_id" in str(exc.orig):
-            existing_id = session.scalars(report_id_on_date_query(small_group_id, meeting_date)).one_or_none()
-            if existing_id is not None:
-                raise ReportAlreadyExistsError(existing_id) from exc
+            existing = session.execute(report_on_date_query(small_group_id, meeting_date)).one_or_none()
+            if existing is not None:
+                raise ReportAlreadyExistsError(existing.id, existing.held) from exc
         raise
 
 

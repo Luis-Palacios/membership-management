@@ -68,6 +68,11 @@ class ReportInput(NamedTuple):
     group_praise_report: str | None
     group_relevant_discussion: str | None
     attendances: list[AttendanceInput]
+    # A no meeting (held False) carries no texts or attendances, only the optional reason.
+    held: bool = True
+    not_held_reason: str | None = None
+    # Create only: delete the date's no meeting and insert this held report in one transaction.
+    replaces_no_meeting: bool = False
 
 
 class ReportAttendanceView(NamedTuple):

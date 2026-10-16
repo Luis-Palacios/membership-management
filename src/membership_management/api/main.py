@@ -90,7 +90,11 @@ async def duplicate_report_handler(
     # Same shape as any HTTPException, plus the id so the staff app can link to the existing report.
     return JSONResponse(
         status_code=exc.status_code,
-        content={"detail": exc.detail, "existingReportId": exc.existing_report_id},
+        content={
+            "detail": exc.detail,
+            "existingReportId": exc.existing_report_id,
+            "existingReportHeld": exc.existing_report_held,
+        },
     )
 
 

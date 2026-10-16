@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Annotated, Literal
 
-from pydantic import BeforeValidator, Field, StringConstraints
+from pydantic import BeforeValidator, ConfigDict, Discriminator, Field, StringConstraints, Tag
 
 from membership_management.api.schemas.base import CamelModel
 from membership_management.data.small_groups.models import SmallGroupRole, Weekday
@@ -20,6 +20,9 @@ ReportText = Annotated[
     Annotated[str, StringConstraints(max_length=1024)] | None, BeforeValidator(_blank_to_none)
 ]
 Observation = ReportText
+ReportReason = Annotated[
+    Annotated[str, StringConstraints(max_length=255)] | None, BeforeValidator(_blank_to_none)
+]
 
 
 class ReportRosterGroupSchema(CamelModel):
@@ -43,6 +46,7 @@ class ReportRosterSchema(CamelModel):
     meeting_date: date
     church_sunday: date
     existing_report_id: int | None
+    existing_report_held: bool | None
     people: list[ReportRosterPersonSchema]
 
 
@@ -53,15 +57,40 @@ class ReportAttendanceInputSchema(CamelModel):
     observation: Observation = None
 
 
-class ReportBodySchema(CamelModel):
-    """Create and edit body; an edit replaces the whole report."""
+class HeldReportBodySchema(CamelModel):
+    """Create and edit body of a meeting that happened; an edit replaces the whole report."""
 
+    held: Literal[True] = True
     meeting_date: date
     address: Address = None
     group_prayer_request: ReportText = None
     group_praise_report: ReportText = None
     group_relevant_discussion: ReportText = None
     attendances: list[ReportAttendanceInputSchema]
+    # Create only; true on an edit is a 422.
+    replaces_no_meeting: bool = False
+
+
+class NotHeldReportBodySchema(CamelModel):
+    """Create and edit body of a no meeting: the group didn't meet on `meeting_date` (rule 13)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    held: Literal[False]
+    meeting_date: date
+    not_held_reason: ReportReason = None
+
+
+def _report_kind(value: object) -> str:
+    """Discriminator: a missing `held` means a held report, so clients from before no meeting still work."""
+    held = value.get("held", True) if isinstance(value, dict) else getattr(value, "held", True)
+    return "held" if held is not False else "notHeld"
+
+
+ReportBodySchema = Annotated[
+    Annotated[HeldReportBodySchema, Tag("held")] | Annotated[NotHeldReportBodySchema, Tag("notHeld")],
+    Discriminator(_report_kind),
+]
 
 
 class ReportGroupSchema(CamelModel):
@@ -109,6 +138,8 @@ class ReportDetailSchema(CamelModel):
     small_group: ReportGroupSchema
     meeting_date: date
     church_sunday: date
+    held: bool
+    not_held_reason: str | None
     address: str | None
     group_prayer_request: str | None
     group_praise_report: str | None

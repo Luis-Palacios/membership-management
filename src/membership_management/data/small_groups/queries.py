@@ -127,8 +127,9 @@ def report_in_scope_query(report_id: int, only_group_ids: frozenset[int] | None)
     return query
 
 
-def report_id_on_date_query(small_group_id: int, d: date) -> Select:
-    return select(SmallGroupReport.id).where(
+def report_on_date_query(small_group_id: int, d: date) -> Select:
+    """The (id, held) of the group's report on `d`; at most one row (unique per group and date)."""
+    return select(SmallGroupReport.id, SmallGroupReport.held).where(
         SmallGroupReport.small_group_id == small_group_id, SmallGroupReport.meeting_date == d
     )
 

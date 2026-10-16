@@ -38,7 +38,7 @@ of a closed group, deacon with no member, user). Keep every convention from the 
 | Stage | Status | Commit |
 | --- | --- | --- |
 | 1. Migration and model | ✅ | see `git log` (stage 1 commit) |
-| 2. Create / edit / delete a no meeting, replace on create | ⬜ | |
+| 2. Create / edit / delete a no meeting, replace on create | ✅ | see `git log` (stage 2 commit) |
 | 3. Reads: detail, list, summary, week, roster | ⬜ | |
 | 4. Counting fixes (last report, streaks, filed counts) | ⬜ | |
 | 5. Seed and docs | ⬜ | |
@@ -49,6 +49,21 @@ of a closed group, deacon with no member, user). Keep every convention from the 
   `ReportDetail`/`FiledReportRow`/`WeekReportRow` `held` + `not_held_reason`, `RecentMeeting.held`)
   are added **at the end with defaults** (`True`/`None`) so existing constructors and `all_as`
   mappings keep working until stages 2-3 fill them in; drop the defaults if you want them enforced.
+- Stage 1 fix: the CHECK `not_held_reason_only_when_not_held` was first written backwards
+  (`held OR reason IS NULL`, which rejected every no meeting with a reason). It is now
+  `NOT held OR not_held_reason IS NULL`; fixed in its own commit, and the migration was edited in
+  place (not yet deployed anywhere).
+- Stage 2: Pydantic discriminates the body with a callable `Discriminator` that treats a missing
+  `held` as held (a bool literal tag wasn't used). `NotHeldReportBodySchema` forbids extra keys; the
+  held body stays lenient, as before.
+- Stage 2: `ReportInput` stayed a single tuple with `held`, `not_held_reason` and
+  `replaces_no_meeting` (defaults last) instead of a union. `report_id_on_date_query` became
+  `report_on_date_query` returning `(id, held)`; `ReportAlreadyExistsError` carries `existing_held`.
+- Stage 2 also added `held`/`notHeldReason` to the detail response (create returns it),
+  `existingReportHeld` to the duplicate 409 and to the roster response, since those code paths
+  were touched anyway; Stage 3 still owns list, summary, week and the roster tests.
+- Replacing a no meeting flushes the delete before inserting the report (the unit of work inserts
+  first and would hit the unique constraint).
 
 ## Data model
 
