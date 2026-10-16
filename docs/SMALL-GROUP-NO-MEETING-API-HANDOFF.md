@@ -41,7 +41,7 @@ of a closed group, deacon with no member, user). Keep every convention from the 
 | 2. Create / edit / delete a no meeting, replace on create | ✅ | see `git log` (stage 2 commit) |
 | 3. Reads: detail, list, summary, week, roster | ✅ | see `git log` (stage 3 commit) |
 | 4. Counting fixes (last report, streaks, filed counts) | ✅ | see `git log` (stage 4 commit) |
-| 5. Seed and docs | ⬜ | |
+| 5. Seed and docs | ✅ | see `git log` (stage 5 commit) |
 
 ### Decisions and deviations
 
@@ -69,6 +69,9 @@ of a closed group, deacon with no member, user). Keep every convention from the 
 - Stage 4: only two queries needed the `held = true` filter (`latest_report_ids_query` and the
   `latest_reports` window in `recent_attendance_marks_query`). A grep for `attended_group` and
   `SmallGroupReport` found no other attendance averages or counts; filed counts were done in Stage 3.
+- Stage 5: `SKIPPED_WEEK_RATE` went from 0.1 to 0.15 so that, after a third of the skips become no
+  meetings (`NO_MEETING_SHARE`), enough weeks stay not filed to show all three states. One reason is
+  `None` on purpose (a no meeting without a reason). Rule 13 in the cross-repo spec needed no change.
 - Replacing a no meeting flushes the delete before inserting the report (the unit of work inserts
   first and would hit the unique constraint).
 
