@@ -168,6 +168,8 @@ class FiledReportItemSchema(CamelModel):
     roster_count: int
     attended_group_count: int
     attended_church_count: int
+    held: bool
+    not_held_reason: str | None
 
 
 class NotFiledItemSchema(CamelModel):
@@ -179,6 +181,7 @@ class NotFiledItemSchema(CamelModel):
 class ReportCountsSchema(CamelModel):
     all: int
     filed: int
+    not_held: int
     not_filed: int
 
 
@@ -208,6 +211,7 @@ class SummaryLastReportSchema(CamelModel):
 class RecentMeetingSchema(CamelModel):
     date: date
     report_id: int | None
+    held: bool | None
 
 
 class ReportSummaryItemSchema(CamelModel):
@@ -238,13 +242,15 @@ class WeekReportSchema(CamelModel):
     attended_group_count: int
     attended_church_count: int
     observation_count: int
+    held: bool
+    not_held_reason: str | None
     submitted_by: ReportPersonSchema
 
 
 class WeekGroupSchema(CamelModel):
     small_group: WeekSmallGroupSchema
     leaders: list[WeekLeaderSchema]
-    status: Literal["submitted", "notFiled", "today", "upcoming", "noLeader", "noMeetingDay"]
+    status: Literal["submitted", "notHeld", "notFiled", "today", "upcoming", "noLeader", "noMeetingDay"]
     meeting_date: date | None
     reports: list[WeekReportSchema]
 

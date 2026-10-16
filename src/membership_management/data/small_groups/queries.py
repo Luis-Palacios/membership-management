@@ -188,6 +188,8 @@ def filed_reports_query(
             Member.id.label("submitted_by_member_id"),
             Member.name.label("submitted_by_name"),
             SmallGroupReport.submitted_at.label("submitted_at"),
+            SmallGroupReport.held.label("held"),
+            SmallGroupReport.not_held_reason.label("not_held_reason"),
             func.count(attendance.id).label("roster_count"),
             func.count(attendance.id)
             .filter(attendance.attended_group.is_(True))
@@ -216,11 +218,13 @@ def filed_reports_query(
 
 
 def report_dates_query(group_ids: frozenset[int], from_date: date, to_date: date) -> Select:
-    """(report, group, meeting date) of every report in the range: filed meetings vs not-filed ones."""
+    """(report, group, meeting date, held) of every report in the range, no meetings included on
+    purpose: a date with a no meeting is filed for rule 10, just not a held meeting."""
     return select(
         SmallGroupReport.id.label("report_id"),
         SmallGroupReport.small_group_id.label("small_group_id"),
         SmallGroupReport.meeting_date.label("meeting_date"),
+        SmallGroupReport.held.label("held"),
     ).where(
         SmallGroupReport.small_group_id.in_(group_ids),
         SmallGroupReport.meeting_date >= from_date,
@@ -288,6 +292,8 @@ def week_reports_query(from_date: date, to_date: date) -> Select:
             func.count(attendance.id).filter(attendance.observation.is_not(None)).label("observation_count"),
             Member.id.label("submitted_by_member_id"),
             Member.name.label("submitted_by_name"),
+            SmallGroupReport.held.label("held"),
+            SmallGroupReport.not_held_reason.label("not_held_reason"),
         )
         .join(Member, Member.id == SmallGroupReport.submitted_by_member_id)
         .outerjoin(attendance, attendance.report_id == SmallGroupReport.id)
