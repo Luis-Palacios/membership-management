@@ -131,6 +131,17 @@ def _check_database(name: str, db_engine: Engine) -> dict[str, object]:
     return {"status": "ok", "pool": pool_stats}
 
 
+@app.get("/health/live")
+async def liveness_check() -> dict[str, str]:
+    # Liveness for the container healthcheck (compose, ECS): answers as long as the process and its
+    # event loop do. Deliberately touches no DB: when it fails, the orchestrator kills and replaces
+    # the task, and a restart can't fix an Azure SQL or members DB outage. async, so it runs on the
+    # event loop instead of queuing behind slow sync routes in the capped thread pool, which would
+    # get a busy but working process killed. /health below is the deep check, for diagnostics and
+    # readiness.
+    return {"status": "ok"}
+
+
 @app.get("/health")
 def health_check(response: Response) -> dict[str, object]:
     # Each DB is pinged separately (not through a request session), so the body says *which* one is

@@ -29,7 +29,7 @@ Rules: `docs/specs/roles-and-permissions.md` (workspace repo); this side:
   `smallGroupReports: viewObservations`, or being the submitter. A member's `email` can be changed
   only with `members: all`.
 - Not permission-gated: `GET /me` (any valid JWT, `pending` included), `GET /health`,
-  `/internal/*` (shared `X-Internal-Token`).
+  `GET /health/live`, `/internal/*` (shared `X-Internal-Token`).
 
 What each role gets today (from auth-server's statements; ✓ all records, *scope* only its
 records with 404 elsewhere, — 403). `smallGroupLeader` and `deacon` are the same for now; `user` and
