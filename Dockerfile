@@ -56,6 +56,23 @@ RUN apt-get update \
     && apt-get purge -y --auto-remove curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Amazon RDS CA bundle. The prod MEMBERS_DATABASE_URL (the app as members_app, the migrate task as
+# members_owner) ends in ?sslmode=verify-full&sslrootcert=/etc/ssl/rds/global-bundle.pem, and the
+# system CA store doesn't include the RDS CA, so without this file every connection fails. libpq
+# (psycopg) reads it when it connects; URLs without sslrootcert (local dev, compose, the seed, which
+# never runs in prod) never touch it, nor does the Azure SQL connection (ODBC 18 checks Azure's
+# public CA against the system store). Same path in auth-server's image.
+# Owned by root (ADD ignores USER) and 0644: appuser can read it but not change it. A remote ADD
+# defaults to 0600, which appuser couldn't read. The directory is made first because ADD would
+# create it with the same --chmod (0644, no x), and appuser couldn't enter it.
+# --checksum needs dockerfile syntax 1.6+ (the directive above follows the latest 1.x). When AWS
+# updates the bundle, an uncached build fails on the checksum. Check the change is AWS's, then:
+#   curl -fsS https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem | shasum -a 256
+# and paste the new hash here (and in auth-server's Dockerfile).
+RUN mkdir -p /etc/ssl/rds
+ADD --checksum=sha256:90a6f1a7978a1b1b096dca6c57511ca48d3b8cf052f8e704baf358f34ea2f21b --chmod=644 \
+    https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /etc/ssl/rds/global-bundle.pem
+
 # Non-root user for the process. Everything below stays root-owned, so the app can't modify its
 # own installed code.
 ARG UID=10001
