@@ -20,6 +20,34 @@ def member_options_query() -> Select:
     return select(Member.id.label("id"), Member.name.label("name")).order_by(Member.name, Member.id)
 
 
+def member_search_query(
+    text: str, only_group_ids: frozenset[int] | None, *, everyone: bool, limit: int
+) -> Select:
+    """Members whose name contains `text` (case-insensitive), by name.
+
+    `everyone` is the `members: all` scope. Otherwise only members with an active membership in an
+    open group among `only_group_ids` (`None`: any open group), the same scope as
+    `member_active_in_open_groups_query`.
+    """
+    escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    query = (
+        select(Member.id.label("id"), Member.name.label("name"))
+        .where(Member.name.ilike(f"%{escaped}%", escape="\\"))
+        .order_by(Member.name, Member.id)
+        .limit(limit)
+    )
+    if everyone:
+        return query
+    in_scope = (
+        select(SmallGroupMember.member_id)
+        .join(SmallGroup, SmallGroup.id == SmallGroupMember.small_group_id)
+        .where(SmallGroupMember.left_at.is_(None), SmallGroup.closed_at.is_(None))
+    )
+    if only_group_ids is not None:
+        in_scope = in_scope.where(SmallGroup.id.in_(only_group_ids))
+    return query.where(Member.id.in_(in_scope))
+
+
 def member_active_in_open_groups_query(member_id: int, only_group_ids: frozenset[int] | None) -> Select:
     """One row if the member has an active membership in an open group (among `only_group_ids`).
 

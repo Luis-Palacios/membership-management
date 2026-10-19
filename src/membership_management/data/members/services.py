@@ -13,6 +13,7 @@ from membership_management.data.members.queries import (
     member_active_small_groups_query,
     member_by_user_id_query,
     member_options_query,
+    member_search_query,
 )
 from membership_management.data.members.results import (
     MemberLead,
@@ -41,6 +42,17 @@ def list_members(session: Session) -> Sequence[MemberSummary]:
 
 def list_member_options(session: Session) -> Sequence[MemberOption]:
     return all_as(session, member_options_query(), MemberOption)
+
+
+def search_members(
+    session: Session, text: str, only_group_ids: frozenset[int] | None, *, everyone: bool, limit: int
+) -> Sequence[MemberOption]:
+    """Members matching `text` by name within the caller's scope (`everyone`, or `only_group_ids`)."""
+    if not everyone and only_group_ids is not None and not only_group_ids:
+        return []
+    return all_as(
+        session, member_search_query(text, only_group_ids, everyone=everyone, limit=limit), MemberOption
+    )
 
 
 def is_member_active_in_open_groups(

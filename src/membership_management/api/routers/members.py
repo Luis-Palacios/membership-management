@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from membership_management.api.access import MemberScope, MemberScopeDep
 from membership_management.api.current_member import CurrentMemberDep
@@ -30,6 +32,7 @@ from membership_management.data.members.services import (
     link_member_user,
     list_member_options,
     list_members,
+    search_members,
     unlink_member_user,
     update_member,
 )
@@ -94,6 +97,25 @@ def get_members(db: MembersSessionDep) -> list[MemberSummarySchema]:
 )
 def get_member_options(db: MembersSessionDep) -> list[MemberOptionSchema]:
     return [MemberOptionSchema(id=m.id, name=m.name) for m in list_member_options(db)]
+
+
+@router.get(
+    "/search",
+    name="search_members",
+    description="Find members by name within your members scope (the top bar search)",
+    dependencies=[Depends(require_permission("members", "view"))],
+)
+def get_member_search(
+    db: MembersSessionDep,
+    scope: MemberScopeDep,
+    q: Annotated[str, Query(min_length=2, max_length=100)],
+    limit: Annotated[int, Query(ge=1, le=20)] = 10,
+) -> list[MemberOptionSchema]:
+    text = q.strip()
+    if len(text) < 2:
+        return []
+    found = search_members(db, text, scope.group_ids, everyone=scope.full, limit=limit)
+    return [MemberOptionSchema(id=m.id, name=m.name) for m in found]
 
 
 @router.get(
