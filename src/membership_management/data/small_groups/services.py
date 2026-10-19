@@ -227,21 +227,17 @@ def get_report(
     return session.scalars(report_in_scope_query(report_id, only_group_ids)).one_or_none()
 
 
-def observations_visible_to(
-    report: SmallGroupReport, *, sees_all_observations: bool, viewer_member_id: int | None
-) -> bool:
-    """Rule 9: `sees_all_observations` (`smallGroupReports: viewObservations`), and the submitter."""
-    return sees_all_observations or (
-        viewer_member_id is not None and viewer_member_id == report.submitted_by_member_id
-    )
+def observations_visible_to(*, sees_all_observations: bool, leads_group: bool) -> bool:
+    """Rule 9: `sees_all_observations` (`smallGroupReports: viewObservations`), and the group's leaders."""
+    return sees_all_observations or leads_group
 
 
 def build_report_detail(
-    session: Session, report: SmallGroupReport, *, sees_all_observations: bool, viewer_member_id: int | None
+    session: Session, report: SmallGroupReport, *, sees_all_observations: bool, leads_group: bool
 ) -> ReportDetail:
     """The report as a viewer may see it; rule 9 is decided once, here, and carried in the result."""
     observations_visible = observations_visible_to(
-        report, sees_all_observations=sees_all_observations, viewer_member_id=viewer_member_id
+        sees_all_observations=sees_all_observations, leads_group=leads_group
     )
     roster = {p.member_id: p for p in roster_on_date(session, report.small_group_id, report.meeting_date)}
     streaks = missed_streaks(
@@ -341,7 +337,7 @@ def update_report(
     body: ReportInput,
     *,
     sees_all_observations: bool,
-    viewer_member_id: int | None,
+    leads_group: bool,
     today: date,
 ) -> SmallGroupReport:
     """Replace the report's content (rule 6: `submitted_by_member_id` and `submitted_at` never change).
@@ -366,7 +362,7 @@ def update_report(
         return report
     _validated_roster(session, report.small_group, body)
     may_edit_observations = observations_visible_to(
-        report, sees_all_observations=sees_all_observations, viewer_member_id=viewer_member_id
+        sees_all_observations=sees_all_observations, leads_group=leads_group
     )
     report.meeting_date = body.meeting_date
     report.address = body.address

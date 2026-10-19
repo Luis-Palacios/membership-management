@@ -91,10 +91,11 @@ role → 403.
 | `PATCH /small-group-reports/{id}` | yes | in scope | 409 if closed |
 | `DELETE /small-group-reports/{id}` | yes | in scope | 409 if closed |
 
-**Observation visibility (rule 9):** `observations_visible = role in FULL_ACCESS_ROLES or
-(current_member is not None and current_member.id == report.submitted_by_member_id)`. Admins and
-elders see them; scoped roles only on reports their member submitted. Compute it once per request in the service and pass it to the mapping, so no
-route can leak an observation by accident.
+**Observation visibility (rule 9):** `observations_visible = sees_all_observations or leads_group`,
+where `leads_group` is `scope.includes(report.small_group_id)` (the report was already fetched in
+scope). Admins and elders see them, and so do the group's leaders and co-leaders whoever submitted
+the report (changed Oct 2026; it used to be the submitter only). Compute it once per request in the
+service and pass it to the mapping, so no route can leak an observation by accident.
 
 ## Shapes
 

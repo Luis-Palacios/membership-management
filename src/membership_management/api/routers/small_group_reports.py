@@ -253,6 +253,11 @@ def _sees_all_observations(claims: AuthClaims) -> bool:
     return has_permission(claims, "smallGroupReports", "viewObservations")
 
 
+def _leads_group(scope: SmallGroupScope, small_group_id: int) -> bool:
+    """Reports are only fetched inside the scope, so a non-full caller here leads (or led) the group."""
+    return scope.includes(small_group_id)
+
+
 def _report_detail_or_404(
     db: MembersSessionDep, report_id: int, scope: SmallGroupScope, claims: AuthClaims
 ) -> ReportDetailSchema:
@@ -262,7 +267,10 @@ def _report_detail_or_404(
         raise HTTPException(status_code=404, detail=f"Small group report with ID {report_id} not found.")
     return _detail_schema(
         build_report_detail(
-            db, report, sees_all_observations=_sees_all_observations(claims), viewer_member_id=scope.member_id
+            db,
+            report,
+            sees_all_observations=_sees_all_observations(claims),
+            leads_group=_leads_group(scope, report.small_group_id),
         )
     )
 
@@ -485,7 +493,7 @@ def post_small_group_report(
 @router.get(
     "/small-group-reports/{report_id}",
     name="get_small_group_report",
-    description="A report with its attendance; observations only with viewObservations or for the submitter",
+    description="A report with its attendance; observations only for viewObservations or the group's leaders",
     response_model_exclude_unset=True,
     dependencies=[Depends(require_permission("smallGroupReports", "view"))],
 )
@@ -521,7 +529,7 @@ def patch_small_group_report(
             report,
             _to_input(body),
             sees_all_observations=_sees_all_observations(claims),
-            viewer_member_id=scope.member_id,
+            leads_group=_leads_group(scope, report.small_group_id),
             today=church_today(),
         )
     except (
