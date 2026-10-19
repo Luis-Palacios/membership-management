@@ -1,4 +1,4 @@
-from sqlalchemy import Select, select
+from sqlalchemy import Select, func, select
 
 from membership_management.data.members.models import Member
 from membership_management.data.small_groups.models import SmallGroup, SmallGroupMember
@@ -23,7 +23,7 @@ def member_options_query() -> Select:
 def member_search_query(
     text: str, only_group_ids: frozenset[int] | None, *, everyone: bool, limit: int
 ) -> Select:
-    """Members whose name contains `text` (case-insensitive), by name.
+    """Members whose name contains `text` (ignoring case and accents), by name.
 
     `everyone` is the `members: all` scope. Otherwise only members with an active membership in an
     open group among `only_group_ids` (`None`: any open group), the same scope as
@@ -32,7 +32,7 @@ def member_search_query(
     escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     query = (
         select(Member.id.label("id"), Member.name.label("name"))
-        .where(Member.name.ilike(f"%{escaped}%", escape="\\"))
+        .where(func.unaccent(Member.name).ilike(func.unaccent(f"%{escaped}%"), escape="\\"))
         .order_by(Member.name, Member.id)
         .limit(limit)
     )
