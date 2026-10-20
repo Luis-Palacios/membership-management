@@ -1,13 +1,17 @@
 from datetime import datetime
 
-from sqlalchemy import func
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from membership_management.data.small_groups.conversation_queries import (
+    comment_query,
     conversation_query,
     last_read_query,
+    lock_conversation_query,
     member_on_report_query,
+    newest_live_comment_query,
     report_conversation_summaries_query,
     report_member_conversation_query,
     thread_comments_query,
@@ -15,6 +19,8 @@ from membership_management.data.small_groups.conversation_queries import (
 from membership_management.data.small_groups.models import (
     ConversationSide,
     ReportConversation,
+    ReportConversationComment,
+    ReportConversationCommentRevision,
     ReportConversationRead,
 )
 from membership_management.data.small_groups.results import (
@@ -33,6 +39,18 @@ class MemberNotOnReportError(Exception):
 
 class ConversationNotFoundError(Exception):
     """No thread yet for this report and member: 404 `No conversation yet.`"""
+
+
+class ConversationRaceError(Exception):
+    """Two requests kept creating the same thread at once: 409, try again."""
+
+
+class NotYourCommentError(Exception):
+    """Editing or deleting someone else's comment (rule 8, 9): 403."""
+
+
+class CommentDeletedError(Exception):
+    """Editing a deleted comment: 409."""
 
 
 def needs_reply(status: str, last_comment_side: str, my_side: ConversationSide) -> bool:
@@ -123,10 +141,18 @@ def build_thread(session: Session, conversation: ReportConversation, user_id: st
     )
 
 
-def mark_read(session: Session, conversation_id: int, user_id: str) -> None:
-    """Upsert the caller's `last_read_at` to now."""
+def _db_now(session: Session) -> datetime:
+    """The database clock, so comment times and read times compare on one clock.
+
+    `clock_timestamp()`, not `now()`: a request that waited for the thread lock must not stamp its
+    comment before the one it queued behind.
+    """
+    return session.execute(select(func.clock_timestamp())).scalar_one()
+
+
+def _upsert_read(session: Session, conversation_id: int, user_id: str, at: datetime) -> None:
     stmt = insert(ReportConversationRead).values(
-        user_id=user_id, conversation_id=conversation_id, last_read_at=func.now()
+        user_id=user_id, conversation_id=conversation_id, last_read_at=at
     )
     session.execute(
         stmt.on_conflict_do_update(
@@ -134,4 +160,160 @@ def mark_read(session: Session, conversation_id: int, user_id: str) -> None:
             set_={"last_read_at": stmt.excluded.last_read_at},
         )
     )
+
+
+def mark_read(session: Session, conversation_id: int, user_id: str) -> None:
+    """Upsert the caller's `last_read_at` to now."""
+    _upsert_read(session, conversation_id, user_id, _db_now(session))
     session.commit()
+
+
+def _lock(session: Session, conversation_id: int) -> None:
+    """Serialise writers on one thread, so the denormalised columns can't be overwritten out of order."""
+    session.execute(lock_conversation_query(conversation_id))
+
+
+def _sync_last_comment(session: Session, conversation: ReportConversation) -> None:
+    """Point `last_comment_*` at the newest non-deleted comment.
+
+    A thread whose comments are all deleted keeps its last values: it stays where it was in the
+    inbox and shows only stubs.
+    """
+    newest = session.execute(newest_live_comment_query(conversation.id)).first()
+    if newest is not None:
+        conversation.last_comment_at = newest.created_at
+        conversation.last_comment_side = newest.side
+        conversation.last_comment_user_id = newest.author_user_id
+
+
+def _get_or_create(
+    session: Session, report_id: int, member_id: int, user_id: str, side: ConversationSide, now: datetime
+) -> ReportConversation:
+    """The thread for the row, creating it when missing. A unique violation means someone else just
+    created it: look again (once), then give up."""
+    for _ in range(2):
+        existing = session.scalars(report_member_conversation_query(report_id, member_id)).one_or_none()
+        if existing is not None:
+            return existing
+        try:
+            with session.begin_nested():
+                conversation = ReportConversation(
+                    report_id=report_id,
+                    member_id=member_id,
+                    status="open",
+                    created_by_user_id=user_id,
+                    created_at=now,
+                    last_comment_at=now,
+                    last_comment_side=side,
+                    last_comment_user_id=user_id,
+                )
+                session.add(conversation)
+        except IntegrityError:
+            continue
+        return conversation
+    raise ConversationRaceError
+
+
+def add_comment(
+    session: Session,
+    report_id: int,
+    member_id: int,
+    *,
+    user_id: str,
+    author_member_id: int,
+    side: ConversationSide,
+    body: str,
+) -> ReportConversation:
+    """Rule 1, 5, 6, 10: create the thread if needed, reopen it if resolved, add the comment and mark
+    the thread read for the author, in one transaction."""
+    if session.scalar(member_on_report_query(report_id, member_id)) is None:
+        raise MemberNotOnReportError
+    conversation = _get_or_create(session, report_id, member_id, user_id, side, _db_now(session))
+    session.flush()
+    _lock(session, conversation.id)
+    session.refresh(conversation)
+    now = _db_now(session)
+    session.add(
+        ReportConversationComment(
+            conversation_id=conversation.id,
+            author_user_id=user_id,
+            author_member_id=author_member_id,
+            side=side,
+            body=body,
+            created_at=now,
+        )
+    )
+    conversation.last_comment_at = now
+    conversation.last_comment_side = side
+    conversation.last_comment_user_id = user_id
+    _reopen(conversation)
+    _upsert_read(session, conversation.id, user_id, now)
+    session.commit()
+    return conversation
+
+
+def get_comment(session: Session, comment_id: int) -> ReportConversationComment | None:
+    return session.scalars(comment_query(comment_id)).one_or_none()
+
+
+def edit_comment(
+    session: Session, comment: ReportConversationComment, *, user_id: str, body: str
+) -> ReportConversation:
+    """Rule 8: the old text goes to a revision; `last_comment_at` doesn't move."""
+    if comment.author_user_id != user_id:
+        raise NotYourCommentError
+    if comment.deleted_at is not None:
+        raise CommentDeletedError
+    now = _db_now(session)
+    if body != comment.body:
+        session.add(
+            ReportConversationCommentRevision(comment_id=comment.id, body=comment.body, replaced_at=now)
+        )
+        comment.body = body
+        comment.edited_at = now
+    session.commit()
+    return comment.conversation
+
+
+def delete_comment(
+    session: Session, comment: ReportConversationComment, *, user_id: str
+) -> ReportConversation:
+    """Rule 9: soft delete (idempotent); the denormalised fields follow the newest remaining comment."""
+    if comment.author_user_id != user_id:
+        raise NotYourCommentError
+    conversation = comment.conversation
+    if comment.deleted_at is None:
+        _lock(session, conversation.id)
+        comment.deleted_at = _db_now(session)
+        session.flush()
+        _sync_last_comment(session, conversation)
+        session.commit()
+    return conversation
+
+
+def _reopen(conversation: ReportConversation) -> None:
+    conversation.status = "open"
+    conversation.resolved_by_user_id = None
+    conversation.resolved_by_member_id = None
+    conversation.resolved_at = None
+
+
+def resolve(
+    session: Session, conversation: ReportConversation, *, user_id: str, member_id: int
+) -> ReportConversation:
+    """Idempotent: resolving a resolved thread keeps the first resolver."""
+    if conversation.status != "resolved":
+        conversation.status = "resolved"
+        conversation.resolved_by_user_id = user_id
+        conversation.resolved_by_member_id = member_id
+        conversation.resolved_at = _db_now(session)
+        session.commit()
+    return conversation
+
+
+def reopen(session: Session, conversation: ReportConversation) -> ReportConversation:
+    """Idempotent."""
+    if conversation.status != "open":
+        _reopen(conversation)
+        session.commit()
+    return conversation

@@ -35,7 +35,7 @@ leader, leader of a closed group, deacon, user. Keep the conventions of the repo
 | --- | --- | --- |
 | 1. Migration and models | ✅ | (this commit) |
 | 2. Reads: per-report summaries, one thread, mark read | ✅ | (this commit) |
-| 3. Writes: comment, edit, delete, resolve, reopen | ⬜ | |
+| 3. Writes: comment, edit, delete, resolve, reopen | ✅ | (this commit) |
 | 4. Inbox and counts | ⬜ | |
 | 5. Report delete count, seed and docs | ⬜ | |
 
@@ -70,6 +70,31 @@ leader, leader of a closed group, deacon, user. Keep the conventions of the repo
   another group, former leader and a closed-group leader on an open group's report get 404; the
   closed-group leader reads the closed group's report; `user` gets 403; a no-meeting report returns
   an empty list for the summaries and 422 for a thread.
+- Stage 3: services in `conversation_services.py` (`add_comment`, `edit_comment`, `delete_comment`,
+  `resolve`, `reopen`); each commits once. Writers lock the thread row (`SELECT … FOR UPDATE`) before
+  touching `last_comment_*`, so two simultaneous comments or deletes can't leave them out of order.
+  Times come from the database clock (`clock_timestamp()`, not `now()`, so a request that waited for
+  the lock is stamped after the one it queued behind); the author's `last_read_at` gets the same
+  value as the comment, so the author's own comment is never unread for them.
+- Stage 3: thread creation race: the insert runs in a savepoint; a unique violation means someone
+  else just created it, so it looks again, once, and then answers 409 ("Someone else just started this
+  conversation. Try again.").
+- Stage 3: **every** write needs a linked member (409 `Link your account to a member to comment.`),
+  including edit, delete and reopen, as the "unlinked elder gets 409 on every write" check says. The
+  order is scope 404, audience 403, linked member 409, then the rule of that route (own comment 403,
+  deleted 409, member on report 422). So someone who was unlinked after commenting can't edit or
+  delete their old comments either.
+- Stage 3: editing with an unchanged body (after trimming) writes no revision and leaves `edited_at`
+  alone. Resolving a resolved thread keeps the first resolver; reopening an open thread does nothing.
+- Stage 3: deleting a comment recomputes `last_comment_at/side/user_id` from the newest non-deleted
+  one; if all are deleted the thread keeps its last values (it keeps its place in the inbox and shows
+  only stubs). Checked by `scratchpad/roles_stage3.py` (not committed; there is no pytest yet, by
+  your call): delete C → B, delete B → A, delete A → unchanged, `commentCount` 0.
+- Stage 3: tried the ten roles against comment, edit, delete, resolve and reopen, plus: body 0, spaces
+  only, 4001 and 4000-after-trim; member not on the report and a no-meeting report (422); comment on a
+  resolved thread reopens it; an admin can't delete a leader's comment (403); a closed group's report
+  takes comments and resolve from its leaders when it closed and from elders (rule 13), while its
+  report stays read-only, and a leader of an open group only gets 404 on it.
 
 ## Data model
 

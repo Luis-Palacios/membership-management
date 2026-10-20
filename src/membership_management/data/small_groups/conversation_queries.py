@@ -87,3 +87,35 @@ def last_read_query(conversation_id: int, user_id: str) -> Select:
         ReportConversationRead.conversation_id == conversation_id,
         ReportConversationRead.user_id == user_id,
     )
+
+
+def lock_conversation_query(conversation_id: int) -> Select:
+    return select(ReportConversation.id).where(ReportConversation.id == conversation_id).with_for_update()
+
+
+def comment_query(comment_id: int) -> Select:
+    """One comment with its thread and the thread's report (for the scope check)."""
+    return (
+        select(ReportConversationComment)
+        .where(ReportConversationComment.id == comment_id)
+        .options(
+            joinedload(ReportConversationComment.conversation).joinedload(ReportConversation.report),
+            joinedload(ReportConversationComment.conversation).joinedload(ReportConversation.resolved_by),
+        )
+    )
+
+
+def newest_live_comment_query(conversation_id: int) -> Select:
+    return (
+        select(
+            ReportConversationComment.created_at.label("created_at"),
+            ReportConversationComment.side.label("side"),
+            ReportConversationComment.author_user_id.label("author_user_id"),
+        )
+        .where(
+            ReportConversationComment.conversation_id == conversation_id,
+            ReportConversationComment.deleted_at.is_(None),
+        )
+        .order_by(ReportConversationComment.created_at.desc(), ReportConversationComment.id.desc())
+        .limit(1)
+    )
