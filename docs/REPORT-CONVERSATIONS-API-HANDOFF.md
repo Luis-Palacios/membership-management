@@ -170,6 +170,21 @@ leader, leader of a closed group, deacon, user. Keep the conventions of the repo
   `delete_comment` take the thread lock and reload the comment before reading `deleted_at`. An edit
   that raced a delete used to check a stale comment and could commit over a soft-deleted one; now it
   waits for the delete and answers 409 `deleted`. A second concurrent delete finds it already done.
+- Review fix 6 (design review): `POST /report-conversations/{id}/resolve` requires
+  `{ "lastCommentId": int | null }` (422 without it, so a client can't skip the check by omission).
+  After `_lock_and_refresh`, an `open` thread whose newest non-deleted comment (same ordering as
+  `last_comment_*`: `created_at`, then `id`) isn't that id is left open and answers 409 "There's a new
+  comment since you opened this." with `{ "detail", "conversation": <thread> }` (a `StaleConversationHTTPError`
+  with a handler in `main.py`, like the duplicate-report 409). The service rolls back before raising
+  so the lock is released. An already resolved thread returns 200 whatever the id, keeping the first
+  resolver. The order of errors on resolve is scope 404, audience 403, linked member 409 (link
+  message), then the staleness 409, so an unlinked caller never sees the stale message. A deleted
+  newest comment doesn't count: the id of the newest live one is the right one, `null` is right only
+  when none is live. Reopen is unchanged. Checked (`scratchpad/resolve_stale_check.py`): ten roles
+  with the right id; stale, older and null ids → 409 with the thread and the thread still open in the DB;
+  right id → resolved; resolved + stale id → 200; all-deleted thread with `null` → 200 and with the
+  deleted id → 409; 12 rounds of a comment racing a resolve with the old id never end resolved over
+  the new comment.
 - Final run (all stages): `alembic check` clean, `ruff check`, `ruff format --check`, `ty check`
   clean, `uv run python -m membership_management.data.seed --reset` on the local DB, then the seeded
   inbox, counts and delete cascade checked through the API.
@@ -300,6 +315,12 @@ denormalised fields. Both return the full thread.
 ### `POST /report-conversations/{id}/resolve` · `/reopen`
 
 Idempotent. Resolve needs a linked member (to store the name), 409 otherwise. Return the thread.
+
+Resolve takes a body `{ "lastCommentId": int | null }` (required): the newest comment the caller saw,
+`null` for a thread with no live comments. After taking the thread lock, if the newest non-deleted
+comment is another one the thread is **not** resolved: 409, `detail` "There's a new comment since you
+opened this.", and the current thread under `conversation` in the body. A thread that is already
+resolved stays idempotent (no check). Reopen has no body.
 
 ### `POST /report-conversations/{id}/read`
 

@@ -110,6 +110,7 @@ def comment_query(comment_id: int) -> Select:
 def newest_live_comment_query(conversation_id: int) -> Select:
     return (
         select(
+            ReportConversationComment.id.label("id"),
             ReportConversationComment.created_at.label("created_at"),
             ReportConversationComment.side.label("side"),
             ReportConversationComment.author_user_id.label("author_user_id"),
