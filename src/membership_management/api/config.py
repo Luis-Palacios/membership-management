@@ -63,11 +63,11 @@ class ApiSettings(BaseSettings):
     # SIGTERM (e.g. `docker stop`) before it's killed outright.
     graceful_shutdown_timeout_seconds: int = 30
 
-    # Default rate limit in `limits` syntax (e.g. "60/minute"), applied per authenticated user
+    # Default rate limit in `limits` syntax (e.g. "300/minute"), applied per authenticated user
     # (verified JWT `sub`) across all routes -- see rate_limit.py. With the in-memory store and
     # workers/replicas above 1 this becomes "<value> x (workers x replicas)" in practice,
     # silently; see rate_limit_storage_uri below.
-    default_rate_limit: str = "60/minute"
+    default_rate_limit: str = "300/minute"
 
     # Where rate-limit counters live, as a `limits` storage URI. "memory://" keeps them in this
     # process only (fine at 1 worker / 1 replica -- see the caveat in rate_limit.py). For more than
