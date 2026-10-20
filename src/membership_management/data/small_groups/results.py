@@ -1,7 +1,11 @@
 from datetime import date, datetime
 from typing import Literal, NamedTuple
 
-from membership_management.data.small_groups.models import SmallGroupRole
+from membership_management.data.small_groups.models import (
+    ConversationSide,
+    ConversationStatus,
+    SmallGroupRole,
+)
 
 
 class SmallGroupSummary(NamedTuple):
@@ -237,3 +241,100 @@ class ReportWeek(NamedTuple):
     today: date
     is_current_week: bool
     groups: list[WeekGroup]
+
+
+class ConversationMember(NamedTuple):
+    member_id: int
+    name: str
+
+
+class ConversationSummary(NamedTuple):
+    """A thread's row indicator on the report detail. `unread` and `needs_my_reply` are the caller's."""
+
+    id: int
+    member_id: int
+    status: ConversationStatus
+    comment_count: int
+    unread: bool
+    needs_my_reply: bool
+    last_comment_at: datetime
+
+
+class ConversationSummaries(NamedTuple):
+    conversations: list[ConversationSummary]
+    total: int
+    needs_my_reply: int
+
+
+class CommentAuthor(NamedTuple):
+    member_id: int
+    name: str
+    side: ConversationSide
+
+
+class ConversationComment(NamedTuple):
+    id: int
+    author: CommentAuthor
+    # None once deleted: the stored text is never returned again.
+    body: str | None
+    created_at: datetime
+    edited_at: datetime | None
+    deleted: bool
+    # Written by the caller (author_user_id is the caller's sub).
+    mine: bool
+
+
+class ConversationThread(NamedTuple):
+    id: int
+    member_id: int
+    status: ConversationStatus
+    resolved_by: ConversationMember | None
+    resolved_at: datetime | None
+    # First comment by someone else after the caller's last_read_at; None if none.
+    first_unread_comment_id: int | None
+    comments: list[ConversationComment]
+
+
+class InboxGroup(NamedTuple):
+    id: int
+    name: str
+    closed: bool
+
+
+class InboxReport(NamedTuple):
+    id: int
+    meeting_date: date
+
+
+class InboxLastComment(NamedTuple):
+    author_name: str
+    mine: bool
+    deleted: bool
+    # First 160 characters of the newest non-deleted comment, whitespace collapsed; None if all deleted.
+    excerpt: str | None
+    created_at: datetime
+
+
+class InboxRow(NamedTuple):
+    id: int
+    status: ConversationStatus
+    needs_my_reply: bool
+    unread: bool
+    member: ConversationMember
+    group: InboxGroup
+    report: InboxReport
+    last_comment: InboxLastComment
+    resolved_by: ConversationMember | None
+    comment_count: int
+
+
+class InboxCounts(NamedTuple):
+    reply: int
+    open: int
+    resolved: int
+
+
+class InboxPage(NamedTuple):
+    items: list[InboxRow]
+    counts: InboxCounts
+    total: int

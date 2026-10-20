@@ -19,6 +19,7 @@ from membership_management.data.database import MemberManagementBase
 
 if TYPE_CHECKING:
     from membership_management.data.members.models import Member
+    from membership_management.data.small_groups.models.report_conversation import ReportConversation
     from membership_management.data.small_groups.models.small_group import SmallGroup
     from membership_management.data.small_groups.models.small_group_report_attendance import (
         SmallGroupReportAttendance,
@@ -62,4 +63,8 @@ class SmallGroupReport(MemberManagementBase):
     submitted_by: Mapped["Member"] = relationship()
     attendances: Mapped[list["SmallGroupReportAttendance"]] = relationship(
         back_populates="report", cascade="all, delete-orphan"
+    )
+    # Deleting a report deletes its conversations: the database cascades (ON DELETE CASCADE).
+    conversations: Mapped[list["ReportConversation"]] = relationship(
+        back_populates="report", cascade="all, delete-orphan", passive_deletes=True
     )
