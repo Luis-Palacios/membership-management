@@ -162,6 +162,9 @@ leader, leader of a closed group, deacon, user. Keep the conventions of the repo
   still uses it for observations, where the same shortcut exists but was already the behaviour before
   conversations (no role in `statements.ts` has `smallGroups: all` without `viewObservations`, so
   nothing reaches it today; worth a look when roles change).
+- Review fix 4 (Copilot, "mark-read can regress `last_read_at`"): the read upsert keeps
+  `GREATEST(existing, new)`, so a request that read the clock earlier but committed later can't make a
+  thread unread again. It covers both `POST …/read` and the author's read on a new comment.
 - Final run (all stages): `alembic check` clean, `ruff check`, `ruff format --check`, `ty check`
   clean, `uv run python -m membership_management.data.seed --reset` on the local DB, then the seeded
   inbox, counts and delete cascade checked through the API.
