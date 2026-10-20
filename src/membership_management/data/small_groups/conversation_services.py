@@ -104,13 +104,18 @@ def get_report_conversations(
 
 
 def get_report_member_conversation(session: Session, report_id: int, member_id: int) -> ReportConversation:
-    """The thread for a row of the report. Raises `MemberNotOnReportError` before looking for the thread."""
+    """The thread for a row of the report.
+
+    An existing thread is returned even if the member's attendance row is gone (editing a report can
+    remove it; the thread and its replies must stay reachable). With no thread, a member who isn't on
+    the report raises `MemberNotOnReportError` (422), otherwise `ConversationNotFoundError` (404).
+    """
+    conversation = session.scalars(report_member_conversation_query(report_id, member_id)).one_or_none()
+    if conversation is not None:
+        return conversation
     if session.scalar(member_on_report_query(report_id, member_id)) is None:
         raise MemberNotOnReportError
-    conversation = session.scalars(report_member_conversation_query(report_id, member_id)).one_or_none()
-    if conversation is None:
-        raise ConversationNotFoundError
-    return conversation
+    raise ConversationNotFoundError
 
 
 def build_thread(session: Session, conversation: ReportConversation, user_id: str) -> ConversationThread:
@@ -201,11 +206,17 @@ def _get_or_create(
     session: Session, report_id: int, member_id: int, user_id: str, side: ConversationSide, now: datetime
 ) -> ReportConversation:
     """The thread for the row, creating it when missing. A unique violation means someone else just
-    created it: look again (once), then give up."""
+    created it: look again (once), then give up.
+
+    Only a new thread needs the member to have an attendance row (rule 1); replying to an existing one
+    works even after a report edit removed the row.
+    """
     for _ in range(2):
         existing = session.scalars(report_member_conversation_query(report_id, member_id)).one_or_none()
         if existing is not None:
             return existing
+        if session.scalar(member_on_report_query(report_id, member_id)) is None:
+            raise MemberNotOnReportError
         try:
             with session.begin_nested():
                 conversation = ReportConversation(
@@ -237,8 +248,6 @@ def add_comment(
 ) -> ReportConversation:
     """Rule 1, 5, 6, 10: create the thread if needed, reopen it if resolved, add the comment and mark
     the thread read for the author, in one transaction."""
-    if session.scalar(member_on_report_query(report_id, member_id)) is None:
-        raise MemberNotOnReportError
     conversation = _get_or_create(session, report_id, member_id, user_id, side, _db_now(session))
     session.flush()
     _lock(session, conversation.id)

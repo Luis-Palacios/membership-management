@@ -145,6 +145,10 @@ leader, leader of a closed group, deacon, user. Keep the conventions of the repo
   `tab=reply`, its tab counts ignore `smallGroupId`, `/report-conversations/counts` answers 0 (not
   403) outside the audience, the inbox row's person key is `member.id` (not `memberId`), and a
   thread with all comments deleted has `lastComment.deleted = true` and `excerpt = null`.
+- Review fix 1 (design review): an existing thread is returned, and can be replied to, even when the
+  member no longer has an attendance row (a report edit removes rows). The "member is on the report"
+  check (422) now only guards creating a thread (`_get_or_create`) and the GET of a thread that
+  doesn't exist yet (422 instead of 404 for a non-attendee).
 - Final run (all stages): `alembic check` clean, `ruff check`, `ruff format --check`, `ty check`
   clean, `uv run python -m membership_management.data.seed --reset` on the local DB, then the seeded
   inbox, counts and delete cascade checked through the API.
