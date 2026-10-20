@@ -1,5 +1,7 @@
 """Static Managua, Nicaragua data the seeders draw from."""
 
+from typing import Literal, NamedTuple
+
 FEMALE_GIVEN_NAMES = [
     "María José", "Ana Lucía", "Karla Vanessa", "Fátima", "Yahoska", "Jessenia", "Martha Elena",
     "Rosa Argentina", "Claudia", "Gabriela", "Hazel", "Scarleth", "Ruth", "Sofía", "Valeria",
@@ -100,4 +102,100 @@ ABSENCE_OBSERVATIONS = [
     "Viajó a Matagalpa por asuntos familiares.",
     "No respondió llamadas; conviene visitarlo.",
     "Cuidando a un familiar enfermo.",
+]
+
+
+# Report conversations: threads on a person's attendance row. Each thread is one report (`group`: the
+# n-th seeded group, `report`: how many held reports back from the newest) and its comments in order.
+class SeedComment(NamedTuple):
+    side: Literal["elders", "leaders"]
+    body: str
+    # The text it had before an edit, if it was edited.
+    edited_from: str | None = None
+    deleted: bool = False
+
+
+class SeedThread(NamedTuple):
+    group: int
+    report: int
+    comments: list[SeedComment]
+    # "elders" / "leaders": who resolved it; None = still open.
+    resolved_by: Literal["elders", "leaders"] | None = None
+
+
+CONVERSATION_THREADS = [
+    # Waiting for the leaders.
+    SeedThread(
+        group=0,
+        report=0,
+        comments=[
+            SeedComment("elders", "Faltó dos semanas seguidas. ¿Saben si pasa algo con él o con su familia?"),
+        ],
+    ),
+    # Waiting for the elders.
+    SeedThread(
+        group=1,
+        report=0,
+        comments=[
+            SeedComment("elders", "Vi que no vino a la iglesia el domingo. ¿Lo pudieron contactar?"),
+            SeedComment(
+                "leaders",
+                "Lo llamé ayer. Trabaja turnos de noche y no puede venir. Le dije que oraremos por él.",
+            ),
+        ],
+    ),
+    # A leader started it; waiting for the elders. The comment was edited.
+    SeedThread(
+        group=2,
+        report=0,
+        comments=[
+            SeedComment(
+                "leaders",
+                "Esta persona perdió su trabajo y necesita orientación. ¿Quién puede visitarla con nosotros?",
+                edited_from="Esta persona perdió su trabajo. ¿Quién puede visitarla?",
+            ),
+        ],
+    ),
+    # Resolved by an elder.
+    SeedThread(
+        group=3,
+        report=0,
+        resolved_by="elders",
+        comments=[
+            SeedComment("elders", "Notamos que lleva tres reuniones sin asistir. ¿Ha dicho algo?"),
+            SeedComment("leaders", "Se mudó de casa y le queda lejos. Ya quedamos en pasar a recogerlo."),
+            SeedComment("elders", "Perfecto, gracias. Lo damos por atendido."),
+        ],
+    ),
+    # A deleted reply, then another one.
+    SeedThread(
+        group=4,
+        report=0,
+        comments=[
+            SeedComment("elders", "¿Cómo va el seguimiento con esta familia?"),
+            SeedComment("leaders", "Escribí algo equivocado aquí, perdón.", deleted=True),
+            SeedComment(
+                "leaders", "Los visitamos el sábado. Están animados y quieren volver a las reuniones."
+            ),
+        ],
+    ),
+    # An older report, resolved by a leader.
+    SeedThread(
+        group=0,
+        report=3,
+        resolved_by="leaders",
+        comments=[
+            SeedComment("elders", "Pregunta sobre el hermano que estuvo enfermo: ¿ya se recuperó?"),
+            SeedComment("leaders", "Sí, ya está de alta y vino la semana pasada. Todo bien."),
+        ],
+    ),
+    # An older report, still open, the elders spoke last.
+    SeedThread(
+        group=1,
+        report=2,
+        comments=[
+            SeedComment("leaders", "Ella pidió oración por su mamá, que sigue hospitalizada."),
+            SeedComment("elders", "Gracias por avisar. Un anciano la llamará esta semana."),
+        ],
+    ),
 ]

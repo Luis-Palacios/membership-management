@@ -150,6 +150,8 @@ class ReportDetailSchema(CamelModel):
     attendances: list[ReportAttendanceSchema]
     totals: ReportTotalsSchema
     permissions: ReportPermissionsSchema
+    # Threads on this report: deleting the report deletes them too (the delete dialog says how many).
+    conversation_count: int
 
 
 class ReportListGroupSchema(CamelModel):

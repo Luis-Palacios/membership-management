@@ -37,7 +37,7 @@ leader, leader of a closed group, deacon, user. Keep the conventions of the repo
 | 2. Reads: per-report summaries, one thread, mark read | ✅ | (this commit) |
 | 3. Writes: comment, edit, delete, resolve, reopen | ✅ | (this commit) |
 | 4. Inbox and counts | ✅ | (this commit) |
-| 5. Report delete count, seed and docs | ⬜ | |
+| 5. Report delete count, seed and docs | ✅ | (this commit) |
 
 ### Decisions and deviations
 
@@ -126,6 +126,28 @@ leader, leader of a closed group, deacon, user. Keep the conventions of the repo
   sees three; the co-leader and deacon of group 1 two; the leader of group 2 two; the closed-group
   leader one; the former leader none; `user` gets 403 on the inbox and `0` on counts. Replying drops
   a leader's badge, and raises the elders'.
+- Stage 5: `conversationCount` is always returned on the report detail (it is a count, not an
+  observation, and the delete dialog needs it from anyone who may delete). Checked with a real
+  `DELETE /small-group-reports/{id}`: the thread, its comments, a revision and both read rows were
+  gone afterwards.
+- Stage 5: seed `data/seed/small_group_report_conversations.py` (registered last in `SEEDERS`, so
+  `--reset` truncates the new tables on its own; fixtures in `fixtures.CONVERSATION_THREADS`): seven
+  threads in Spanish over the five seeded groups: waiting for the leaders (1), waiting for the elders
+  (3: one started by a leader and edited, one with a deleted reply, one plain), open with the elders
+  last (1), resolved by an elder (1) and by a leader (1). The seed has no elders or users, so the
+  elders' side is written by two members who lead nothing, under made-up user ids (`seed-elder-N`,
+  `seed-user-<member id>`) that match no auth-server account: every comment shows as someone else's.
+  Count: 7 threads, 14 comments, 1 revision.
+- Stage 5: `docs/ARCHITECTURE.md` (four route rows in the role × route table and a *Report
+  conversations* section) and one bullet in `CLAUDE.md`. The cross-repo spec
+  (`../docs/specs/report-conversations.md`) is not edited here: it differs from the build only in
+  details the staff-app will read from this log: `GET /report-conversations` defaults to
+  `tab=reply`, its tab counts ignore `smallGroupId`, `/report-conversations/counts` answers 0 (not
+  403) outside the audience, the inbox row's person key is `member.id` (not `memberId`), and a
+  thread with all comments deleted has `lastComment.deleted = true` and `excerpt = null`.
+- Final run (all stages): `alembic check` clean, `ruff check`, `ruff format --check`, `ty check`
+  clean, `uv run python -m membership_management.data.seed --reset` on the local DB, then the seeded
+  inbox, counts and delete cascade checked through the API.
 
 ## Data model
 

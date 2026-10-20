@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from membership_management.data.members.models import Member
 from membership_management.data.query_helpers import all_as
 from membership_management.data.small_groups.models import (
+    ReportConversation,
     SmallGroup,
     SmallGroupMember,
     SmallGroupReport,
@@ -284,6 +285,12 @@ def build_report_detail(
         attendances=views,
         held=report.held,
         not_held_reason=report.not_held_reason,
+        conversation_count=session.scalar(
+            select(func.count())
+            .select_from(ReportConversation)
+            .where(ReportConversation.report_id == report.id)
+        )
+        or 0,
     )
 
 
