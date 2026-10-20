@@ -6,6 +6,7 @@ from membership_management.api.access import (
     comment_side,
     conversation_access,
 )
+from membership_management.api.current_member import CurrentMemberDep
 from membership_management.api.dependencies import MembersSessionDep
 from membership_management.api.jwt_auth import (
     AuthClaims,
@@ -16,6 +17,7 @@ from membership_management.api.jwt_auth import (
 from membership_management.api.rate_limit import default_user_rate_limit, rate_limit
 from membership_management.api.schemas.report_conversations import (
     CommentAuthorSchema,
+    CommentBodySchema,
     ConversationAnchorSchema,
     ConversationCommentSchema,
     ConversationCountsSchema,
@@ -24,16 +26,30 @@ from membership_management.api.schemas.report_conversations import (
     ConversationThreadSchema,
     ReportConversationsSchema,
 )
+from membership_management.data.members.models import Member
 from membership_management.data.small_groups.conversation_services import (
+    CommentDeletedError,
     ConversationNotFoundError,
+    ConversationRaceError,
     MemberNotOnReportError,
+    NotYourCommentError,
+    add_comment,
     build_thread,
+    delete_comment,
+    edit_comment,
+    get_comment,
     get_conversation,
     get_report_conversations,
     get_report_member_conversation,
     mark_read,
+    reopen,
+    resolve,
 )
-from membership_management.data.small_groups.models import SmallGroupReport
+from membership_management.data.small_groups.models import (
+    ReportConversation,
+    ReportConversationComment,
+    SmallGroupReport,
+)
 from membership_management.data.small_groups.results import ConversationThread
 from membership_management.data.small_groups.services import get_report
 
@@ -56,6 +72,14 @@ def _http_error(exc: Exception) -> HTTPException:
         return HTTPException(status_code=422, detail="That person has no attendance row on this report.")
     if isinstance(exc, ConversationNotFoundError):
         return HTTPException(status_code=404, detail="No conversation yet.")
+    if isinstance(exc, NotYourCommentError):
+        return HTTPException(status_code=403, detail="That's not your comment.")
+    if isinstance(exc, CommentDeletedError):
+        return HTTPException(status_code=409, detail="That comment was deleted.")
+    if isinstance(exc, ConversationRaceError):
+        return HTTPException(
+            status_code=409, detail="Someone else just started this conversation. Try again."
+        )
     raise exc
 
 
@@ -68,6 +92,23 @@ def _report_or_404(
         raise HTTPException(status_code=404, detail=f"Small group report with ID {report_id} not found.")
     conversation_access(report, claims, scope)
     return report
+
+
+def _linked_member(member: Member | None) -> Member:
+    """Rule 5: every write needs a linked member (reading doesn't)."""
+    if member is None:
+        raise HTTPException(status_code=409, detail="Link your account to a member to comment.")
+    return member
+
+
+def _conversation_or_404(
+    db: MembersSessionDep, conversation_id: int, claims: AuthClaims, scope: SmallGroupScope
+) -> ReportConversation:
+    conversation = get_conversation(db, conversation_id)
+    if conversation is None or not scope.includes(conversation.report.small_group_id):
+        raise HTTPException(status_code=404, detail=f"Conversation with ID {conversation_id} not found.")
+    conversation_access(conversation.report, claims, scope)
+    return conversation
 
 
 def _thread_schema(thread: ConversationThread) -> ConversationThreadSchema:
@@ -156,9 +197,132 @@ def get_report_conversation(
 def post_report_conversation_read(
     conversation_id: int, db: MembersSessionDep, claims: CurrentClaimsDep, scope: SmallGroupScopeDep
 ) -> Response:
-    conversation = get_conversation(db, conversation_id)
-    if conversation is None or not scope.includes(conversation.report.small_group_id):
-        raise HTTPException(status_code=404, detail=f"Conversation with ID {conversation_id} not found.")
-    conversation_access(conversation.report, claims, scope)
+    conversation = _conversation_or_404(db, conversation_id, claims, scope)
     mark_read(db, conversation.id, claims.sub)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/small-group-reports/{report_id}/conversations/{member_id}/comments",
+    name="add_report_conversation_comment",
+    description="Add a comment to a person's thread: creates the thread, reopens it when resolved",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(rate_limit("30/minute", scope="add_report_conversation_comment"))],
+)
+def post_report_conversation_comment(
+    report_id: int,
+    member_id: int,
+    body: CommentBodySchema,
+    db: MembersSessionDep,
+    claims: CurrentClaimsDep,
+    scope: SmallGroupScopeDep,
+    member: CurrentMemberDep,
+) -> ConversationThreadSchema:
+    report = _report_or_404(db, report_id, claims, scope)
+    author = _linked_member(member)
+    try:
+        conversation = add_comment(
+            db,
+            report.id,
+            member_id,
+            user_id=claims.sub,
+            author_member_id=author.id,
+            side=comment_side(claims),
+            body=body.body,
+        )
+    except (MemberNotOnReportError, ConversationRaceError) as exc:
+        raise _http_error(exc) from exc
+    return _thread_schema(build_thread(db, conversation, claims.sub))
+
+
+def _comment_or_404(
+    db: MembersSessionDep, comment_id: int, claims: AuthClaims, scope: SmallGroupScope
+) -> ReportConversationComment:
+    comment = get_comment(db, comment_id)
+    if comment is None or not scope.includes(comment.conversation.report.small_group_id):
+        raise HTTPException(status_code=404, detail=f"Comment with ID {comment_id} not found.")
+    conversation_access(comment.conversation.report, claims, scope)
+    return comment
+
+
+@router.patch(
+    "/report-conversation-comments/{comment_id}",
+    name="edit_report_conversation_comment",
+    description="Edit your own comment; the previous text is kept but never returned",
+    dependencies=[Depends(rate_limit("30/minute", scope="edit_report_conversation_comment"))],
+)
+def patch_report_conversation_comment(
+    comment_id: int,
+    body: CommentBodySchema,
+    db: MembersSessionDep,
+    claims: CurrentClaimsDep,
+    scope: SmallGroupScopeDep,
+    member: CurrentMemberDep,
+) -> ConversationThreadSchema:
+    comment = _comment_or_404(db, comment_id, claims, scope)
+    _linked_member(member)
+    try:
+        conversation = edit_comment(db, comment, user_id=claims.sub, body=body.body)
+    except (NotYourCommentError, CommentDeletedError) as exc:
+        raise _http_error(exc) from exc
+    return _thread_schema(build_thread(db, conversation, claims.sub))
+
+
+@router.delete(
+    "/report-conversation-comments/{comment_id}",
+    name="delete_report_conversation_comment",
+    description="Soft delete your own comment (idempotent); it shows as a stub, its text never returned",
+    dependencies=[Depends(rate_limit("20/minute", scope="delete_report_conversation_comment"))],
+)
+def delete_report_conversation_comment(
+    comment_id: int,
+    db: MembersSessionDep,
+    claims: CurrentClaimsDep,
+    scope: SmallGroupScopeDep,
+    member: CurrentMemberDep,
+) -> ConversationThreadSchema:
+    comment = _comment_or_404(db, comment_id, claims, scope)
+    _linked_member(member)
+    try:
+        conversation = delete_comment(db, comment, user_id=claims.sub)
+    except NotYourCommentError as exc:
+        raise _http_error(exc) from exc
+    return _thread_schema(build_thread(db, conversation, claims.sub))
+
+
+@router.post(
+    "/report-conversations/{conversation_id}/resolve",
+    name="resolve_report_conversation",
+    description="Resolve the thread (idempotent); needs a linked member to store who resolved it",
+    dependencies=[Depends(rate_limit("30/minute", scope="resolve_report_conversation"))],
+)
+def post_report_conversation_resolve(
+    conversation_id: int,
+    db: MembersSessionDep,
+    claims: CurrentClaimsDep,
+    scope: SmallGroupScopeDep,
+    member: CurrentMemberDep,
+) -> ConversationThreadSchema:
+    conversation = _conversation_or_404(db, conversation_id, claims, scope)
+    resolver = _linked_member(member)
+    resolve(db, conversation, user_id=claims.sub, member_id=resolver.id)
+    return _thread_schema(build_thread(db, get_conversation(db, conversation_id) or conversation, claims.sub))
+
+
+@router.post(
+    "/report-conversations/{conversation_id}/reopen",
+    name="reopen_report_conversation",
+    description="Reopen a resolved thread (idempotent)",
+    dependencies=[Depends(rate_limit("30/minute", scope="reopen_report_conversation"))],
+)
+def post_report_conversation_reopen(
+    conversation_id: int,
+    db: MembersSessionDep,
+    claims: CurrentClaimsDep,
+    scope: SmallGroupScopeDep,
+    member: CurrentMemberDep,
+) -> ConversationThreadSchema:
+    conversation = _conversation_or_404(db, conversation_id, claims, scope)
+    _linked_member(member)
+    reopen(db, conversation)
+    return _thread_schema(build_thread(db, get_conversation(db, conversation_id) or conversation, claims.sub))

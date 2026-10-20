@@ -1,5 +1,7 @@
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
+
+from pydantic import StringConstraints
 
 from membership_management.api.schemas.base import CamelModel
 from membership_management.data.small_groups.models import ConversationSide, ConversationStatus
@@ -62,3 +64,11 @@ class ConversationThreadSchema(CamelModel):
     resolved_at: datetime | None
     first_unread_comment_id: int | None
     comments: list[ConversationCommentSchema]
+
+
+# Rule 7: plain text, 1-4000 characters after trimming.
+CommentBody = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=4000)]
+
+
+class CommentBodySchema(CamelModel):
+    body: CommentBody
