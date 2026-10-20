@@ -10,6 +10,7 @@ from membership_management.data.config import settings
 from membership_management.data.database import MemberManagementBase
 from membership_management.data.seed.context import SeedContext, Seeder
 from membership_management.data.seed.members import seed_members
+from membership_management.data.seed.small_group_report_conversations import seed_report_conversations
 from membership_management.data.seed.small_group_reports import seed_small_group_reports
 from membership_management.data.seed.small_groups import seed_small_groups
 
@@ -18,6 +19,7 @@ SEEDERS: list[Seeder] = [
     seed_members,
     seed_small_groups,
     seed_small_group_reports,
+    seed_report_conversations,
 ]
 
 DEFAULT_RNG_SEED = 2026

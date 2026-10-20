@@ -250,6 +250,7 @@ def _detail_schema(detail: ReportDetail) -> ReportDetailSchema:
         attendances=attendances,
         totals=ReportTotalsSchema(**totals),
         permissions=ReportPermissionsSchema(can_edit=open_group, can_delete=open_group),
+        conversation_count=detail.conversation_count,
     )
 
 

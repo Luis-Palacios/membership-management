@@ -110,6 +110,8 @@ class ReportDetail(NamedTuple):
     attendances: list[ReportAttendanceView]
     held: bool = True
     not_held_reason: str | None = None
+    # Threads on the report; the delete dialog says they go with it. Not an observation: always set.
+    conversation_count: int = 0
 
 
 class ReportGroupRow(NamedTuple):
