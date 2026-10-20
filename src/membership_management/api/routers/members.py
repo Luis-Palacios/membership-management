@@ -44,7 +44,7 @@ router = APIRouter(
 )
 
 
-def _detail(db: MembersSessionDep, member: Member) -> MemberDetailSchema:
+def member_detail(db: MembersSessionDep, member: Member) -> MemberDetailSchema:
     small_groups = get_member_small_groups(db, member.id)
     return MemberDetailSchema(
         id=member.id,
@@ -123,7 +123,7 @@ def get_member_search(
     name="get_member",
     description="Get a member with their current small groups (your own, or within your members scope)",
 )
-def get_member_detail(
+def get_membermember_detail(
     member_id: int,
     db: MembersSessionDep,
     claims: CurrentClaimsDep,
@@ -132,10 +132,10 @@ def get_member_detail(
 ) -> MemberDetailSchema:
     # The caller's own member is always readable (rule 11), whatever the role: My profile loads it.
     if current_member is not None and current_member.id == member_id:
-        return _detail(db, current_member)
+        return member_detail(db, current_member)
     if not has_permission(claims, "members", "view"):
         raise HTTPException(status_code=403, detail="You don't have permission to do this.")
-    return _detail(db, _get_or_404(db, member_id, scope))
+    return member_detail(db, _get_or_404(db, member_id, scope))
 
 
 @router.post(
@@ -161,7 +161,7 @@ def post_member(body: MemberCreateSchema, db: MembersSessionDep) -> MemberDetail
         )
     except DuplicateMemberEmailError as exc:
         raise HTTPException(status_code=409, detail="A member with this email already exists.") from exc
-    return _detail(db, member)
+    return member_detail(db, member)
 
 
 @router.patch(
@@ -193,7 +193,7 @@ def patch_member(
         member = update_member(db, member, changes)
     except DuplicateMemberEmailError as exc:
         raise HTTPException(status_code=409, detail="A member with this email already exists.") from exc
-    return _detail(db, member)
+    return member_detail(db, member)
 
 
 @router.put(
@@ -213,7 +213,7 @@ def put_member_user(member_id: int, body: MemberUserLinkSchema, db: MembersSessi
         raise HTTPException(status_code=409, detail="This member is already linked to another user.") from exc
     except UserAlreadyLinkedError as exc:
         raise HTTPException(status_code=409, detail="This user is already linked to another member.") from exc
-    return _detail(db, member)
+    return member_detail(db, member)
 
 
 @router.delete(
