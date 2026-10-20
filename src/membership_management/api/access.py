@@ -9,8 +9,12 @@ from membership_management.api.dependencies import MembersSessionDep
 from membership_management.api.jwt_auth import AuthClaims, CurrentClaimsDep, has_permission
 from membership_management.data.members.models import Member
 from membership_management.data.members.services import is_member_active_in_open_groups
-from membership_management.data.small_groups.models import SmallGroupRole
-from membership_management.data.small_groups.services import get_active_membership, get_led_small_group_ids
+from membership_management.data.small_groups.models import ConversationSide, SmallGroupReport, SmallGroupRole
+from membership_management.data.small_groups.services import (
+    get_active_membership,
+    get_led_small_group_ids,
+    observations_visible_to,
+)
 
 
 @dataclass(frozen=True)
@@ -120,3 +124,28 @@ def ensure_caller_can_change_member(
     target = get_active_membership(db, small_group_id, member_id)
     if target is not None and target.role == SmallGroupRole.LEADER:
         raise HTTPException(status_code=403, detail=_LEADERSHIP)
+
+
+def sees_all_observations(claims: AuthClaims) -> bool:
+    return has_permission(claims, "smallGroupReports", "viewObservations")
+
+
+def leads_group(scope: SmallGroupScope, small_group_id: int) -> bool:
+    """Reports are only fetched inside the scope, so a non-full caller here leads (or led) the group."""
+    return scope.includes(small_group_id)
+
+
+def comment_side(claims: AuthClaims) -> ConversationSide:
+    """Rule 6: `elders` with `smallGroups: all`, else `leaders`. Stored on the comment when written."""
+    return "elders" if has_permission(claims, "smallGroups", "all") else "leaders"
+
+
+def conversation_access(report: SmallGroupReport, claims: AuthClaims, scope: SmallGroupScope) -> None:
+    """Rule 3: the audience of the report's observations. 404 outside the scope, 403 outside the audience."""
+    if not scope.includes(report.small_group_id):
+        raise HTTPException(status_code=404, detail=f"Small group report with ID {report.id} not found.")
+    if not observations_visible_to(
+        sees_all_observations=sees_all_observations(claims),
+        leads_group=leads_group(scope, report.small_group_id),
+    ):
+        raise HTTPException(status_code=403, detail="You don't have permission to do this.")

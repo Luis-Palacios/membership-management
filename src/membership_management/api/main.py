@@ -26,6 +26,7 @@ from membership_management.api.routers import (
     me,
     members,
     people,
+    report_conversations,
     small_group_reports,
     small_groups,
 )
@@ -80,6 +81,7 @@ app.include_router(me.router)
 app.include_router(members.router)
 app.include_router(small_groups.router)
 app.include_router(small_group_reports.router)
+app.include_router(report_conversations.router)
 app.include_router(internal.router)
 
 

@@ -34,7 +34,7 @@ leader, leader of a closed group, deacon, user. Keep the conventions of the repo
 | Stage | Status | Commit |
 | --- | --- | --- |
 | 1. Migration and models | ✅ | (this commit) |
-| 2. Reads: per-report summaries, one thread, mark read | ⬜ | |
+| 2. Reads: per-report summaries, one thread, mark read | ✅ | (this commit) |
 | 3. Writes: comment, edit, delete, resolve, reopen | ⬜ | |
 | 4. Inbox and counts | ⬜ | |
 | 5. Report delete count, seed and docs | ⬜ | |
@@ -51,6 +51,25 @@ leader, leader of a closed group, deacon, user. Keep the conventions of the repo
 - Stage 1: migration `dadaa792d43d`. Upgrade, `downgrade -1`, upgrade and `alembic check` are clean.
   `ReportConversation.last_comment_*` and the `created_at`/`*_at` columns have no server default; the
   service sets them from one `now()` per transaction.
+- Stage 2: `_sees_all_observations` / `_leads_group` moved from the reports router to `api/access.py`
+  as `sees_all_observations` / `leads_group` (two routers use them now). `conversation_access` also
+  does the scope 404, so a caller can't reach a report through it even if the fetch isn't scoped.
+- Stage 2: conversation queries and services live in `data/small_groups/conversation_queries.py` and
+  `conversation_services.py` (not in the 900-line `services.py`); same split, new files.
+- Stage 2: the router has a router-level `smallGroupReports: view` (users and other roles get 403
+  before anything else) and then `conversation_access` per report. Mark-read is 120/minute (the
+  handoff gives no figure; the panel fires it on every open).
+- Stage 2: `firstUnreadCommentId` ignores deleted comments (a stub can't be scrolled to). Unread and
+  needs-my-reply are computed in Python from the summaries rows; the same helpers (`is_unread`,
+  `needs_reply`) are for the writes and inbox to reuse.
+- Stage 2: 404 on a missing thread is `No conversation yet.`; 422 for a member not on the report
+  (including any member on a no-meeting report) is checked first.
+- Stage 2: tried every role in the list against the three routes with a TestClient overriding the
+  claims and current member, on the local seed plus throwaway rows (deleted afterwards): admin, elder
+  linked and unlinked read all; leader, co-leader and deacon in scope read and mark read; leader of
+  another group, former leader and a closed-group leader on an open group's report get 404; the
+  closed-group leader reads the closed group's report; `user` gets 403; a no-meeting report returns
+  an empty list for the summaries and 422 for a thread.
 
 ## Data model
 

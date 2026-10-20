@@ -3,7 +3,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
-from membership_management.api.access import SmallGroupScope, SmallGroupScopeDep
+from membership_management.api.access import (
+    SmallGroupScope,
+    SmallGroupScopeDep,
+    leads_group,
+    sees_all_observations,
+)
 from membership_management.api.church_time import church_today
 from membership_management.api.current_member import CurrentMemberDep
 from membership_management.api.dependencies import MembersSessionDep
@@ -11,7 +16,6 @@ from membership_management.api.jwt_auth import (
     AuthClaims,
     CurrentClaimsDep,
     get_current_claims,
-    has_permission,
     require_permission,
 )
 from membership_management.api.rate_limit import default_user_rate_limit, rate_limit
@@ -249,15 +253,6 @@ def _detail_schema(detail: ReportDetail) -> ReportDetailSchema:
     )
 
 
-def _sees_all_observations(claims: AuthClaims) -> bool:
-    return has_permission(claims, "smallGroupReports", "viewObservations")
-
-
-def _leads_group(scope: SmallGroupScope, small_group_id: int) -> bool:
-    """Reports are only fetched inside the scope, so a non-full caller here leads (or led) the group."""
-    return scope.includes(small_group_id)
-
-
 def _report_detail_or_404(
     db: MembersSessionDep, report_id: int, scope: SmallGroupScope, claims: AuthClaims
 ) -> ReportDetailSchema:
@@ -269,8 +264,8 @@ def _report_detail_or_404(
         build_report_detail(
             db,
             report,
-            sees_all_observations=_sees_all_observations(claims),
-            leads_group=_leads_group(scope, report.small_group_id),
+            sees_all_observations=sees_all_observations(claims),
+            leads_group=leads_group(scope, report.small_group_id),
         )
     )
 
@@ -528,8 +523,8 @@ def patch_small_group_report(
             db,
             report,
             _to_input(body),
-            sees_all_observations=_sees_all_observations(claims),
-            leads_group=_leads_group(scope, report.small_group_id),
+            sees_all_observations=sees_all_observations(claims),
+            leads_group=leads_group(scope, report.small_group_id),
             today=church_today(),
         )
     except (
