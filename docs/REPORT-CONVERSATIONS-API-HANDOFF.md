@@ -33,7 +33,7 @@ leader, leader of a closed group, deacon, user. Keep the conventions of the repo
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. Migration and models | ⬜ | |
+| 1. Migration and models | ✅ | (this commit) |
 | 2. Reads: per-report summaries, one thread, mark read | ⬜ | |
 | 3. Writes: comment, edit, delete, resolve, reopen | ⬜ | |
 | 4. Inbox and counts | ⬜ | |
@@ -41,7 +41,16 @@ leader, leader of a closed group, deacon, user. Keep the conventions of the repo
 
 ### Decisions and deviations
 
-- (fill in per stage)
+- Stage 1: the handoff file was already committed on `main` (`0abf7f0`), not untracked, so there is no
+  separate first commit; the branch starts at Stage 1.
+- Stage 1: table and model names are as in the handoff; `status` and `side` are VARCHAR + hand-written
+  CHECK (no native enum), typed in code as `ConversationStatus` / `ConversationSide` Literals.
+- Stage 1: the resolved-columns CHECK is written as "open with all three NULL, or resolved with all
+  three set". The unique `(report_id, member_id)` constraint gets the convention name
+  `uq_report_conversations_report_id` (the naming convention only uses the first column).
+- Stage 1: migration `dadaa792d43d`. Upgrade, `downgrade -1`, upgrade and `alembic check` are clean.
+  `ReportConversation.last_comment_*` and the `created_at`/`*_at` columns have no server default; the
+  service sets them from one `now()` per transaction.
 
 ## Data model
 
