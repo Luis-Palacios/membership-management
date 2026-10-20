@@ -151,6 +151,7 @@ def build_thread(session: Session, conversation: ReportConversation, user_id: st
     return ConversationThread(
         id=conversation.id,
         member_id=conversation.member_id,
+        member_name=conversation.member.name,
         status=conversation.status,
         resolved_by=ConversationMember(member_id=resolved_by.id, name=resolved_by.name)
         if resolved_by is not None

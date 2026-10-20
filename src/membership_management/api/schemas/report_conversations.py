@@ -56,9 +56,17 @@ class ConversationCommentSchema(CamelModel):
     mine: bool
 
 
+class InboxMemberSchema(CamelModel):
+    id: int
+    name: str
+
+
 class ConversationThreadSchema(CamelModel):
     id: int
     anchor: ConversationAnchorSchema
+    # Same shape as the inbox row; the name comes from members, so it is there even when the
+    # attendance row is gone.
+    member: InboxMemberSchema
     status: ConversationStatus
     resolved_by: ConversationPersonSchema | None
     resolved_at: datetime | None
@@ -72,11 +80,6 @@ CommentBody = Annotated[str, StringConstraints(strip_whitespace=True, min_length
 
 class CommentBodySchema(CamelModel):
     body: CommentBody
-
-
-class InboxMemberSchema(CamelModel):
-    id: int
-    name: str
 
 
 class InboxGroupSchema(CamelModel):
