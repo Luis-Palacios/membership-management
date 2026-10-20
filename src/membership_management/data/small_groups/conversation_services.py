@@ -173,7 +173,10 @@ def _upsert_read(session: Session, conversation_id: int, user_id: str, at: datet
     session.execute(
         stmt.on_conflict_do_update(
             index_elements=[ReportConversationRead.user_id, ReportConversationRead.conversation_id],
-            set_={"last_read_at": stmt.excluded.last_read_at},
+            # Never backwards: two requests can read the clock in one order and commit in the other.
+            set_={
+                "last_read_at": func.greatest(ReportConversationRead.last_read_at, stmt.excluded.last_read_at)
+            },
         )
     )
 
