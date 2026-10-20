@@ -188,6 +188,10 @@ leader, leader of a closed group, deacon, user. Keep the conventions of the repo
 - Final run (all stages): `alembic check` clean, `ruff check`, `ruff format --check`, `ty check`
   clean, `uv run python -m membership_management.data.seed --reset` on the local DB, then the seeded
   inbox, counts and delete cascade checked through the API.
+- After Stage 5: the thread response (GET/POST conversation routes, resolve, reopen, edit, delete and
+  the stale 409 `conversation`) carries `member: { id, name }`, the same shape as the inbox row. The
+  name is read from `members` through the conversation's own `member_id`, so it is there when the
+  attendance row has been removed from the report. `anchor.memberId` stays.
 
 ## Data model
 

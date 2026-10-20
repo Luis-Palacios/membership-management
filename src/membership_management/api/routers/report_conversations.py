@@ -143,6 +143,7 @@ def _thread_schema(thread: ConversationThread) -> ConversationThreadSchema:
     return ConversationThreadSchema(
         id=thread.id,
         anchor=ConversationAnchorSchema(member_id=thread.member_id),
+        member=InboxMemberSchema(id=thread.member_id, name=thread.member_name),
         status=thread.status,
         resolved_by=ConversationPersonSchema(
             member_id=thread.resolved_by.member_id, name=thread.resolved_by.name

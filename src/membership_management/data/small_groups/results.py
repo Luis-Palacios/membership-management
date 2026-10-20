@@ -289,6 +289,7 @@ class ConversationComment(NamedTuple):
 class ConversationThread(NamedTuple):
     id: int
     member_id: int
+    member_name: str
     status: ConversationStatus
     resolved_by: ConversationMember | None
     resolved_at: datetime | None
