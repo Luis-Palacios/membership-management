@@ -189,6 +189,12 @@ def _lock(session: Session, conversation_id: int) -> None:
     session.execute(lock_conversation_query(conversation_id))
 
 
+def _lock_and_refresh(session: Session, conversation: ReportConversation) -> None:
+    """Take the thread lock, then reload the thread, so what is checked next is what the last writer left."""
+    _lock(session, conversation.id)
+    session.refresh(conversation)
+
+
 def _sync_last_comment(session: Session, conversation: ReportConversation) -> None:
     """Point `last_comment_*` at the newest non-deleted comment.
 
@@ -250,8 +256,7 @@ def add_comment(
     the thread read for the author, in one transaction."""
     conversation = _get_or_create(session, report_id, member_id, user_id, side, _db_now(session))
     session.flush()
-    _lock(session, conversation.id)
-    session.refresh(conversation)
+    _lock_and_refresh(session, conversation)
     now = _db_now(session)
     session.add(
         ReportConversationComment(
@@ -321,7 +326,13 @@ def _reopen(conversation: ReportConversation) -> None:
 def resolve(
     session: Session, conversation: ReportConversation, *, user_id: str, member_id: int
 ) -> ReportConversation:
-    """Idempotent: resolving a resolved thread keeps the first resolver."""
+    """Idempotent: resolving a resolved thread keeps the first resolver.
+
+    Takes the thread lock before looking at the status, like `add_comment`, so two resolvers can't both
+    see `open`, and a comment posted at the same moment can't end up under a thread resolved from a
+    stale read.
+    """
+    _lock_and_refresh(session, conversation)
     if conversation.status != "resolved":
         conversation.status = "resolved"
         conversation.resolved_by_user_id = user_id
@@ -332,7 +343,8 @@ def resolve(
 
 
 def reopen(session: Session, conversation: ReportConversation) -> ReportConversation:
-    """Idempotent."""
+    """Idempotent. Locks and reloads the thread first, for the same reason as `resolve`."""
+    _lock_and_refresh(session, conversation)
     if conversation.status != "open":
         _reopen(conversation)
         session.commit()
