@@ -25,9 +25,11 @@ from membership_management.api.schemas.small_groups import (
 from membership_management.data.small_groups.models import SmallGroup
 from membership_management.data.small_groups.services import (
     ActiveMembershipNotFoundError,
+    JoinedInFutureError,
     LeaderAlreadyExistsError,
     MemberAlreadyInGroupError,
     MemberNotFoundError,
+    MembershipOverlapError,
     SmallGroupAlreadyClosedError,
     SmallGroupClosedError,
     add_small_group_member,
@@ -171,7 +173,7 @@ def _today() -> date:
 @router.post(
     "/{small_group_id}/members",
     name="add_small_group_member",
-    description="Add a member to a small group, joining today",
+    description="Add a member to a small group, joining on joinedAt (default today)",
     status_code=status.HTTP_201_CREATED,
     dependencies=[
         Depends(require_permission("smallGroups", "manageMembers")),
@@ -188,7 +190,14 @@ def post_small_group_member(
     small_group = _get_or_404(db, small_group_id, scope)
     ensure_caller_can_add_member(claims, body.role)
     try:
-        add_small_group_member(db, small_group, member_id=body.member_id, role=body.role, today=_today())
+        add_small_group_member(
+            db,
+            small_group,
+            member_id=body.member_id,
+            role=body.role,
+            today=_today(),
+            joined_at=body.joined_at,
+        )
     except SmallGroupClosedError as exc:
         raise HTTPException(status_code=409, detail="This small group is closed.") from exc
     except MemberNotFoundError as exc:
@@ -197,6 +206,12 @@ def post_small_group_member(
         raise HTTPException(status_code=409, detail="This member is already in the small group.") from exc
     except LeaderAlreadyExistsError as exc:
         raise HTTPException(status_code=409, detail="This small group already has a leader.") from exc
+    except JoinedInFutureError as exc:
+        raise HTTPException(status_code=422, detail="The join date can't be in the future.") from exc
+    except MembershipOverlapError as exc:
+        raise HTTPException(
+            status_code=409, detail="The join date overlaps an earlier period of this member in the group."
+        ) from exc
     return _detail(db, small_group)
 
 

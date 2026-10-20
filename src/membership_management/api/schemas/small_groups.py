@@ -55,6 +55,8 @@ class SmallGroupUpdateSchema(CamelModel):
 class SmallGroupMemberAddSchema(CamelModel):
     member_id: int
     role: SmallGroupRole = SmallGroupRole.MEMBER
+    # Defaults to today in the church's time zone; a past date backfills migrated data.
+    joined_at: date | None = None
 
 
 class SmallGroupMemberRoleSchema(CamelModel):
