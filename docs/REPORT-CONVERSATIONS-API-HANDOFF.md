@@ -36,7 +36,7 @@ leader, leader of a closed group, deacon, user. Keep the conventions of the repo
 | 1. Migration and models | ✅ | (this commit) |
 | 2. Reads: per-report summaries, one thread, mark read | ✅ | (this commit) |
 | 3. Writes: comment, edit, delete, resolve, reopen | ✅ | (this commit) |
-| 4. Inbox and counts | ⬜ | |
+| 4. Inbox and counts | ✅ | (this commit) |
 | 5. Report delete count, seed and docs | ⬜ | |
 
 ### Decisions and deviations
@@ -95,6 +95,37 @@ leader, leader of a closed group, deacon, user. Keep the conventions of the repo
   resolved thread reopens it; an admin can't delete a leader's comment (403); a closed group's report
   takes comments and resolve from its leaders when it closed and from elders (rule 13), while its
   report stays read-only, and a leader of an open group only gets 404 on it.
+- Stage 4: audience of the lists is `conversation_group_ids(claims, scope)` in `api/access.py`: every
+  group (`None`) for `smallGroups: all` **and** `viewObservations`; the scope's `group_ids` for a scoped
+  caller (so a former leader gets nothing and a closed-group leader gets the closed group); nothing
+  for a full scope without `viewObservations` (the same people `conversation_access` refuses with
+  403). A `smallGroupId` outside the audience gives an empty page, not 404.
+- Stage 4: **`counts` ignore `smallGroupId`** (the three tab numbers are the whole inbox and don't jump
+  when a group is picked); `total` is the filtered tab. The default tab is `reply`. The inbox 403s
+  without `smallGroupReports: view`; `/report-conversations/counts` answers `{ needsMyReply: 0 }` for
+  anyone outside the audience (including `user`), via `OptionalSmallGroupScopeDep`. The router-level
+  `smallGroupReports: view` requirement moved onto each route for that reason.
+- Stage 4: `lastComment` is the newest non-deleted comment; a thread with every comment deleted shows
+  its newest (deleted) comment with `deleted: true` and `excerpt: null`, so every row has one.
+  `commentCount` excludes deleted comments. Excerpts are cut after collapsing whitespace, no ellipsis.
+- Stage 4: queries (`conversation_queries.py`): rows = one statement (page of ids first, then the
+  joins and a `LATERAL` newest-comment lookup for those rows only), counts = one `COUNT(*) FILTER`
+  statement, plus a `total` count for the filtered tab; the badge is a bare `COUNT(*)` with the same
+  filters. EXPLAIN ANALYZE on a rolled-back bulk of 2,520 threads (every report × member) and 3,360
+  comments: inbox page ≈ 1 ms for an elder (walks `ix_report_conversations_last_comment_at_desc`,
+  stops after 25 rows) and for a leader of groups {1, 6} offset 100; counts ≈ 1.7 ms, total and badge
+  ≈ 0.4–0.8 ms (hash join of the thread table with the 42 reports; seq scans on that scale; the
+  leaders' version uses `ix_report_conversations_report_id`). My first version cut the page after
+  the lateral join and ran the comment lookup for all 462 matching threads (9.8 ms for the leader);
+  paging first fixed that. No new index added: counts and the badge scan all of the audience's
+  threads, which is fine at this size. If threads reach the hundreds of thousands, a partial index on
+  `(last_comment_side) WHERE status = 'open'` is the first thing to try.
+- Stage 4: ten roles against `GET /report-conversations` (all tabs, group filter, paging, limits) and
+  `/counts` with six threads over three groups and a closed one (`scratchpad/roles_stage4.py`, not
+  committed): admin and elder linked/unlinked see all six (4 / 5 / 1); the leader of groups 1 and 6
+  sees three; the co-leader and deacon of group 1 two; the leader of group 2 two; the closed-group
+  leader one; the former leader none; `user` gets 403 on the inbox and `0` on counts. Replying drops
+  a leader's badge, and raises the elders'.
 
 ## Data model
 

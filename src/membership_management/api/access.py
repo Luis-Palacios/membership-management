@@ -57,6 +57,16 @@ def get_small_group_scope(
 SmallGroupScopeDep = Annotated[SmallGroupScope, Depends(get_small_group_scope)]
 
 
+def get_optional_small_group_scope(
+    claims: CurrentClaimsDep, member: CurrentMemberDep, db: MembersSessionDep
+) -> SmallGroupScope | None:
+    """Like `get_small_group_scope`, but None instead of 403 for callers outside the small group routes."""
+    return _small_group_scope(claims, member, db)
+
+
+OptionalSmallGroupScopeDep = Annotated[SmallGroupScope | None, Depends(get_optional_small_group_scope)]
+
+
 @dataclass(frozen=True)
 class MemberScope:
     """Which members the caller may see and edit (rule 3).
@@ -149,3 +159,16 @@ def conversation_access(report: SmallGroupReport, claims: AuthClaims, scope: Sma
         leads_group=leads_group(scope, report.small_group_id),
     ):
         raise HTTPException(status_code=403, detail="You don't have permission to do this.")
+
+
+def conversation_group_ids(claims: AuthClaims, scope: SmallGroupScope | None) -> frozenset[int] | None:
+    """The groups whose conversations the caller may see: None = every group, else exactly these ids.
+
+    The same audience as `conversation_access`, for lists: a full scope needs `viewObservations`
+    (without it, no group), a scoped caller gets the groups they lead (or led when it closed).
+    """
+    if scope is None or not has_permission(claims, "smallGroupReports", "view"):
+        return frozenset()
+    if scope.full:
+        return None if sees_all_observations(claims) else frozenset()
+    return scope.group_ids

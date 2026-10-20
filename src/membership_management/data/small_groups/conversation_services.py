@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
@@ -8,9 +9,13 @@ from sqlalchemy.orm import Session
 from membership_management.data.small_groups.conversation_queries import (
     comment_query,
     conversation_query,
+    inbox_counts_query,
+    inbox_rows_query,
+    inbox_total_query,
     last_read_query,
     lock_conversation_query,
     member_on_report_query,
+    needs_reply_count_query,
     newest_live_comment_query,
     report_conversation_summaries_query,
     report_member_conversation_query,
@@ -30,6 +35,12 @@ from membership_management.data.small_groups.results import (
     ConversationSummaries,
     ConversationSummary,
     ConversationThread,
+    InboxCounts,
+    InboxGroup,
+    InboxLastComment,
+    InboxPage,
+    InboxReport,
+    InboxRow,
 )
 
 
@@ -317,3 +328,71 @@ def reopen(session: Session, conversation: ReportConversation) -> ReportConversa
         _reopen(conversation)
         session.commit()
     return conversation
+
+
+InboxTab = Literal["reply", "open", "resolved"]
+EXCERPT_LENGTH = 160
+
+
+def _excerpt(body: str) -> str:
+    """First 160 characters with whitespace collapsed."""
+    return " ".join(body.split())[:EXCERPT_LENGTH]
+
+
+def get_inbox(
+    session: Session,
+    *,
+    group_ids: frozenset[int] | None,
+    user_id: str,
+    my_side: ConversationSide,
+    tab: InboxTab,
+    small_group_id: int | None,
+    limit: int,
+    offset: int,
+) -> InboxPage:
+    """Rules 11, 12, 15. `group_ids` is the caller's audience (None = every group).
+
+    The three tab counts ignore `small_group_id` (they are the whole inbox, so the tabs don't jump when
+    a group is picked); `total` is the filtered tab.
+    """
+    if group_ids is not None and not group_ids:
+        return InboxPage(items=[], counts=InboxCounts(reply=0, open=0, resolved=0), total=0)
+    counts = session.execute(inbox_counts_query(group_ids, my_side)).one()
+    if small_group_id is not None and group_ids is not None and small_group_id not in group_ids:
+        return InboxPage(items=[], counts=InboxCounts(*counts), total=0)
+    total = session.scalar(inbox_total_query(group_ids, my_side, tab, small_group_id)) or 0
+    rows = session.execute(
+        inbox_rows_query(group_ids, user_id, my_side, tab, small_group_id, limit, offset)
+    ).all()
+    items = [
+        InboxRow(
+            id=r.id,
+            status=r.status,
+            needs_my_reply=needs_reply(r.status, r.last_comment_side, my_side),
+            unread=is_unread(r.last_comment_user_id, r.last_comment_at, r.last_read_at, user_id),
+            member=ConversationMember(member_id=r.member_id, name=r.member_name),
+            group=InboxGroup(id=r.group_id, name=r.group_name, closed=r.group_closed_at is not None),
+            report=InboxReport(id=r.report_id, meeting_date=r.meeting_date),
+            last_comment=InboxLastComment(
+                author_name=r.lc_author_name,
+                mine=r.lc_author_user_id == user_id,
+                deleted=r.lc_deleted_at is not None,
+                excerpt=None if r.lc_deleted_at is not None else _excerpt(r.lc_body),
+                created_at=r.lc_created_at,
+            ),
+            resolved_by=ConversationMember(member_id=r.resolver_id, name=r.resolver_name)
+            if r.resolver_id is not None
+            else None,
+            comment_count=r.comment_count,
+        )
+        for r in rows
+    ]
+    return InboxPage(items=items, counts=InboxCounts(*counts), total=total)
+
+
+def count_needing_reply(
+    session: Session, *, group_ids: frozenset[int] | None, my_side: ConversationSide
+) -> int:
+    if group_ids is not None and not group_ids:
+        return 0
+    return session.scalar(needs_reply_count_query(group_ids, my_side)) or 0

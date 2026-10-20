@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Literal
 
 from pydantic import StringConstraints
@@ -72,3 +72,57 @@ CommentBody = Annotated[str, StringConstraints(strip_whitespace=True, min_length
 
 class CommentBodySchema(CamelModel):
     body: CommentBody
+
+
+class InboxMemberSchema(CamelModel):
+    id: int
+    name: str
+
+
+class InboxGroupSchema(CamelModel):
+    id: int
+    name: str
+    closed: bool
+
+
+class InboxReportSchema(CamelModel):
+    id: int
+    meeting_date: date
+
+
+class InboxLastCommentSchema(CamelModel):
+    author_name: str
+    mine: bool
+    deleted: bool
+    # First 160 characters of the newest non-deleted comment; null when every comment is deleted.
+    excerpt: str | None
+    created_at: datetime
+
+
+class InboxItemSchema(CamelModel):
+    id: int
+    status: ConversationStatus
+    needs_my_reply: bool
+    unread: bool
+    member: InboxMemberSchema
+    group: InboxGroupSchema
+    report: InboxReportSchema
+    last_comment: InboxLastCommentSchema
+    resolved_by: ConversationPersonSchema | None
+    comment_count: int
+
+
+class InboxCountsSchema(CamelModel):
+    reply: int
+    open: int
+    resolved: int
+
+
+class InboxSchema(CamelModel):
+    items: list[InboxItemSchema]
+    counts: InboxCountsSchema
+    total: int
+
+
+class NeedsMyReplyCountSchema(CamelModel):
+    needs_my_reply: int
