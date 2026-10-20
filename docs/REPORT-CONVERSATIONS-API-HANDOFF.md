@@ -192,6 +192,9 @@ leader, leader of a closed group, deacon, user. Keep the conventions of the repo
   the stale 409 `conversation`) carries `member: { id, name }`, the same shape as the inbox row. The
   name is read from `members` through the conversation's own `member_id`, so it is there when the
   attendance row has been removed from the report. `anchor.memberId` stays.
+- After Stage 5: `default_rate_limit` goes from `60/minute` to `300/minute` (config default and
+  `.env.example`), because the staff app makes several server-side calls per page render. Noted in
+  `docs/ARCHITECTURE.md`. Per-route limits are unchanged.
 
 ## Data model
 

@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 # Storage comes from RATE_LIMIT_STORAGE_URI, so moving from per-process memory to a shared Redis
 # is configuration, not code. With the default memory:// store, counters live in this process only:
 # with ApiSettings.workers > 1, or multiple replicas, each process keeps its own, so a limit like
-# "60/minute" effectively becomes "60 x (workers x replicas) per minute". Fine at 1 worker / 1
+# "300/minute" effectively becomes "300 x (workers x replicas) per minute". Fine at 1 worker / 1
 # replica; switch to a shared store before relying on this as a real global guarantee.
 #
 # Moving-window is the exact algorithm (no burst at window edges, unlike fixed-window) and at
