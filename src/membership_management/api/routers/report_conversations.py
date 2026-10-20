@@ -1,10 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from membership_management.api.access import (
+    OptionalSmallGroupScopeDep,
     SmallGroupScope,
     SmallGroupScopeDep,
     comment_side,
     conversation_access,
+    conversation_group_ids,
 )
 from membership_management.api.current_member import CurrentMemberDep
 from membership_management.api.dependencies import MembersSessionDep
@@ -24,6 +28,14 @@ from membership_management.api.schemas.report_conversations import (
     ConversationPersonSchema,
     ConversationSummarySchema,
     ConversationThreadSchema,
+    InboxCountsSchema,
+    InboxGroupSchema,
+    InboxItemSchema,
+    InboxLastCommentSchema,
+    InboxMemberSchema,
+    InboxReportSchema,
+    InboxSchema,
+    NeedsMyReplyCountSchema,
     ReportConversationsSchema,
 )
 from membership_management.data.members.models import Member
@@ -31,14 +43,17 @@ from membership_management.data.small_groups.conversation_services import (
     CommentDeletedError,
     ConversationNotFoundError,
     ConversationRaceError,
+    InboxTab,
     MemberNotOnReportError,
     NotYourCommentError,
     add_comment,
     build_thread,
+    count_needing_reply,
     delete_comment,
     edit_comment,
     get_comment,
     get_conversation,
+    get_inbox,
     get_report_conversations,
     get_report_member_conversation,
     mark_read,
@@ -55,15 +70,15 @@ from membership_management.data.small_groups.services import get_report
 
 # No prefix: the routes live under both /small-group-reports/{id}/... and /report-conversations.
 # Everyone in the report's observation audience can use them (no new permission, spec rule 4):
-# `smallGroupReports: view` gets you in, `conversation_access` decides per report.
+# `smallGroupReports: view` gets you in, `conversation_access` (one report) or `conversation_group_ids`
+# (the inbox) decides what you see.
 router = APIRouter(
     tags=["report-conversations"],
-    dependencies=[
-        Depends(get_current_claims),
-        Depends(default_user_rate_limit),
-        Depends(require_permission("smallGroupReports", "view")),
-    ],
+    dependencies=[Depends(get_current_claims), Depends(default_user_rate_limit)],
 )
+
+# Every route but the sidebar badge (`/report-conversations/counts` answers 0 instead of 403).
+_needs_reports_view = Depends(require_permission("smallGroupReports", "view"))
 
 
 def _http_error(exc: Exception) -> HTTPException:
@@ -144,6 +159,7 @@ def _thread_schema(thread: ConversationThread) -> ConversationThreadSchema:
     "/small-group-reports/{report_id}/conversations",
     name="list_report_conversations",
     description="A report's threads with the row indicators: comment count, unread and needs my reply",
+    dependencies=[_needs_reports_view],
 )
 def get_report_conversation_summaries(
     report_id: int, db: MembersSessionDep, claims: CurrentClaimsDep, scope: SmallGroupScopeDep
@@ -171,6 +187,7 @@ def get_report_conversation_summaries(
     "/small-group-reports/{report_id}/conversations/{member_id}",
     name="get_report_conversation",
     description="One person's thread on a report; 404 `No conversation yet.` when nobody has commented",
+    dependencies=[_needs_reports_view],
 )
 def get_report_conversation(
     report_id: int,
@@ -192,7 +209,10 @@ def get_report_conversation(
     name="mark_report_conversation_read",
     description="Mark the thread read for the caller (opening the panel); never done by a GET",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(rate_limit("120/minute", scope="mark_report_conversation_read"))],
+    dependencies=[
+        _needs_reports_view,
+        Depends(rate_limit("120/minute", scope="mark_report_conversation_read")),
+    ],
 )
 def post_report_conversation_read(
     conversation_id: int, db: MembersSessionDep, claims: CurrentClaimsDep, scope: SmallGroupScopeDep
@@ -207,7 +227,10 @@ def post_report_conversation_read(
     name="add_report_conversation_comment",
     description="Add a comment to a person's thread: creates the thread, reopens it when resolved",
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(rate_limit("30/minute", scope="add_report_conversation_comment"))],
+    dependencies=[
+        _needs_reports_view,
+        Depends(rate_limit("30/minute", scope="add_report_conversation_comment")),
+    ],
 )
 def post_report_conversation_comment(
     report_id: int,
@@ -249,7 +272,10 @@ def _comment_or_404(
     "/report-conversation-comments/{comment_id}",
     name="edit_report_conversation_comment",
     description="Edit your own comment; the previous text is kept but never returned",
-    dependencies=[Depends(rate_limit("30/minute", scope="edit_report_conversation_comment"))],
+    dependencies=[
+        _needs_reports_view,
+        Depends(rate_limit("30/minute", scope="edit_report_conversation_comment")),
+    ],
 )
 def patch_report_conversation_comment(
     comment_id: int,
@@ -272,7 +298,10 @@ def patch_report_conversation_comment(
     "/report-conversation-comments/{comment_id}",
     name="delete_report_conversation_comment",
     description="Soft delete your own comment (idempotent); it shows as a stub, its text never returned",
-    dependencies=[Depends(rate_limit("20/minute", scope="delete_report_conversation_comment"))],
+    dependencies=[
+        _needs_reports_view,
+        Depends(rate_limit("20/minute", scope="delete_report_conversation_comment")),
+    ],
 )
 def delete_report_conversation_comment(
     comment_id: int,
@@ -294,7 +323,7 @@ def delete_report_conversation_comment(
     "/report-conversations/{conversation_id}/resolve",
     name="resolve_report_conversation",
     description="Resolve the thread (idempotent); needs a linked member to store who resolved it",
-    dependencies=[Depends(rate_limit("30/minute", scope="resolve_report_conversation"))],
+    dependencies=[_needs_reports_view, Depends(rate_limit("30/minute", scope="resolve_report_conversation"))],
 )
 def post_report_conversation_resolve(
     conversation_id: int,
@@ -313,7 +342,7 @@ def post_report_conversation_resolve(
     "/report-conversations/{conversation_id}/reopen",
     name="reopen_report_conversation",
     description="Reopen a resolved thread (idempotent)",
-    dependencies=[Depends(rate_limit("30/minute", scope="reopen_report_conversation"))],
+    dependencies=[_needs_reports_view, Depends(rate_limit("30/minute", scope="reopen_report_conversation"))],
 )
 def post_report_conversation_reopen(
     conversation_id: int,
@@ -326,3 +355,76 @@ def post_report_conversation_reopen(
     _linked_member(member)
     reopen(db, conversation)
     return _thread_schema(build_thread(db, get_conversation(db, conversation_id) or conversation, claims.sub))
+
+
+# "counts" is declared before the inbox so it can never be read as a conversation id.
+@router.get(
+    "/report-conversations/counts",
+    name="count_report_conversations_needing_reply",
+    description="How many threads wait for the caller's reply (the sidebar badge); 0 outside the audience",
+)
+def get_report_conversation_counts(
+    db: MembersSessionDep, claims: CurrentClaimsDep, scope: OptionalSmallGroupScopeDep
+) -> NeedsMyReplyCountSchema:
+    count = count_needing_reply(
+        db, group_ids=conversation_group_ids(claims, scope), my_side=comment_side(claims)
+    )
+    return NeedsMyReplyCountSchema(needs_my_reply=count)
+
+
+@router.get(
+    "/report-conversations",
+    name="list_report_conversations_inbox",
+    description="The inbox: threads across the groups the caller can see, newest first, with tab counts",
+    dependencies=[_needs_reports_view],
+)
+def get_report_conversation_inbox(
+    db: MembersSessionDep,
+    claims: CurrentClaimsDep,
+    scope: SmallGroupScopeDep,
+    tab: InboxTab = "reply",
+    small_group_id: Annotated[int | None, Query(alias="smallGroupId")] = None,
+    limit: Annotated[int, Query(ge=1, le=50)] = 25,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> InboxSchema:
+    page = get_inbox(
+        db,
+        group_ids=conversation_group_ids(claims, scope),
+        user_id=claims.sub,
+        my_side=comment_side(claims),
+        tab=tab,
+        small_group_id=small_group_id,
+        limit=limit,
+        offset=offset,
+    )
+    return InboxSchema(
+        items=[
+            InboxItemSchema(
+                id=i.id,
+                status=i.status,
+                needs_my_reply=i.needs_my_reply,
+                unread=i.unread,
+                member=InboxMemberSchema(id=i.member.member_id, name=i.member.name),
+                group=InboxGroupSchema(id=i.group.id, name=i.group.name, closed=i.group.closed),
+                report=InboxReportSchema(id=i.report.id, meeting_date=i.report.meeting_date),
+                last_comment=InboxLastCommentSchema(
+                    author_name=i.last_comment.author_name,
+                    mine=i.last_comment.mine,
+                    deleted=i.last_comment.deleted,
+                    excerpt=i.last_comment.excerpt,
+                    created_at=i.last_comment.created_at,
+                ),
+                resolved_by=ConversationPersonSchema(
+                    member_id=i.resolved_by.member_id, name=i.resolved_by.name
+                )
+                if i.resolved_by is not None
+                else None,
+                comment_count=i.comment_count,
+            )
+            for i in page.items
+        ],
+        counts=InboxCountsSchema(
+            reply=page.counts.reply, open=page.counts.open, resolved=page.counts.resolved
+        ),
+        total=page.total,
+    )
