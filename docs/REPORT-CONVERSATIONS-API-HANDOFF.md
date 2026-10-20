@@ -149,6 +149,11 @@ leader, leader of a closed group, deacon, user. Keep the conventions of the repo
   member no longer has an attendance row (a report edit removes rows). The "member is on the report"
   check (422) now only guards creating a thread (`_get_or_create`) and the GET of a thread that
   doesn't exist yet (422 instead of 404 for a non-attendee).
+- Review fix 2 (design review; also Copilot's "resolve races" and "reopen races"): `resolve` and `reopen`
+  take the thread lock and reload the thread (`_lock_and_refresh`, the same one `add_comment` uses)
+  before looking at the status. A route-loaded thread could be stale, so two resolvers could both
+  see `open` and the later one replace the first resolver, and a resolve could overwrite the state a
+  concurrent comment had just left. Both idempotent paths now commit nothing when there is nothing to change.
 - Final run (all stages): `alembic check` clean, `ruff check`, `ruff format --check`, `ty check`
   clean, `uv run python -m membership_management.data.seed --reset` on the local DB, then the seeded
   inbox, counts and delete cascade checked through the API.
