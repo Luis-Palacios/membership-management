@@ -27,13 +27,15 @@ Rules: `docs/specs/roles-and-permissions.md` (workspace repo); this side:
 - Leadership rule 9: adding, promoting to or changing a `leader` row needs `smallGroups:
   setLeader`; without `smallGroups: all` you can't change your own row. Report observations need
   `smallGroupReports: viewObservations`, or leading the report's group. A member's `email` can be changed
-  only with `members: all`.
+  only with `members: all`. `PATCH /me/member` needs `ownProfile: update` and ignores the members scope:
+  it only ever touches the member linked to the JWT `sub` (404 if none), and has no `email` field.
 - Not permission-gated: `GET /me` (any valid JWT, `pending` included), `GET /health`,
   `GET /health/live`, `/internal/*` (shared `X-Internal-Token`).
 
 What each role gets today (from auth-server's statements; ✓ all records, *scope* only its
 records with 404 elsewhere, — 403). `smallGroupLeader` and `deacon` are the same for now; `user` and
-`pending` have no permissions and get 403 on every route below.
+`pending` have no permissions and get 403 on every route below, except `PATCH /me/member`, which `user`
+also has (`ownProfile: update`); `pending` has nothing.
 
 | Route | Permission | admin, elder | smallGroupLeader, deacon |
 | --- | --- | --- | --- |
@@ -57,6 +59,7 @@ records with 404 elsewhere, — 403). `smallGroupLeader` and `deacon` are the sa
 | `POST /applications/approve`, `/reject` | `membershipApplications: approve` / `reject` | ✓ | — |
 | `GET /people/{id}/events`, `/first-assistance` | `membershipApplications: view` | ✓ | — |
 | `GET /me` | none (any valid JWT) | ✓ | ✓ |
+| `PATCH /me/member` | `ownProfile: update`; own linked member only, no scope, no `email` | ✓ | ✓ |
 
 A new role, or a change to what a role can do, is an auth-server change only; nothing here
 changes unless a new *action* needs a new check.
