@@ -27,7 +27,7 @@ Rules: `docs/specs/roles-and-permissions.md` (workspace repo); this side:
 - Leadership rule 9: adding, promoting to or changing a `leader` row needs `smallGroups:
   setLeader`; without `smallGroups: all` you can't change your own row. Report observations need
   `smallGroupReports: viewObservations`, or leading the report's group. A member's `email` can be changed
-  only with `members: all`. `PATCH /me/member` needs `ownProfile: update` and ignores the members scope:
+  with `members: all`, or without it while the member has no `user_id`. `PATCH /me/member` needs `ownProfile: update` and ignores the members scope:
   it only ever touches the member linked to the JWT `sub` (404 if none), and has no `email` field.
 - Not permission-gated: `GET /me` (any valid JWT, `pending` included), `GET /health`,
   `GET /health/live`, `/internal/*` (shared `X-Internal-Token`).
@@ -57,7 +57,7 @@ also has (`ownProfile: update`); `pending` has nothing.
 | `GET /members/search?q=` | `members: view` + members scope (name match, `q` ≥ 2 chars, ≤ 20 rows) | ✓ | scope (id and name only) |
 | `GET /members/{id}` | Own member: none (any role, rule 11). Others: `members: view` + members scope | ✓ | own + scope |
 | `POST /members` | `members: create` | ✓ | — |
-| `PATCH /members/{id}` | `members: update` + members scope; `email` needs `all` | ✓ | scope, no `email` |
+| `PATCH /members/{id}` | `members: update` + members scope; `email` needs `all` unless the member is unlinked | ✓ | scope, no `email` |
 | `PUT`, `DELETE /members/{id}/user` | `members: link` | ✓ | — |
 | `GET /applications/recents`, `/recents/count`, `/{id}` | `membershipApplications: view` | ✓ | — |
 | `POST /applications/approve`, `/reject` | `membershipApplications: approve` / `reject` | ✓ | — |

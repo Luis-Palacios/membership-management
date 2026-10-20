@@ -182,10 +182,14 @@ def patch_member(
 ) -> MemberDetailSchema:
     member = _get_or_404(db, member_id, scope)
     changes = body.model_dump(exclude_unset=True)
-    # Email is what an accepted invite matches to link a member to a user, so only callers with
-    # `members: all` may change it (rule 8). After the scope check: out of scope stays 404.
-    if "email" in changes and not has_permission(claims, "members", "all"):
-        raise HTTPException(status_code=403, detail="Ask an admin or elder to change a member's email.")
+    # Email is what an accepted invite matches to link a member to a user, so without `members: all`
+    # it can change only while the member has no user (rule 8). After the scope check: out of scope
+    # stays 404.
+    if "email" in changes and member.user_id is not None and not has_permission(claims, "members", "all"):
+        raise HTTPException(
+            status_code=403,
+            detail="This member is linked to a user. Ask an admin or elder to change their email.",
+        )
     # name is NOT NULL: an explicit null would otherwise surface as a DB error (500).
     if "name" in changes and changes["name"] is None:
         raise HTTPException(status_code=422, detail="name cannot be null.")
