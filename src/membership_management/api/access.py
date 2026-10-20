@@ -154,9 +154,10 @@ def conversation_access(report: SmallGroupReport, claims: AuthClaims, scope: Sma
     """Rule 3: the audience of the report's observations. 404 outside the scope, 403 outside the audience."""
     if not scope.includes(report.small_group_id):
         raise HTTPException(status_code=404, detail=f"Small group report with ID {report.id} not found.")
+    # A full scope is not "leading the group": it needs `viewObservations`, as in `conversation_group_ids`.
     if not observations_visible_to(
         sees_all_observations=sees_all_observations(claims),
-        leads_group=leads_group(scope, report.small_group_id),
+        leads_group=not scope.full and leads_group(scope, report.small_group_id),
     ):
         raise HTTPException(status_code=403, detail="You don't have permission to do this.")
 

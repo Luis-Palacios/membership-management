@@ -154,6 +154,14 @@ leader, leader of a closed group, deacon, user. Keep the conventions of the repo
   before looking at the status. A route-loaded thread could be stale, so two resolvers could both
   see `open` and the later one replace the first resolver, and a resolve could overwrite the state a
   concurrent comment had just left. Both idempotent paths now commit nothing when there is nothing to change.
+- Review fix 3 (design review; also Copilot's "full-scope callers bypass viewObservations"):
+  `conversation_access` passed `leads_group(scope, …)`, which is `scope.includes()` and so always true for
+  a `smallGroups: all` caller, letting one without `viewObservations` read and write every thread while
+  `conversation_group_ids` gave the same caller an empty inbox. It now passes
+  `not scope.full and leads_group(…)`. The shared `leads_group` helper is unchanged: the reports router
+  still uses it for observations, where the same shortcut exists but was already the behaviour before
+  conversations (no role in `statements.ts` has `smallGroups: all` without `viewObservations`, so
+  nothing reaches it today; worth a look when roles change).
 - Final run (all stages): `alembic check` clean, `ruff check`, `ruff format --check`, `ty check`
   clean, `uv run python -m membership_management.data.seed --reset` on the local DB, then the seeded
   inbox, counts and delete cascade checked through the API.
