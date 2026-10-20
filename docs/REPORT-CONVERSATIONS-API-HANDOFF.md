@@ -153,7 +153,8 @@ leader, leader of a closed group, deacon, user. Keep the conventions of the repo
   take the thread lock and reload the thread (`_lock_and_refresh`, the same one `add_comment` uses)
   before looking at the status. A route-loaded thread could be stale, so two resolvers could both
   see `open` and the later one replace the first resolver, and a resolve could overwrite the state a
-  concurrent comment had just left. Both idempotent paths now commit nothing when there is nothing to change.
+  concurrent comment had just left. Resolve, reopen and delete now also commit when there is nothing to
+  change, so the lock they took is released at once instead of at session close.
 - Review fix 3 (design review; also Copilot's "full-scope callers bypass viewObservations"):
   `conversation_access` passed `leads_group(scope, …)`, which is `scope.includes()` and so always true for
   a `smallGroups: all` caller, letting one without `viewObservations` read and write every thread while
@@ -165,6 +166,10 @@ leader, leader of a closed group, deacon, user. Keep the conventions of the repo
 - Review fix 4 (Copilot, "mark-read can regress `last_read_at`"): the read upsert keeps
   `GREATEST(existing, new)`, so a request that read the clock earlier but committed later can't make a
   thread unread again. It covers both `POST …/read` and the author's read on a new comment.
+- Review fix 5 (Copilot, "edit can modify a concurrently deleted comment"): `edit_comment` and
+  `delete_comment` take the thread lock and reload the comment before reading `deleted_at`. An edit
+  that raced a delete used to check a stale comment and could commit over a soft-deleted one; now it
+  waits for the delete and answers 409 `deleted`. A second concurrent delete finds it already done.
 - Final run (all stages): `alembic check` clean, `ruff check`, `ruff format --check`, `ty check`
   clean, `uv run python -m membership_management.data.seed --reset` on the local DB, then the seeded
   inbox, counts and delete cascade checked through the API.

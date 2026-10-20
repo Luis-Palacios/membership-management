@@ -198,6 +198,13 @@ def _lock_and_refresh(session: Session, conversation: ReportConversation) -> Non
     session.refresh(conversation)
 
 
+def _lock_and_refresh_comment(session: Session, comment: ReportConversationComment) -> None:
+    """Lock the comment's thread, then reload the comment and the thread: the latest committed state."""
+    _lock(session, comment.conversation_id)
+    session.refresh(comment)
+    session.refresh(comment.conversation)
+
+
 def _sync_last_comment(session: Session, conversation: ReportConversation) -> None:
     """Point `last_comment_*` at the newest non-deleted comment.
 
@@ -287,9 +294,14 @@ def get_comment(session: Session, comment_id: int) -> ReportConversationComment 
 def edit_comment(
     session: Session, comment: ReportConversationComment, *, user_id: str, body: str
 ) -> ReportConversation:
-    """Rule 8: the old text goes to a revision; `last_comment_at` doesn't move."""
+    """Rule 8: the old text goes to a revision; `last_comment_at` doesn't move.
+
+    Takes the thread lock and reloads the comment before checking `deleted_at`, so an edit that raced a
+    delete sees the delete and answers `CommentDeletedError` instead of changing a deleted comment.
+    """
     if comment.author_user_id != user_id:
         raise NotYourCommentError
+    _lock_and_refresh_comment(session, comment)
     if comment.deleted_at is not None:
         raise CommentDeletedError
     now = _db_now(session)
@@ -310,12 +322,12 @@ def delete_comment(
     if comment.author_user_id != user_id:
         raise NotYourCommentError
     conversation = comment.conversation
+    _lock_and_refresh_comment(session, comment)
     if comment.deleted_at is None:
-        _lock(session, conversation.id)
         comment.deleted_at = _db_now(session)
         session.flush()
         _sync_last_comment(session, conversation)
-        session.commit()
+    session.commit()  # also when there was nothing to do: ends the transaction and releases the lock
     return conversation
 
 
@@ -341,7 +353,7 @@ def resolve(
         conversation.resolved_by_user_id = user_id
         conversation.resolved_by_member_id = member_id
         conversation.resolved_at = _db_now(session)
-        session.commit()
+    session.commit()  # also when already resolved: ends the transaction and releases the lock
     return conversation
 
 
@@ -350,7 +362,7 @@ def reopen(session: Session, conversation: ReportConversation) -> ReportConversa
     _lock_and_refresh(session, conversation)
     if conversation.status != "open":
         _reopen(conversation)
-        session.commit()
+    session.commit()  # also when already open: ends the transaction and releases the lock
     return conversation
 
 
