@@ -37,6 +37,7 @@ from membership_management.api.schemas.report_conversations import (
     InboxSchema,
     NeedsMyReplyCountSchema,
     ReportConversationsSchema,
+    ResolveBodySchema,
 )
 from membership_management.data.members.models import Member
 from membership_management.data.small_groups.conversation_services import (
@@ -46,6 +47,7 @@ from membership_management.data.small_groups.conversation_services import (
     InboxTab,
     MemberNotOnReportError,
     NotYourCommentError,
+    StaleThreadError,
     add_comment,
     build_thread,
     count_needing_reply,
@@ -79,6 +81,17 @@ router = APIRouter(
 
 # Every route but the sidebar badge (`/report-conversations/counts` answers 0 instead of 403).
 _needs_reports_view = Depends(require_permission("smallGroupReports", "view"))
+
+
+STALE_THREAD_DETAIL = "There's a new comment since you opened this."
+
+
+class StaleConversationHTTPError(HTTPException):
+    """409 whose body also carries the current thread (`conversation`); see its handler in `main.py`."""
+
+    def __init__(self, thread: ConversationThreadSchema) -> None:
+        super().__init__(status_code=409, detail=STALE_THREAD_DETAIL)
+        self.thread = thread
 
 
 def _http_error(exc: Exception) -> HTTPException:
@@ -322,11 +335,12 @@ def delete_report_conversation_comment(
 @router.post(
     "/report-conversations/{conversation_id}/resolve",
     name="resolve_report_conversation",
-    description="Resolve the thread (idempotent); needs a linked member to store who resolved it",
+    description="Resolve the thread (idempotent); 409 with the current thread if a newer comment exists",
     dependencies=[_needs_reports_view, Depends(rate_limit("30/minute", scope="resolve_report_conversation"))],
 )
 def post_report_conversation_resolve(
     conversation_id: int,
+    body: ResolveBodySchema,
     db: MembersSessionDep,
     claims: CurrentClaimsDep,
     scope: SmallGroupScopeDep,
@@ -334,7 +348,17 @@ def post_report_conversation_resolve(
 ) -> ConversationThreadSchema:
     conversation = _conversation_or_404(db, conversation_id, claims, scope)
     resolver = _linked_member(member)
-    resolve(db, conversation, user_id=claims.sub, member_id=resolver.id)
+    try:
+        resolve(
+            db,
+            conversation,
+            user_id=claims.sub,
+            member_id=resolver.id,
+            last_comment_id=body.last_comment_id,
+        )
+    except StaleThreadError:
+        current = get_conversation(db, conversation_id) or conversation
+        raise StaleConversationHTTPError(_thread_schema(build_thread(db, current, claims.sub))) from None
     return _thread_schema(build_thread(db, get_conversation(db, conversation_id) or conversation, claims.sub))
 
 

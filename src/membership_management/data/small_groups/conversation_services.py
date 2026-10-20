@@ -60,6 +60,10 @@ class NotYourCommentError(Exception):
     """Editing or deleting someone else's comment (rule 8, 9): 403."""
 
 
+class StaleThreadError(Exception):
+    """Resolving a thread that got a comment the resolver never saw: 409, the client re-renders."""
+
+
 class CommentDeletedError(Exception):
     """Editing a deleted comment: 409."""
 
@@ -339,16 +343,26 @@ def _reopen(conversation: ReportConversation) -> None:
 
 
 def resolve(
-    session: Session, conversation: ReportConversation, *, user_id: str, member_id: int
+    session: Session,
+    conversation: ReportConversation,
+    *,
+    user_id: str,
+    member_id: int,
+    last_comment_id: int | None,
 ) -> ReportConversation:
-    """Idempotent: resolving a resolved thread keeps the first resolver.
+    """Idempotent: resolving a resolved thread keeps the first resolver, with no staleness check.
 
     Takes the thread lock before looking at the status, like `add_comment`, so two resolvers can't both
-    see `open`, and a comment posted at the same moment can't end up under a thread resolved from a
-    stale read.
+    see `open`. `last_comment_id` is the newest comment the caller saw (None: no live comments); if the
+    newest non-deleted comment is another one, the thread is left open and `StaleThreadError` is raised,
+    so nobody resolves over a comment they haven't read.
     """
     _lock_and_refresh(session, conversation)
     if conversation.status != "resolved":
+        newest = session.execute(newest_live_comment_query(conversation.id)).first()
+        if (newest.id if newest is not None else None) != last_comment_id:
+            session.rollback()  # nothing was changed; releases the lock
+            raise StaleThreadError
         conversation.status = "resolved"
         conversation.resolved_by_user_id = user_id
         conversation.resolved_by_member_id = member_id

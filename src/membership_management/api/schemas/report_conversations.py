@@ -126,3 +126,10 @@ class InboxSchema(CamelModel):
 
 class NeedsMyReplyCountSchema(CamelModel):
     needs_my_reply: int
+
+
+class ResolveBodySchema(CamelModel):
+    """The newest comment the caller saw (null: the thread has no live comments), so a comment posted
+    since can't be resolved over unseen. Required, so a client can't skip the check by omission."""
+
+    last_comment_id: int | None

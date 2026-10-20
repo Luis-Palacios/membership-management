@@ -100,6 +100,17 @@ async def duplicate_report_handler(
     )
 
 
+@app.exception_handler(report_conversations.StaleConversationHTTPError)
+async def stale_conversation_handler(
+    _request: Request, exc: report_conversations.StaleConversationHTTPError
+) -> JSONResponse:
+    # Same shape as any HTTPException, plus the current thread so the staff app re-renders from it.
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail, "conversation": exc.thread.model_dump(mode="json", by_alias=True)},
+    )
+
+
 @app.get("/")
 async def root() -> dict[str, str]:
     return {"message": "Welcome to the Membership Management API!"}
