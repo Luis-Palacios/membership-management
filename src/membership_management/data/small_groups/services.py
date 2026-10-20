@@ -85,6 +85,14 @@ class MemberAlreadyInGroupError(Exception):
     """The member already has an active membership in the group."""
 
 
+class JoinedInFutureError(Exception):
+    """The join date is after today."""
+
+
+class MembershipOverlapError(Exception):
+    """The join date falls inside one of the member's earlier periods in the group."""
+
+
 class ActiveMembershipNotFoundError(Exception):
     """The member has no active membership in the group."""
 
@@ -739,16 +747,28 @@ def close_small_group(session: Session, small_group: SmallGroup, closed_at: date
 
 
 def add_small_group_member(
-    session: Session, small_group: SmallGroup, *, member_id: int, role: SmallGroupRole, today: date
+    session: Session,
+    small_group: SmallGroup,
+    *,
+    member_id: int,
+    role: SmallGroupRole,
+    today: date,
+    joined_at: date | None = None,
 ) -> None:
+    """Add the member from `joined_at` (default today); a past date backfills migrated data."""
+    joined_at = joined_at or today
+    if joined_at > today:
+        raise JoinedInFutureError
     if small_group.closed_at is not None:
         raise SmallGroupClosedError
     if session.get(Member, member_id) is None:
         raise MemberNotFoundError
     if get_active_membership(session, small_group.id, member_id) is not None:
         raise MemberAlreadyInGroupError
+    if _overlaps_past_period(session, small_group.id, member_id, joined_at):
+        raise MembershipOverlapError
     _ensure_leader_slot_free(session, small_group.id, role)
-    _add_membership(session, small_group.id, member_id, role, today)
+    _add_membership(session, small_group.id, member_id, role, joined_at)
     _commit_or_raise_conflict(session)
 
 
@@ -838,6 +858,20 @@ def get_active_membership(session: Session, small_group_id: int, member_id: int)
             SmallGroupMember.left_at.is_(None),
         )
     ).one_or_none()
+
+
+def _overlaps_past_period(session: Session, small_group_id: int, member_id: int, joined_at: date) -> bool:
+    """True if the member's closed history in the group extends past `joined_at`."""
+    return (
+        session.scalars(
+            select(SmallGroupMember.id).where(
+                SmallGroupMember.small_group_id == small_group_id,
+                SmallGroupMember.member_id == member_id,
+                SmallGroupMember.left_at > joined_at,
+            )
+        ).first()
+        is not None
+    )
 
 
 def _ensure_leader_slot_free(session: Session, small_group_id: int, role: SmallGroupRole) -> None:

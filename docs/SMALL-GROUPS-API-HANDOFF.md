@@ -200,3 +200,9 @@ a group all store the **Managua** date; `ruff` and `ty` pass; `.env.example` and
   staff app will show only "Already in this group" (known from the group detail) unless this is
   added later.
 - **Reopening a closed group.** Not supported and not designed.
+
+## Add member with `joinedAt`
+
+`POST /small-groups/{id}/members` takes an optional `joinedAt` (date, default `church_today()`) so staff can
+backfill migrated data. Reports only count a member from `joinedAt` on. A future date is 422; a date inside
+one of the member's earlier closed periods in the same group is 409.
