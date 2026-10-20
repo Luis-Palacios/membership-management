@@ -1,7 +1,7 @@
 from datetime import date
 from typing import Annotated
 
-from pydantic import EmailStr, StringConstraints
+from pydantic import ConfigDict, EmailStr, StringConstraints, field_validator
 
 from membership_management.api.schemas.base import CamelModel
 from membership_management.data.members.models import MemberSex
@@ -68,3 +68,26 @@ class MemberUpdateSchema(CamelModel):
 
 class MemberUserLinkSchema(CamelModel):
     user_id: UserId
+
+
+class MyMemberUpdateSchema(CamelModel):
+    """Partial update of the caller's own member: the five fields they may edit, no email (rule 4).
+
+    Unknown fields are a 422. Send null to clear an optional field; name cannot be null.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: Name | None = None
+    phone: Phone | None = None
+    address: Address | None = None
+    birth_date: date | None = None
+    sex: MemberSex | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _name_not_null(cls, value: str | None) -> str:
+        # Only runs when name is sent (defaults aren't validated); the column is NOT NULL.
+        if value is None:
+            raise ValueError("name cannot be null.")
+        return value
