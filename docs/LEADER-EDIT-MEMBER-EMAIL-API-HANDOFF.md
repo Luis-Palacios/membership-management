@@ -13,7 +13,7 @@ Branch **`leader-edit-member-email`** (same name in every repo).
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. Email check and docs | ✅ | (this commit) |
+| 1. Email check and docs | ✅ | afe7562 |
 
 ### Decisions and deviations
 
@@ -24,3 +24,4 @@ Branch **`leader-edit-member-email`** (same name in every repo).
   `members: update` + `smallGroups: view` leading a group with one unlinked and one linked member:
   email on the unlinked member 200; email on the linked member 403; a PATCH without `email` on the
   linked member 200; the same linked-member email change with `members: all` 200.
+- Landed on `main` as afe7562 (the branch commit was e0705f8), so `main` is the reference.
