@@ -439,19 +439,27 @@ def recent_meetings(
 ) -> dict[int, list[RecentMeeting]]:
     """Rule 10's candidate meetings, per open group with a meeting day: newest first, every date in
     [start, end] that falls on that weekday and had a leader or co-leader that day, with the id of the
-    report filed on it (None = not filed). Closed groups get none (they can't take a report, rule 8),
-    nor do groups without a meeting day. `end` is the caller's "yesterday" at the latest: today never
-    counts. Pass `leadership` (from `_leadership_by_group`) when the caller already loaded it.
+    report filed in its church week, any weekday (None = not filed); a held report beats a no meeting.
+    Closed groups get none (they can't take a report, rule 8), nor do groups without a meeting day.
+    `end` is the caller's "yesterday" at the latest: today never counts. Pass `leadership` (from
+    `_leadership_by_group`) when the caller already loaded it.
     """
     candidates = [g for g in groups if g.closed_at is None and g.meeting_day is not None]
     meetings: dict[int, list[RecentMeeting]] = {g.id: [] for g in candidates}
     if not candidates or start > end:
         return meetings
     ids = frozenset(g.id for g in candidates)
-    filed = {
-        (r.small_group_id, r.meeting_date): r
-        for r in all_as(session, report_dates_query(ids, start, end), ReportDate)
-    }
+    # A report anywhere in the church week (Sunday to Saturday) files that week's meeting, the same
+    # test the groups dashboard uses (its rule 6), so look at whole weeks around [start, end].
+    filed: dict[tuple[int, date], ReportDate] = {}
+    for r in all_as(
+        session,
+        report_dates_query(ids, church_sunday(start), church_sunday(end) + timedelta(days=6)),
+        ReportDate,
+    ):
+        key = (r.small_group_id, church_sunday(r.meeting_date))
+        if key not in filed or (r.held and not filed[key].held):
+            filed[key] = r
     if leadership is None:
         leadership = _leadership_by_group(session, ids)
     for group in candidates:
@@ -461,7 +469,7 @@ def recent_meetings(
                 p.joined_at <= day and (p.left_at is None or p.left_at >= day)
                 for p in leadership.get(group.id, [])
             ):
-                report = filed.get((group.id, day))
+                report = filed.get((group.id, church_sunday(day)))
                 meetings[group.id].append(
                     RecentMeeting(day, report.report_id if report else None, report.held if report else None)
                 )
