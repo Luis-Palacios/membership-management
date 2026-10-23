@@ -1,6 +1,7 @@
 from sqlalchemy import ColumnElement, Select, and_, func, select, true
 from sqlalchemy.orm import aliased, joinedload
 
+from membership_management.data.guests.models import Guest
 from membership_management.data.members.models import Member
 from membership_management.data.small_groups.models import (
     ReportConversation,
@@ -11,12 +12,15 @@ from membership_management.data.small_groups.models import (
     SmallGroupReport,
     SmallGroupReportAttendance,
 )
+from membership_management.data.small_groups.results import PersonKey
 
 
-def member_on_report_query(report_id: int, member_id: int) -> Select:
+def person_on_report_query(report_id: int, person: PersonKey) -> Select:
+    """The person's attendance row on the report, if they have one."""
+    kind, person_id = person
+    column = SmallGroupReportAttendance.member_id if kind == "member" else SmallGroupReportAttendance.guest_id
     return select(SmallGroupReportAttendance.id).where(
-        SmallGroupReportAttendance.report_id == report_id,
-        SmallGroupReportAttendance.member_id == member_id,
+        SmallGroupReportAttendance.report_id == report_id, column == person_id
     )
 
 
@@ -34,13 +38,14 @@ def section_text_query(report_id: int, section: ReportSection) -> Select:
     return select(getattr(SmallGroupReport, section.report_attribute)).where(SmallGroupReport.id == report_id)
 
 
-def report_anchor_conversation_query(report_id: int, anchor: int | ReportSection) -> Select:
-    """The report's thread about a member (by id) or a section."""
-    about = (
-        ReportConversation.section == anchor
-        if isinstance(anchor, ReportSection)
-        else ReportConversation.member_id == anchor
-    )
+def report_anchor_conversation_query(report_id: int, anchor: PersonKey | ReportSection) -> Select:
+    """The report's thread about a member or a guest (by key) or a section."""
+    if isinstance(anchor, ReportSection):
+        about = ReportConversation.section == anchor
+    elif anchor[0] == "member":
+        about = ReportConversation.member_id == anchor[1]
+    else:
+        about = ReportConversation.guest_id == anchor[1]
     return (
         select(ReportConversation)
         .where(ReportConversation.report_id == report_id, about)
@@ -70,11 +75,16 @@ def _conversation_summaries_query(user_id: str) -> Select:
         .scalar_subquery()
     )
     read = aliased(ReportConversationRead)
+    about_member = aliased(Member)
+    about_guest = aliased(Guest)
     return (
         select(
             ReportConversation.id.label("id"),
             ReportConversation.report_id.label("report_id"),
             ReportConversation.member_id.label("member_id"),
+            ReportConversation.guest_id.label("guest_id"),
+            about_member.name.label("member_name"),
+            about_guest.name.label("guest_name"),
             ReportConversation.section.label("section"),
             ReportConversation.status.label("status"),
             comment_count.label("comment_count"),
@@ -83,6 +93,9 @@ def _conversation_summaries_query(user_id: str) -> Select:
             ReportConversation.last_comment_user_id.label("last_comment_user_id"),
             read.last_read_at.label("last_read_at"),
         )
+        # Outer: a section thread has neither.
+        .outerjoin(about_member, about_member.id == ReportConversation.member_id)
+        .outerjoin(about_guest, about_guest.id == ReportConversation.guest_id)
         .outerjoin(read, (read.conversation_id == ReportConversation.id) & (read.user_id == user_id))
         .order_by(ReportConversation.last_comment_at.desc(), ReportConversation.id)
     )
@@ -253,6 +266,7 @@ def inbox_rows_query(
         .scalar_subquery()
     )
     about = aliased(Member)
+    about_guest = aliased(Guest)
     resolver = aliased(Member)
     read = aliased(ReportConversationRead)
     query = (
@@ -265,6 +279,8 @@ def inbox_rows_query(
             read.last_read_at.label("last_read_at"),
             about.id.label("member_id"),
             about.name.label("member_name"),
+            about_guest.id.label("guest_id"),
+            about_guest.name.label("guest_name"),
             ReportConversation.section.label("section"),
             resolver.id.label("resolver_id"),
             resolver.name.label("resolver_name"),
@@ -284,8 +300,9 @@ def inbox_rows_query(
         .join(ReportConversation, ReportConversation.id == page_ids.c.id)
         .join(SmallGroupReport, SmallGroupReport.id == ReportConversation.report_id)
         .join(SmallGroup, SmallGroup.id == SmallGroupReport.small_group_id)
-        # Outer: a section thread has no member.
+        # Outer: a section thread has neither a member nor a guest.
         .outerjoin(about, about.id == ReportConversation.member_id)
+        .outerjoin(about_guest, about_guest.id == ReportConversation.guest_id)
         .outerjoin(resolver, resolver.id == ReportConversation.resolved_by_member_id)
         .outerjoin(read, and_(read.conversation_id == ReportConversation.id, read.user_id == user_id))
         .join(last_comment, true())

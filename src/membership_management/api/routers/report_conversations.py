@@ -19,6 +19,7 @@ from membership_management.api.jwt_auth import (
     require_permission,
 )
 from membership_management.api.rate_limit import default_user_rate_limit, rate_limit
+from membership_management.api.schemas.person import PersonSchema
 from membership_management.api.schemas.report_conversations import (
     AttendanceAnchorSchema,
     CommentAuthorSchema,
@@ -28,6 +29,7 @@ from membership_management.api.schemas.report_conversations import (
     ConversationPersonSchema,
     ConversationSummarySchema,
     ConversationThreadSchema,
+    GuestAttendanceAnchorSchema,
     InboxCountsSchema,
     InboxGroupSchema,
     InboxItemSchema,
@@ -71,7 +73,7 @@ from membership_management.data.small_groups.models import (
     ReportSection,
     SmallGroupReport,
 )
-from membership_management.data.small_groups.results import ConversationThread
+from membership_management.data.small_groups.results import ConversationPerson, ConversationThread
 from membership_management.data.small_groups.services import get_report
 
 # No prefix: the routes live under both /small-group-reports/{id}/... and /report-conversations.
@@ -146,23 +148,30 @@ def _conversation_or_404(
 
 
 def _anchor(
-    member_id: int | None, section: ReportSection | None
-) -> AttendanceAnchorSchema | SectionAnchorSchema:
-    """The API anchor of a thread: a person or a section (the database allows exactly one)."""
+    member_id: int | None, guest_id: int | None, section: ReportSection | None
+) -> AttendanceAnchorSchema | GuestAttendanceAnchorSchema | SectionAnchorSchema:
+    """The API anchor of a thread: a member, a guest or a section (the database allows exactly one)."""
     if section is not None:
         return SectionAnchorSchema(key=section)
-    if member_id is None:
-        raise ValueError("A conversation has neither a member nor a section.")
-    return AttendanceAnchorSchema(member_id=member_id)
+    if member_id is not None:
+        return AttendanceAnchorSchema(member_id=member_id)
+    if guest_id is not None:
+        return GuestAttendanceAnchorSchema(guest_id=guest_id)
+    raise ValueError("A conversation has neither a member, a guest nor a section.")
+
+
+def _person(person: ConversationPerson | None) -> PersonSchema | None:
+    return PersonSchema(type=person.type, id=person.id, name=person.name) if person is not None else None
 
 
 def _thread_schema(thread: ConversationThread) -> ConversationThreadSchema:
     return ConversationThreadSchema(
         id=thread.id,
-        anchor=_anchor(thread.member_id, thread.section),
+        anchor=_anchor(thread.member_id, thread.guest_id, thread.section),
         member=InboxMemberSchema(id=thread.member_id, name=thread.member_name)
         if thread.member_id is not None and thread.member_name is not None
         else None,
+        person=_person(thread.person),
         status=thread.status,
         resolved_by=ConversationPersonSchema(
             member_id=thread.resolved_by.member_id, name=thread.resolved_by.name
@@ -203,7 +212,8 @@ def get_report_conversation_summaries(
         conversations=[
             ConversationSummarySchema(
                 id=s.id,
-                anchor=_anchor(s.member_id, s.section),
+                anchor=_anchor(s.member_id, s.guest_id, s.section),
+                person=_person(s.person),
                 status=s.status,
                 comment_count=s.comment_count,
                 unread=s.unread,
@@ -322,7 +332,7 @@ def get_report_conversation(
     claims: CurrentClaimsDep,
     scope: SmallGroupScopeDep,
 ) -> ConversationThreadSchema:
-    return _anchor_thread(db, report_id, member_id, claims, scope)
+    return _anchor_thread(db, report_id, ("member", member_id), claims, scope)
 
 
 @router.post(
@@ -362,7 +372,45 @@ def post_report_conversation_comment(
     scope: SmallGroupScopeDep,
     member: CurrentMemberDep,
 ) -> ConversationThreadSchema:
-    return _add_anchor_comment(db, report_id, member_id, body, claims, scope, member)
+    return _add_anchor_comment(db, report_id, ("member", member_id), body, claims, scope, member)
+
+
+@router.get(
+    "/small-group-reports/{report_id}/conversations/guests/{guest_id}",
+    name="get_report_guest_conversation",
+    description="One guest's thread on a report; 404 `No conversation yet.` when nobody has commented",
+    dependencies=[_needs_reports_view],
+)
+def get_report_guest_conversation(
+    report_id: int,
+    guest_id: int,
+    db: MembersSessionDep,
+    claims: CurrentClaimsDep,
+    scope: SmallGroupScopeDep,
+) -> ConversationThreadSchema:
+    return _anchor_thread(db, report_id, ("guest", guest_id), claims, scope)
+
+
+@router.post(
+    "/small-group-reports/{report_id}/conversations/guests/{guest_id}/comments",
+    name="add_report_guest_conversation_comment",
+    description="Add a comment to a guest's thread: creates the thread, reopens it when resolved",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[
+        _needs_reports_view,
+        Depends(rate_limit("30/minute", scope="add_report_conversation_comment")),
+    ],
+)
+def post_report_guest_conversation_comment(
+    report_id: int,
+    guest_id: int,
+    body: CommentBodySchema,
+    db: MembersSessionDep,
+    claims: CurrentClaimsDep,
+    scope: SmallGroupScopeDep,
+    member: CurrentMemberDep,
+) -> ConversationThreadSchema:
+    return _add_anchor_comment(db, report_id, ("guest", guest_id), body, claims, scope, member)
 
 
 def _comment_or_404(
@@ -522,10 +570,15 @@ def get_report_conversation_inbox(
                 status=i.status,
                 needs_my_reply=i.needs_my_reply,
                 unread=i.unread,
-                anchor=_anchor(i.member.member_id if i.member is not None else None, i.section),
+                anchor=_anchor(
+                    i.member.member_id if i.member is not None else None,
+                    i.person.id if i.person is not None and i.person.type == "guest" else None,
+                    i.section,
+                ),
                 member=InboxMemberSchema(id=i.member.member_id, name=i.member.name)
                 if i.member is not None
                 else None,
+                person=_person(i.person),
                 group=InboxGroupSchema(id=i.group.id, name=i.group.name, closed=i.group.closed),
                 report=InboxReportSchema(id=i.report.id, meeting_date=i.report.meeting_date),
                 last_comment=InboxLastCommentSchema(

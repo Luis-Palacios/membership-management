@@ -14,9 +14,9 @@ from membership_management.data.small_groups.conversation_queries import (
     inbox_total_query,
     last_read_query,
     lock_conversation_query,
-    member_on_report_query,
     needs_reply_count_query,
     newest_live_comment_query,
+    person_on_report_query,
     report_anchor_conversation_query,
     report_conversation_summaries_query,
     section_conversation_summaries_query,
@@ -35,6 +35,7 @@ from membership_management.data.small_groups.results import (
     CommentAuthor,
     ConversationComment,
     ConversationMember,
+    ConversationPerson,
     ConversationSummaries,
     ConversationSummary,
     ConversationThread,
@@ -44,14 +45,16 @@ from membership_management.data.small_groups.results import (
     InboxPage,
     InboxReport,
     InboxRow,
+    PersonKey,
 )
 
-# What a thread is about: a member's attendance row (the member id) or a report section.
-ConversationAnchor = int | ReportSection
+# What a thread is about: a member's or a guest's attendance row (`("member"|"guest", id)`) or a report
+# section.
+ConversationAnchor = PersonKey | ReportSection
 
 
 class MemberNotOnReportError(Exception):
-    """The member has no attendance row on the report (or the report is a no meeting): 422."""
+    """The member or guest has no attendance row on the report (or the report is a no meeting): 422."""
 
 
 class SectionEmptyError(Exception):
@@ -126,11 +129,24 @@ def get_section_conversations(
     return by_report
 
 
+def _person(
+    member_id: int | None, member_name: str | None, guest_id: int | None, guest_name: str | None
+) -> ConversationPerson | None:
+    """Who a thread is about (None for a section thread)."""
+    if member_id is not None and member_name is not None:
+        return ConversationPerson("member", member_id, member_name)
+    if guest_id is not None and guest_name is not None:
+        return ConversationPerson("guest", guest_id, guest_name)
+    return None
+
+
 def _summary(row: Row, user_id: str, my_side: ConversationSide) -> ConversationSummary:
     """A summaries-query row as the caller sees it (rules 11, 12)."""
     return ConversationSummary(
         id=row.id,
         member_id=row.member_id,
+        guest_id=row.guest_id,
+        person=_person(row.member_id, row.member_name, row.guest_id, row.guest_name),
         section=_section(row.section),
         status=row.status,
         comment_count=row.comment_count,
@@ -143,11 +159,11 @@ def _summary(row: Row, user_id: str, my_side: ConversationSide) -> ConversationS
 def get_report_anchor_conversation(
     session: Session, report_id: int, anchor: ConversationAnchor
 ) -> ReportConversation:
-    """The report's thread about a member's row or a section.
+    """The report's thread about a member's or a guest's row, or a section.
 
-    An existing thread is returned even if the member's attendance row is gone or the section was
+    An existing thread is returned even if the person's attendance row is gone or the section was
     cleared (editing a report can do either; the thread and its replies must stay reachable). With no
-    thread, a member who isn't on the report raises `MemberNotOnReportError` (422), otherwise
+    thread, a person who isn't on the report raises `MemberNotOnReportError` (422), otherwise
     `ConversationNotFoundError` (404), for a section whatever its text.
     """
     conversation = session.scalars(report_anchor_conversation_query(report_id, anchor)).one_or_none()
@@ -155,20 +171,20 @@ def get_report_anchor_conversation(
         return conversation
     if (
         not isinstance(anchor, ReportSection)
-        and session.scalar(member_on_report_query(report_id, anchor)) is None
+        and session.scalar(person_on_report_query(report_id, anchor)) is None
     ):
         raise MemberNotOnReportError
     raise ConversationNotFoundError
 
 
 def _check_can_start(session: Session, report_id: int, anchor: ConversationAnchor) -> None:
-    """A new thread needs the member to have an attendance row (rule 1) or the section to have text
-    (prayer & follow-up rule 14)."""
+    """A new thread needs the member or guest to have an attendance row (rule 1) or the section to have
+    text (prayer & follow-up rule 14)."""
     if isinstance(anchor, ReportSection):
         text = session.scalar(section_text_query(report_id, anchor))
         if text is None or not text.strip():
             raise SectionEmptyError
-    elif session.scalar(member_on_report_query(report_id, anchor)) is None:
+    elif session.scalar(person_on_report_query(report_id, anchor)) is None:
         raise MemberNotOnReportError
 
 
@@ -199,10 +215,18 @@ def build_thread(session: Session, conversation: ReportConversation, user_id: st
         )
     resolved_by = conversation.resolved_by
     member = conversation.member
+    guest = conversation.guest
     return ConversationThread(
         id=conversation.id,
         member_id=conversation.member_id,
         member_name=member.name if member is not None else None,
+        guest_id=conversation.guest_id,
+        person=_person(
+            conversation.member_id,
+            member.name if member is not None else None,
+            conversation.guest_id,
+            guest.name if guest is not None else None,
+        ),
         section=_section(conversation.section),
         status=conversation.status,
         resolved_by=ConversationMember(member_id=resolved_by.id, name=resolved_by.name)
@@ -289,7 +313,9 @@ def _get_or_create(
     Only a new thread is checked by `_check_can_start`; replying to an existing one works even after a
     report edit removed the row or cleared the section.
     """
-    is_section = isinstance(anchor, ReportSection)
+    section = anchor if isinstance(anchor, ReportSection) else None
+    member_id = anchor[1] if not isinstance(anchor, ReportSection) and anchor[0] == "member" else None
+    guest_id = anchor[1] if not isinstance(anchor, ReportSection) and anchor[0] == "guest" else None
     for _ in range(2):
         existing = session.scalars(report_anchor_conversation_query(report_id, anchor)).one_or_none()
         if existing is not None:
@@ -299,8 +325,9 @@ def _get_or_create(
             with session.begin_nested():
                 conversation = ReportConversation(
                     report_id=report_id,
-                    member_id=None if is_section else anchor,
-                    section=anchor if is_section else None,
+                    member_id=member_id,
+                    guest_id=guest_id,
+                    section=section,
                     status="open",
                     created_by_user_id=user_id,
                     created_at=now,
@@ -482,6 +509,7 @@ def get_inbox(
             member=ConversationMember(member_id=r.member_id, name=r.member_name)
             if r.member_id is not None
             else None,
+            person=_person(r.member_id, r.member_name, r.guest_id, r.guest_name),
             section=_section(r.section),
             group=InboxGroup(id=r.group_id, name=r.group_name, closed=r.group_closed_at is not None),
             report=InboxReport(id=r.report_id, meeting_date=r.meeting_date),
