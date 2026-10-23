@@ -21,7 +21,8 @@ HOURS_BETWEEN_COMMENTS = 7
 
 
 def seed_report_conversations(ctx: SeedContext) -> None:
-    """Threads in every state (waiting for each side, resolved, an edited and a deleted comment).
+    """Threads in every state (waiting for each side, resolved, an edited and a deleted comment), on
+    attendance rows and on report sections.
 
     There are no elders or users in the seed, so the elders' side is written by two members who lead
     nothing, under made-up user ids (`seed-elder-N`, `seed-user-<member id>`) that no auth-server
@@ -46,10 +47,16 @@ def seed_report_conversations(ctx: SeedContext) -> None:
                 .order_by(SmallGroupReport.meeting_date.desc())
             )
         )
-        report = reports[script.report]
-        # Somebody who missed the meeting if possible (that's what elders ask about), never an elder.
-        rows = [a for a in report.attendances if a.member_id not in elder_member_ids]
-        row = next((a for a in rows if not a.attended_group), rows[0])
+        if script.section is not None:
+            # Only a section with text can get a thread.
+            attribute = script.section.report_attribute
+            report = next(r for r in reports[script.report :] if (getattr(r, attribute) or "").strip())
+            about_member_id = None
+        else:
+            report = reports[script.report]
+            # Somebody who missed the meeting if possible (that's what elders ask about), never an elder.
+            rows = [a for a in report.attendances if a.member_id not in elder_member_ids]
+            about_member_id = next((a for a in rows if not a.attended_group), rows[0]).member_id
         leader_id = report.submitted_by_member_id
         started = datetime.combine(report.meeting_date, time(21, 0), MANAGUA_TZ) + timedelta(days=1, hours=1)
 
@@ -83,7 +90,8 @@ def seed_report_conversations(ctx: SeedContext) -> None:
         newest = [c for c in comments if c.deleted_at is None][-1]
         conversation = ReportConversation(
             report_id=report.id,
-            member_id=row.member_id,
+            member_id=about_member_id,
+            section=script.section,
             status="open",
             created_by_user_id=comments[0].author_user_id,
             created_at=comments[0].created_at,

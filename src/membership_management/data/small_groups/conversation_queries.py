@@ -50,6 +50,17 @@ def report_anchor_conversation_query(report_id: int, anchor: int | ReportSection
 
 def report_conversation_summaries_query(report_id: int, user_id: str) -> Select:
     """The report's threads with the live comment count and the caller's `last_read_at`."""
+    return _conversation_summaries_query(user_id).where(ReportConversation.report_id == report_id)
+
+
+def section_conversation_summaries_query(report_ids: frozenset[int], user_id: str) -> Select:
+    """The section threads of several reports, as `report_conversation_summaries_query`."""
+    return _conversation_summaries_query(user_id).where(
+        ReportConversation.report_id.in_(report_ids), ReportConversation.section.is_not(None)
+    )
+
+
+def _conversation_summaries_query(user_id: str) -> Select:
     comment_count = (
         select(func.count(ReportConversationComment.id))
         .where(
@@ -62,6 +73,7 @@ def report_conversation_summaries_query(report_id: int, user_id: str) -> Select:
     return (
         select(
             ReportConversation.id.label("id"),
+            ReportConversation.report_id.label("report_id"),
             ReportConversation.member_id.label("member_id"),
             ReportConversation.section.label("section"),
             ReportConversation.status.label("status"),
@@ -72,7 +84,6 @@ def report_conversation_summaries_query(report_id: int, user_id: str) -> Select:
             read.last_read_at.label("last_read_at"),
         )
         .outerjoin(read, (read.conversation_id == ReportConversation.id) & (read.user_id == user_id))
-        .where(ReportConversation.report_id == report_id)
         .order_by(ReportConversation.last_comment_at.desc(), ReportConversation.id)
     )
 

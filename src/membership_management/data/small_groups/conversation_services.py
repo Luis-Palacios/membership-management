@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from sqlalchemy import func, select
+from sqlalchemy import Row, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -19,6 +19,7 @@ from membership_management.data.small_groups.conversation_queries import (
     newest_live_comment_query,
     report_anchor_conversation_query,
     report_conversation_summaries_query,
+    section_conversation_summaries_query,
     section_text_query,
     thread_comments_query,
 )
@@ -102,23 +103,40 @@ def get_report_conversations(
     session: Session, report_id: int, user_id: str, my_side: ConversationSide
 ) -> ConversationSummaries:
     rows = session.execute(report_conversation_summaries_query(report_id, user_id)).all()
-    summaries = [
-        ConversationSummary(
-            id=row.id,
-            member_id=row.member_id,
-            section=_section(row.section),
-            status=row.status,
-            comment_count=row.comment_count,
-            unread=is_unread(row.last_comment_user_id, row.last_comment_at, row.last_read_at, user_id),
-            needs_my_reply=needs_reply(row.status, row.last_comment_side, my_side),
-            last_comment_at=row.last_comment_at,
-        )
-        for row in rows
-    ]
+    summaries = [_summary(row, user_id, my_side) for row in rows]
     return ConversationSummaries(
         conversations=summaries,
         total=len(summaries),
         needs_my_reply=sum(1 for s in summaries if s.needs_my_reply),
+    )
+
+
+def get_section_conversations(
+    session: Session, report_ids: frozenset[int], user_id: str, my_side: ConversationSide
+) -> dict[int, dict[ReportSection, ConversationSummary]]:
+    """The section threads of several reports, by report id then section, in one query (prayer &
+    follow-up shared entries). A report or section with no thread is absent."""
+    by_report: dict[int, dict[ReportSection, ConversationSummary]] = {}
+    if not report_ids:
+        return by_report
+    for row in session.execute(section_conversation_summaries_query(report_ids, user_id)):
+        summary = _summary(row, user_id, my_side)
+        if summary.section is not None:
+            by_report.setdefault(row.report_id, {})[summary.section] = summary
+    return by_report
+
+
+def _summary(row: Row, user_id: str, my_side: ConversationSide) -> ConversationSummary:
+    """A summaries-query row as the caller sees it (rules 11, 12)."""
+    return ConversationSummary(
+        id=row.id,
+        member_id=row.member_id,
+        section=_section(row.section),
+        status=row.status,
+        comment_count=row.comment_count,
+        unread=is_unread(row.last_comment_user_id, row.last_comment_at, row.last_read_at, user_id),
+        needs_my_reply=needs_reply(row.status, row.last_comment_side, my_side),
+        last_comment_at=row.last_comment_at,
     )
 
 
