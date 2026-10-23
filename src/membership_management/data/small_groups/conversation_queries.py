@@ -6,6 +6,7 @@ from membership_management.data.small_groups.models import (
     ReportConversation,
     ReportConversationComment,
     ReportConversationRead,
+    ReportSection,
     SmallGroup,
     SmallGroupReport,
     SmallGroupReportAttendance,
@@ -28,10 +29,21 @@ def conversation_query(conversation_id: int) -> Select:
     )
 
 
-def report_member_conversation_query(report_id: int, member_id: int) -> Select:
+def section_text_query(report_id: int, section: ReportSection) -> Select:
+    """The section's text on the report (None for a no meeting or an empty section)."""
+    return select(getattr(SmallGroupReport, section.report_attribute)).where(SmallGroupReport.id == report_id)
+
+
+def report_anchor_conversation_query(report_id: int, anchor: int | ReportSection) -> Select:
+    """The report's thread about a member (by id) or a section."""
+    about = (
+        ReportConversation.section == anchor
+        if isinstance(anchor, ReportSection)
+        else ReportConversation.member_id == anchor
+    )
     return (
         select(ReportConversation)
-        .where(ReportConversation.report_id == report_id, ReportConversation.member_id == member_id)
+        .where(ReportConversation.report_id == report_id, about)
         .options(joinedload(ReportConversation.resolved_by))
     )
 

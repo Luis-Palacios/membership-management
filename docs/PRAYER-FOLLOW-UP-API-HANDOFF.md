@@ -38,8 +38,8 @@ Keep the existing conventions: routes call `services.py` / `conversation_service
 | Stage | Status | Commit |
 | --- | --- | --- |
 | 1. Shared texts endpoint | ✅ | `93a7ae4` |
-| 2. Section threads: migration, models, anchor union | ✅ | this commit |
-| 3. Section threads: routes, summaries, inbox | ⬜ | |
+| 2. Section threads: migration, models, anchor union | ✅ | `90af585` |
+| 3. Section threads: routes, summaries, inbox | ✅ | this commit |
 | 4. Conversations on shared entries, seed | ⬜ | |
 | 5. Docs | ⬜ | |
 
@@ -85,6 +85,26 @@ Keep the existing conventions: routes call `services.py` / `conversation_service
   removed, and every inbox `anchor` is `attendance` with the row's member. A hand-inserted prayer
   thread (deleted afterwards) shows in the summary with a section anchor, in the inbox with `member:
   null`, and counts toward *needs my reply* for the leader, not the elder who wrote it.
+- **Stage 3:** one anchor type, `ConversationAnchor = int | ReportSection` (a member id or a
+  section), threads through `get_report_anchor_conversation` (was `get_report_member_conversation`),
+  `add_comment` and `_get_or_create`; `_check_can_start` is the only branch (attendance row for a
+  person, trimmed text for a section, via `section_text_query`). The router's person and section
+  routes share `_anchor_thread` / `_add_anchor_comment`; the section comment route uses the same
+  rate-limit scope as the person one, so they share one budget. **Unknown key:** FastAPI's enum error
+  doesn't mention the section, so `key` is a `str` checked by `_section_or_422` (422 `Unknown section
+  'notes'.`); the OpenAPI schema still lists the three values (`json_schema_extra` enum). Inbox,
+  counts and summaries needed no change (they're per thread). Report delete: `conversationCount`
+  already counted every thread of the report, and the database cascade removes section threads and
+  their comments. Tried on the scratch DB: elder starts a prayer thread (201, `member: null`, comment
+  trimmed); it shows in the leader's summary and *Needs my reply* inbox with a section anchor, and
+  counts go up for the leader; the leader's reply flips it to the elder's side; resolve, reopen, and
+  a comment on a resolved thread reopens it; mark read and edit own work by id, editing someone
+  else's 403; empty praise (null), spaces-only praise and a no-meeting report 422 `This section is
+  empty.`; unknown key 422 on GET and POST; GET with no thread 404 `No conversation yet.`; a leader
+  out of scope, former leader and deacon with no member 404; `user` 403; unlinked elder reads (200)
+  and gets 409 on comment; a leader starts a follow-up thread; person threads unchanged; clearing
+  the prayer text keeps the thread readable and repliable; report detail counted 3 threads, and
+  deleting the report left no threads or comments (the thread id is then 404).
 
 ## Who can do what
 

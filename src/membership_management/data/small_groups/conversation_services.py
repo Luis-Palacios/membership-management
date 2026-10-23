@@ -17,8 +17,9 @@ from membership_management.data.small_groups.conversation_queries import (
     member_on_report_query,
     needs_reply_count_query,
     newest_live_comment_query,
+    report_anchor_conversation_query,
     report_conversation_summaries_query,
-    report_member_conversation_query,
+    section_text_query,
     thread_comments_query,
 )
 from membership_management.data.small_groups.models import (
@@ -44,13 +45,20 @@ from membership_management.data.small_groups.results import (
     InboxRow,
 )
 
+# What a thread is about: a member's attendance row (the member id) or a report section.
+ConversationAnchor = int | ReportSection
+
 
 class MemberNotOnReportError(Exception):
     """The member has no attendance row on the report (or the report is a no meeting): 422."""
 
 
+class SectionEmptyError(Exception):
+    """Starting a thread on a section with no text (or on a no meeting, which has none): 422."""
+
+
 class ConversationNotFoundError(Exception):
-    """No thread yet for this report and member: 404 `No conversation yet.`"""
+    """No thread yet for this report and anchor: 404 `No conversation yet.`"""
 
 
 class ConversationRaceError(Exception):
@@ -114,19 +122,36 @@ def get_report_conversations(
     )
 
 
-def get_report_member_conversation(session: Session, report_id: int, member_id: int) -> ReportConversation:
-    """The thread for a row of the report.
+def get_report_anchor_conversation(
+    session: Session, report_id: int, anchor: ConversationAnchor
+) -> ReportConversation:
+    """The report's thread about a member's row or a section.
 
-    An existing thread is returned even if the member's attendance row is gone (editing a report can
-    remove it; the thread and its replies must stay reachable). With no thread, a member who isn't on
-    the report raises `MemberNotOnReportError` (422), otherwise `ConversationNotFoundError` (404).
+    An existing thread is returned even if the member's attendance row is gone or the section was
+    cleared (editing a report can do either; the thread and its replies must stay reachable). With no
+    thread, a member who isn't on the report raises `MemberNotOnReportError` (422), otherwise
+    `ConversationNotFoundError` (404), for a section whatever its text.
     """
-    conversation = session.scalars(report_member_conversation_query(report_id, member_id)).one_or_none()
+    conversation = session.scalars(report_anchor_conversation_query(report_id, anchor)).one_or_none()
     if conversation is not None:
         return conversation
-    if session.scalar(member_on_report_query(report_id, member_id)) is None:
+    if (
+        not isinstance(anchor, ReportSection)
+        and session.scalar(member_on_report_query(report_id, anchor)) is None
+    ):
         raise MemberNotOnReportError
     raise ConversationNotFoundError
+
+
+def _check_can_start(session: Session, report_id: int, anchor: ConversationAnchor) -> None:
+    """A new thread needs the member to have an attendance row (rule 1) or the section to have text
+    (prayer & follow-up rule 14)."""
+    if isinstance(anchor, ReportSection):
+        text = session.scalar(section_text_query(report_id, anchor))
+        if text is None or not text.strip():
+            raise SectionEmptyError
+    elif session.scalar(member_on_report_query(report_id, anchor)) is None:
+        raise MemberNotOnReportError
 
 
 def build_thread(session: Session, conversation: ReportConversation, user_id: str) -> ConversationThread:
@@ -233,25 +258,31 @@ def _sync_last_comment(session: Session, conversation: ReportConversation) -> No
 
 
 def _get_or_create(
-    session: Session, report_id: int, member_id: int, user_id: str, side: ConversationSide, now: datetime
+    session: Session,
+    report_id: int,
+    anchor: ConversationAnchor,
+    user_id: str,
+    side: ConversationSide,
+    now: datetime,
 ) -> ReportConversation:
-    """The thread for the row, creating it when missing. A unique violation means someone else just
-    created it: look again (once), then give up.
+    """The thread for the row or section, creating it when missing. A unique violation means someone
+    else just created it: look again (once), then give up.
 
-    Only a new thread needs the member to have an attendance row (rule 1); replying to an existing one
-    works even after a report edit removed the row.
+    Only a new thread is checked by `_check_can_start`; replying to an existing one works even after a
+    report edit removed the row or cleared the section.
     """
+    is_section = isinstance(anchor, ReportSection)
     for _ in range(2):
-        existing = session.scalars(report_member_conversation_query(report_id, member_id)).one_or_none()
+        existing = session.scalars(report_anchor_conversation_query(report_id, anchor)).one_or_none()
         if existing is not None:
             return existing
-        if session.scalar(member_on_report_query(report_id, member_id)) is None:
-            raise MemberNotOnReportError
+        _check_can_start(session, report_id, anchor)
         try:
             with session.begin_nested():
                 conversation = ReportConversation(
                     report_id=report_id,
-                    member_id=member_id,
+                    member_id=None if is_section else anchor,
+                    section=anchor if is_section else None,
                     status="open",
                     created_by_user_id=user_id,
                     created_at=now,
@@ -269,7 +300,7 @@ def _get_or_create(
 def add_comment(
     session: Session,
     report_id: int,
-    member_id: int,
+    anchor: ConversationAnchor,
     *,
     user_id: str,
     author_member_id: int,
@@ -278,7 +309,7 @@ def add_comment(
 ) -> ReportConversation:
     """Rule 1, 5, 6, 10: create the thread if needed, reopen it if resolved, add the comment and mark
     the thread read for the author, in one transaction."""
-    conversation = _get_or_create(session, report_id, member_id, user_id, side, _db_now(session))
+    conversation = _get_or_create(session, report_id, anchor, user_id, side, _db_now(session))
     session.flush()
     _lock_and_refresh(session, conversation)
     now = _db_now(session)

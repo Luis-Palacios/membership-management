@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
 
 from membership_management.api.access import (
     OptionalSmallGroupScopeDep,
@@ -43,11 +43,13 @@ from membership_management.api.schemas.report_conversations import (
 from membership_management.data.members.models import Member
 from membership_management.data.small_groups.conversation_services import (
     CommentDeletedError,
+    ConversationAnchor,
     ConversationNotFoundError,
     ConversationRaceError,
     InboxTab,
     MemberNotOnReportError,
     NotYourCommentError,
+    SectionEmptyError,
     StaleThreadError,
     add_comment,
     build_thread,
@@ -57,8 +59,8 @@ from membership_management.data.small_groups.conversation_services import (
     get_comment,
     get_conversation,
     get_inbox,
+    get_report_anchor_conversation,
     get_report_conversations,
-    get_report_member_conversation,
     mark_read,
     reopen,
     resolve,
@@ -100,6 +102,8 @@ def _http_error(exc: Exception) -> HTTPException:
     """Map a conversation domain error to its HTTP error (the staff app matches on status and `detail`)."""
     if isinstance(exc, MemberNotOnReportError):
         return HTTPException(status_code=422, detail="That person has no attendance row on this report.")
+    if isinstance(exc, SectionEmptyError):
+        return HTTPException(status_code=422, detail="This section is empty.")
     if isinstance(exc, ConversationNotFoundError):
         return HTTPException(status_code=404, detail="No conversation yet.")
     if isinstance(exc, NotYourCommentError):
@@ -212,6 +216,99 @@ def get_report_conversation_summaries(
     )
 
 
+def _section_or_422(key: str) -> ReportSection:
+    """The path's section key; checked here (not by FastAPI's enum) so the 422 names the section."""
+    try:
+        return ReportSection(key)
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"Unknown section {key!r}.") from None
+
+
+SectionKey = Annotated[str, Path(json_schema_extra={"enum": [s.value for s in ReportSection]})]
+
+
+def _anchor_thread(
+    db: MembersSessionDep,
+    report_id: int,
+    anchor: ConversationAnchor,
+    claims: AuthClaims,
+    scope: SmallGroupScope,
+) -> ConversationThreadSchema:
+    report = _report_or_404(db, report_id, claims, scope)
+    try:
+        conversation = get_report_anchor_conversation(db, report.id, anchor)
+    except (MemberNotOnReportError, ConversationNotFoundError) as exc:
+        raise _http_error(exc) from exc
+    return _thread_schema(build_thread(db, conversation, claims.sub))
+
+
+def _add_anchor_comment(
+    db: MembersSessionDep,
+    report_id: int,
+    anchor: ConversationAnchor,
+    body: CommentBodySchema,
+    claims: AuthClaims,
+    scope: SmallGroupScope,
+    member: Member | None,
+) -> ConversationThreadSchema:
+    report = _report_or_404(db, report_id, claims, scope)
+    author = _linked_member(member)
+    try:
+        conversation = add_comment(
+            db,
+            report.id,
+            anchor,
+            user_id=claims.sub,
+            author_member_id=author.id,
+            side=comment_side(claims),
+            body=body.body,
+        )
+    except (MemberNotOnReportError, SectionEmptyError, ConversationRaceError) as exc:
+        raise _http_error(exc) from exc
+    return _thread_schema(build_thread(db, conversation, claims.sub))
+
+
+# Declared before the `{member_id}` routes (`sections` isn't an int, but don't rely on that).
+@router.get(
+    "/small-group-reports/{report_id}/conversations/sections/{key}",
+    name="get_report_section_conversation",
+    description="A report section's thread; 404 `No conversation yet.` when nobody has commented",
+    dependencies=[_needs_reports_view],
+)
+def get_report_section_conversation(
+    report_id: int,
+    key: SectionKey,
+    db: MembersSessionDep,
+    claims: CurrentClaimsDep,
+    scope: SmallGroupScopeDep,
+) -> ConversationThreadSchema:
+    section = _section_or_422(key)
+    return _anchor_thread(db, report_id, section, claims, scope)
+
+
+@router.post(
+    "/small-group-reports/{report_id}/conversations/sections/{key}/comments",
+    name="add_report_section_conversation_comment",
+    description="Comment on a section's thread: creates it (the section needs text), reopens if resolved",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[
+        _needs_reports_view,
+        Depends(rate_limit("30/minute", scope="add_report_conversation_comment")),
+    ],
+)
+def post_report_section_conversation_comment(
+    report_id: int,
+    key: SectionKey,
+    body: CommentBodySchema,
+    db: MembersSessionDep,
+    claims: CurrentClaimsDep,
+    scope: SmallGroupScopeDep,
+    member: CurrentMemberDep,
+) -> ConversationThreadSchema:
+    section = _section_or_422(key)
+    return _add_anchor_comment(db, report_id, section, body, claims, scope, member)
+
+
 @router.get(
     "/small-group-reports/{report_id}/conversations/{member_id}",
     name="get_report_conversation",
@@ -225,12 +322,7 @@ def get_report_conversation(
     claims: CurrentClaimsDep,
     scope: SmallGroupScopeDep,
 ) -> ConversationThreadSchema:
-    report = _report_or_404(db, report_id, claims, scope)
-    try:
-        conversation = get_report_member_conversation(db, report.id, member_id)
-    except (MemberNotOnReportError, ConversationNotFoundError) as exc:
-        raise _http_error(exc) from exc
-    return _thread_schema(build_thread(db, conversation, claims.sub))
+    return _anchor_thread(db, report_id, member_id, claims, scope)
 
 
 @router.post(
@@ -270,21 +362,7 @@ def post_report_conversation_comment(
     scope: SmallGroupScopeDep,
     member: CurrentMemberDep,
 ) -> ConversationThreadSchema:
-    report = _report_or_404(db, report_id, claims, scope)
-    author = _linked_member(member)
-    try:
-        conversation = add_comment(
-            db,
-            report.id,
-            member_id,
-            user_id=claims.sub,
-            author_member_id=author.id,
-            side=comment_side(claims),
-            body=body.body,
-        )
-    except (MemberNotOnReportError, ConversationRaceError) as exc:
-        raise _http_error(exc) from exc
-    return _thread_schema(build_thread(db, conversation, claims.sub))
+    return _add_anchor_comment(db, report_id, member_id, body, claims, scope, member)
 
 
 def _comment_or_404(
