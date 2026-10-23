@@ -1080,7 +1080,17 @@ def add_guest_to_group(
         raise ValueError("guest_id or new_guest is required")
 
     session.add(SmallGroupMember.for_group(small_group, guest_id=guest_id, joined_at=joined_at))
-    _commit_or_raise_conflict(session)
+    try:
+        _commit_or_raise_conflict(session)
+    except GuestAlreadyInGroupError:
+        # Lost a race on the active-guest index: say which group won, as the up-front check would.
+        current = session.execute(active_guest_period_query(guest_id)).one_or_none()
+        if current is not None and current[0].small_group_id != small_group.id:
+            period, group_name = current
+            raise GuestInAnotherGroupError(
+                OtherGroup(period.small_group_id, group_name, period.joined_at)
+            ) from None
+        raise
     return guest_id
 
 
@@ -1132,6 +1142,8 @@ def remove_guest_from_group(
     guest's row) but never before the period started or before the group's latest report that has an
     attendance row for the guest, so filed reports stay complete.
     """
+    if small_group.closed_at is not None:
+        raise SmallGroupClosedError
     left_at = left_at or today
     if left_at > today:
         raise LeftInFutureError

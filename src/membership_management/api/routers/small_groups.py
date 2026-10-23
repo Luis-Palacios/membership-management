@@ -467,6 +467,8 @@ def delete_small_group_guest(
             left_at=body.left_at if body is not None else None,
             today=_today(),
         )
+    except SmallGroupClosedError as exc:
+        raise HTTPException(status_code=409, detail="This small group is closed.") from exc
     except ActiveMembershipNotFoundError as exc:
         raise HTTPException(status_code=404, detail="This guest is not in the small group.") from exc
     except LeftInFutureError as exc:
