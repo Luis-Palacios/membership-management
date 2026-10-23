@@ -84,6 +84,35 @@ class GuestInAnotherGroupHTTPError(HTTPException):
         self.other_group = other_group
 
 
+GUEST_JOIN_ERRORS = (
+    SmallGroupClosedError,
+    NotGuestGroupError,
+    GuestNotFoundError,
+    InvitedByNotFoundError,
+    GuestAlreadyInGroupError,
+    GuestInAnotherGroupError,
+    JoinedInFutureError,
+    GuestPeriodOverlapError,
+)
+
+
+def guest_join_http_error(exc: Exception) -> HTTPException:
+    """Map the errors of `add_guest_to_group` to HTTP (the staff app matches on a phrase in `detail`)."""
+    if isinstance(exc, GuestInAnotherGroupError):
+        return GuestInAnotherGroupHTTPError(exc.other_group)
+    errors: dict[type[Exception], tuple[int, str]] = {
+        SmallGroupClosedError: (409, "This small group is closed."),
+        NotGuestGroupError: (422, "Only a guest group can have guests."),
+        GuestNotFoundError: (404, "Guest not found."),
+        InvitedByNotFoundError: (404, "Inviting member not found."),
+        GuestAlreadyInGroupError: (409, "This guest is already in the small group."),
+        JoinedInFutureError: (422, "The join date can't be in the future."),
+        GuestPeriodOverlapError: (409, "The join date overlaps an earlier period of this guest."),
+    }
+    status_code, detail = errors[type(exc)]
+    return HTTPException(status_code=status_code, detail=detail)
+
+
 def _detail(db: MembersSessionDep, small_group: SmallGroup) -> SmallGroupDetailSchema:
     members = get_small_group_active_members(db, small_group.id)
     rows = [
@@ -409,26 +438,8 @@ def post_small_group_guest(
             created_by_member_id=member.id if member is not None else None,
             today=_today(),
         )
-    except SmallGroupClosedError as exc:
-        raise HTTPException(status_code=409, detail="This small group is closed.") from exc
-    except NotGuestGroupError as exc:
-        raise HTTPException(status_code=422, detail="Only a guest group can have guests.") from exc
-    except GuestNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"Guest with ID {body.guest_id} not found.") from exc
-    except InvitedByNotFoundError as exc:
-        raise HTTPException(
-            status_code=404, detail="The member who invited the guest was not found."
-        ) from exc
-    except GuestAlreadyInGroupError as exc:
-        raise HTTPException(status_code=409, detail="This guest is already in the small group.") from exc
-    except GuestInAnotherGroupError as exc:
-        raise GuestInAnotherGroupHTTPError(exc.other_group) from exc
-    except JoinedInFutureError as exc:
-        raise HTTPException(status_code=422, detail="The join date can't be in the future.") from exc
-    except GuestPeriodOverlapError as exc:
-        raise HTTPException(
-            status_code=409, detail="The join date overlaps an earlier period of this guest."
-        ) from exc
+    except GUEST_JOIN_ERRORS as exc:
+        raise guest_join_http_error(exc) from exc
     return _detail(db, small_group)
 
 

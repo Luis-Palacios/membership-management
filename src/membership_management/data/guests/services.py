@@ -47,3 +47,21 @@ def add_guest(
     session.add(guest)
     session.flush()
     return guest
+
+
+def create_guest(session: Session, new: NewGuest, *, created_by_member_id: int | None, today: date) -> Guest:
+    """Create a guest in no group and commit."""
+    guest = add_guest(session, new, created_by_member_id=created_by_member_id, default_first_visit=today)
+    session.commit()
+    return guest
+
+
+def update_guest(session: Session, guest: Guest, changes: dict[str, object]) -> Guest:
+    """Apply only the given fields (the ones the client actually sent) and commit."""
+    invited_by = changes.get("invited_by_member_id")
+    if isinstance(invited_by, int) and session.get(Member, invited_by) is None:
+        raise InvitedByNotFoundError
+    for field, value in changes.items():
+        setattr(guest, field, value)
+    session.commit()
+    return guest
