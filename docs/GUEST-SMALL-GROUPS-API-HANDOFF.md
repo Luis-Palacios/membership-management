@@ -1,0 +1,246 @@
+# Guest small groups: guests, guest groups and guests in reports
+
+Handoff spec for the membership-management side of **guest small groups**. Read the cross-repo spec
+first: `../docs/specs/guest-small-groups.md` (workspace folder `members-management/docs/specs/`); its
+rules are referred to as *rule N*, and its *Schema* and *Contracts* sections are the target. It
+builds on the small group reports, leader access, report conversations and prayer & follow-up work
+(all on `main`).
+
+What this adds:
+
+- A **`guests`** table: people who aren't members, never mixed into `members` (rules 2–4).
+- A group **audience** (`members` | `guests`, fixed at creation) and guests as participants of guest
+  groups, enforced by the database (rules 5–9).
+- Guests in reports: roster, attendance, missed streaks, observations and conversations (rules
+  10–12).
+- **`/guests`** routes for search, list, detail, create and edit, with their own scope (rules 13–18).
+- The per-church setting `GUEST_GROUPS_ENABLED` (rule 1).
+
+Work through it **stage by stage**, one reviewable commit per stage, on the **`guest-small-groups`**
+branch (the same name in every repo). Each stage must pass `uv run ruff check .` and
+`uv run ty check` (and `uv run alembic check` in stage 1), and be tried against the local API
+(`TestClient` with the claims dependency overridden, as before) as each role: `admin`, `elder`
+(linked and unlinked), `smallGroupLeader` leading a guest group, leading only a member group, and a
+former leader, `deacon` with no member, `user`. Try with the setting on **and** off. There's no
+test runner yet, so note in *Decisions and deviations* what you tried and how. Don't touch the dev
+database: use a scratch one, as in the prayer & follow-up work.
+
+**Depends on:** auth-server stage 1 (`auth-server/docs/GUEST-SMALL-GROUPS-HANDOFF.md`): the
+`guests` permissions must be in the JWT before stage 3 can be tried. If they aren't there yet, say
+so and stop at the end of stage 2; don't stub permissions in committed code.
+
+Keep the existing conventions: routes call `services.py` directly, `queries.py` builds `Select`s,
+`results.py` holds `NamedTuple`s mapped with `all_as`, schemas are `CamelModel`, service errors are
+domain exceptions the router maps to HTTP codes, "today" is `church_today()`, routes doing blocking
+database work stay plain `def`, enums are VARCHAR + CHECK. New domain: `data/guests/` (models,
+queries, services, results), imported in `data/models.py`.
+
+## Progress (handoff log)
+
+| Stage | Status | Commit |
+| --- | --- | --- |
+| 1. Setting, migration, models, seed | ⬜ | |
+| 2. Guest groups and guest participants | ⬜ | |
+| 3. `/guests` routes and scope | ⬜ | |
+| 4. Guests in reports | ⬜ | |
+| 5. Guests in conversations | ⬜ | |
+| 6. Docs | ⬜ | |
+| 7. Cleanup: drop `memberId`/`memberName` on guest-capable rows | ⬜ (after staff-app stage 6) | |
+
+### Decisions and deviations
+
+- (fill in while implementing)
+
+## Who can do what
+
+| Role | Guest groups and their guests | `/guests` |
+| --- | --- | --- |
+| admin, elder | every group; add, move and remove guests (need `smallGroups: manageMembers`) | list, search, detail, create (with or without a group), edit |
+| smallGroupLeader, deacon leading a guest group | their guest groups (scope as today) | search church-wide (rule 14 fields), detail and edit for guests active in their open guest groups (404 otherwise), create only through a group they lead |
+| leader of member groups only, former leader, deacon with no member | no guest groups in scope | search returns `[]`; detail 404 |
+| user | 403 | 403 |
+
+Setting off: creating a guest group or a guest is 409 `guest groups are off`; everything else
+(reading existing guest data) still works.
+
+## Stage 1: Setting, migration, models, seed
+
+**Setting:** `guest_groups_enabled: bool = False` in `ApiSettings` (env `GUEST_GROUPS_ENABLED`), next
+to `church_timezone`, with the same note that it moves onto the church when multi-tenancy arrives.
+Add it to `.env.example`. `GET /me` gains `features: { guestGroups: bool }` (`MeSchema`).
+
+**Migration** (one, autogenerate then review; everything the spec's *Schema* lists):
+
+- `small_groups.audience` VARCHAR(10) NOT NULL, server default `'members'`, CHECK `IN ('members',
+  'guests')`, plus `UNIQUE (id, audience)` (the target of the composite FK).
+- `guests`: `id` (identity), `name` (required), `phone`, `email`, `sex` (same VARCHAR + CHECK as
+  `members.sex`), `address`, `first_visit_date`, `invited_by_member_id` → `members.id` NULL,
+  `created_by_member_id` → `members.id` NULL (an unlinked admin can create guests), `created_at`
+  (server default `now()`), `legacy_id` NULL UNIQUE. Index for search on `lower(unaccent(name))`
+  (the `unaccent` extension is already enabled) and on the phone's digits (an expression index on
+  `regexp_replace(phone, '\D', '', 'g')`, or a stored generated column if that reads better: say
+  which). Email is **not** unique (rule 3).
+- `small_group_members`: `member_id` nullable; `guest_id` → `guests.id` NULL; `audience` NOT NULL
+  (backfill `'members'`, then drop any default so inserts must state it); FK `(small_group_id,
+  audience)` → `small_groups (id, audience)`; `left_reason` VARCHAR(20) NULL CHECK `IN
+  ('stopped_coming', 'moved_group', 'other')`; CHECK `num_nonnulls(member_id, guest_id) = 1`; CHECK
+  `guest_id IS NULL OR (audience = 'guests' AND role = 'member')`; partial UNIQUE `(guest_id) WHERE
+  left_at IS NULL` (rule 7: one active guest group per guest, across all groups). The existing
+  `uq_small_group_members_active` and `uq_small_group_members_active_leader` stay as they are.
+- `small_group_report_attendances`: `member_id` nullable; `guest_id` → `guests.id` NULL; CHECK
+  `num_nonnulls(member_id, guest_id) = 1`; `UNIQUE (report_id, guest_id)`.
+- `report_conversations`: `guest_id` → `guests.id` NULL; `one_anchor` becomes
+  `num_nonnulls(member_id, guest_id, section) = 1`; `UNIQUE (report_id, guest_id)`, **named
+  explicitly** (the `uq` naming convention only uses the first column; see the section threads
+  migration `a0bb7197cbc8`).
+
+Checks, the composite FK and the named constraints are hand-written; autogenerate won't produce
+them. `alembic check` clean; `downgrade -1` / `upgrade head` round-trips on a database without
+guest rows (say in the log what the downgrade does when guest rows exist: failing is fine).
+
+**Models:** `Guest` (`data/guests/models/guest.py`); `SmallGroup.audience` (a `GroupAudience`
+`StrEnum`); `SmallGroupMember.guest_id`, `.audience`, `.left_reason` (`LeftReason` `StrEnum`) and a
+`guest` relationship; the same `guest_id`/`guest` on `SmallGroupReportAttendance` and
+`ReportConversation`. Inserting a membership must always set `audience` from the group (one helper,
+used by every path that inserts a `SmallGroupMember`, including leader swaps and role changes).
+
+**Seed** (`data/seed/guests.py`, registered in `runner.SEEDERS`): two guest groups (`Primeros
+Pasos`, Sundays; `Nuevos Comienzos`, Thursdays) led by members, one with a member as supporting
+co-leader; about a dozen guests with phones (a couple without); reports for the last few weeks with
+realistic attendance, including one guest with a 4-meeting missed streak, one past 5, a guest who
+moved between the two groups (`moved_group`), one who stopped coming (`stopped_coming`, now in no
+group) and a pair of near-duplicate names sharing a phone (for search and the duplicate hint).
+Two `--reset` runs give identical rows.
+
+**Try:** every constraint fails where it should: a guest row in a member group, a guest as leader,
+a row with both or neither of `member_id`/`guest_id`, a second active guest group for a guest, a
+membership whose `audience` differs from its group's, an attendance row with both ids. Existing
+member groups, reports and conversations read exactly as on `main` (dump them for every role and
+compare).
+
+## Stage 2: Guest groups and guest participants
+
+Routes in `api/routers/small_groups.py` (shapes in the spec's *Contracts*):
+
+- `POST /small-groups` takes `audience` (default `members`). `guests` with the setting off: 409
+  `guest groups are off`. `PATCH` with `audience`: 422 `audience` (rule 5).
+- `GET /small-groups` and `GET /small-groups/{id}` return `audience`. Detail rows gain
+  `person: { type, id, name }`; `memberId`/`memberName` stay, null on guest rows, until stage 7. For
+  a guest group, each guest row also carries `missedStreak` (reports rule 11, the same
+  `missed_streaks` helper, computed as of today) and `lastAttendedDate` (null if never); counts are
+  split: `guestCount`, `memberCount` (rule 20). The list's `activeMemberCount` stays members-only;
+  add `activeGuestCount` (0 for member groups).
+- `POST /small-groups/{id}/members` is unchanged; a member can join a guest group in any role.
+- **New** `POST /small-groups/{id}/guests`: `{ guestId }` **or** `{ newGuest: {name, phone?, email?,
+  sex?, address?, firstVisitDate?, invitedByMemberId?} }` (exactly one, 422 otherwise), optional
+  `joinedAt` (default today; may be a past date, as the member route allows, so the report form can
+  pass the meeting date), `moveFromOtherGroup: bool`. Needs `smallGroups: manageMembers` + scope;
+  `newGuest` also needs `guests: create` (403) and the setting (409). 422 `guest group` on a member
+  group. Guest already active **in this group**: 409. Active in **another** guest group and
+  `moveFromOtherGroup` false: 409 `in another group` with `otherGroup: { id, name, joinedAt }` in the
+  body (the caller may not have that group in scope; only its id and name are exposed, rule 7). With
+  `moveFromOtherGroup: true`: end the other period and insert the new one **in one transaction**,
+  the old one with `left_reason = moved_group`; the old period ends the day before `joinedAt` (or on
+  `joinedAt` if it started that same day, following how role changes handle same-day periods today;
+  write down which). `newGuest.firstVisitDate` defaults to `joinedAt`. `created_by_member_id` is the
+  caller's member (null for an unlinked admin or elder).
+- **New** `DELETE /small-groups/{id}/guests/{guestId}`: optional body `{ leftReason, leftAt }`.
+  `leftReason` `stopped_coming` | `other` (`moved_group` is only set by a move: 422). `leftAt`
+  defaults to today; may be earlier but never before `joinedAt` and never before the latest report of
+  this group that has an attendance row for the guest (422), so filed reports stay complete
+  (reports rule 3). Same permission and scope as removing a member. 404 if the guest isn't active in
+  the group.
+- `DELETE /small-groups/{id}/members/{memberId}` takes the same optional `leftReason`.
+- Closing a group ends guest periods like member ones (`left_reason` null).
+
+**Try:** create a guest group with the setting on and off; patch its audience; add an existing
+guest, a new guest, a guest already in the group, a guest in another group with and without
+`moveFromOtherGroup` (as a leader who doesn't lead the other group too); add a guest to a member
+group (422); remove with each reason and with `leftAt` before and after the guest's last report row;
+the detail's split counts, `person`, `missedStreak` and `lastAttendedDate`; member group detail
+unchanged apart from the new keys.
+
+## Stage 3: `/guests` routes and scope
+
+New router `api/routers/guests.py`, permission `guests: …` from the JWT, scope in `api/access.py`:
+
+- **`GuestScopeDep`** (rule 17): with `guests: all` every guest; otherwise guests with an active
+  period (`left_at IS NULL`) in an **open guest group** the caller leads or co-leads. 404 outside.
+- `GET /guests` (`guests: view` + `all`): paged list, filters `status=active|inactive` (in a guest
+  group today or not) and `q`. Rows: id, name, phone, first visit, current group (`{id, name,
+  joinedAt}`) or last group (`{id, name, leftAt, leftReason}`), last attended date, missed streak.
+  Counts per status for the tabs.
+- `GET /guests/search?q=` (`guests: search`): church-wide, at most 10, **only** rule 14's fields:
+  `id`, `name`, `phoneLast4`, `currentGroup` or `lastGroup` (id, name, date), `lastAttendedDate`.
+  Never email, address or observations. Match accent- and case-insensitive on name, and on phone
+  digits when `q` has 3+ digits. A caller without `guests: all` who leads no open guest group gets
+  `[]` (not 403). Order: exact-ish name matches first, then most recently seen.
+- `GET /guests/{id}` (`guests: view` + scope): contact fields, first visit, invited by (`{id, name}`),
+  created by and when, group history (every period: group, joined, left, reason, role), and recent
+  attendance (last 12 attendance rows: report id, date, group, attended group/church). Observations
+  follow reports rule 9 per row; a scoped caller only gets rows of groups they lead.
+- `POST /guests` (`guests: create` + `all`, setting on): create without a group; optional
+  `smallGroupId` (a guest group, joins today) is allowed. 422 for a member group.
+- `PATCH /guests/{id}` (`guests: update` + scope): contact fields, first visit, invited by. Never
+  groups (that's stage 2's routes).
+
+The duplicate hint (rule 13) is the search endpoint: staff-app calls it with the name and with the
+phone while the form is filled. No server-side blocking.
+
+**Try:** every role in the table above, including a leader of a member group only (search `[]`,
+detail 404), a former leader of a guest group (404), and a guest who left the caller's group (404
+for a leader, 200 for an elder). Search by accented and unaccented names, by 4+ phone digits, and
+check no extra field leaks.
+
+## Stage 4: Guests in reports
+
+- `GET /small-groups/{id}/report-roster?date=`: rows gain `person`; guests are included exactly like
+  members (active on the date). `missedStreak` works per person, keyed by member or guest.
+- `POST /small-groups/{id}/reports` and `PATCH /small-group-reports/{id}`: attendance items take
+  `memberId` **or** `guestId` (422 for both or neither). Completeness (reports rule 3) is checked
+  over people, members and guests together.
+- `GET /small-group-reports/{id}`: attendance rows gain `person`; observations unchanged (rule 9).
+- `GET /small-group-reports` (list), `/summary`, `/week`, `/shared`: no shape change except
+  `audience` on each group object, so staff-app can draw the badge (rule 19). Figures stay per
+  report (rule 20).
+- A guest who joined from the report form (stage 2's route with `joinedAt` = meeting date) must be
+  in that date's roster: check the roster query uses `joined_at <= date`.
+
+**Try:** a report on a guest group with guests and supporting members; a stale roster (a guest
+added after the form loaded) is 422 `attendance`; editing an old report after a guest was removed
+with `leftAt` on a later date still works; a removed guest is absent from the next date's roster.
+
+## Stage 5: Guests in conversations
+
+- Anchor `{ "type": "attendance", "guestId": n }` beside the member one, in every response that
+  carries `anchor`.
+- Routes `GET /small-group-reports/{id}/conversations/guests/{guestId}` and
+  `POST …/conversations/guests/{guestId}/comments`, beside the member ones and sharing their
+  helpers and rate-limit scope. Starting one needs the guest's attendance row on the report (422
+  otherwise), like a member.
+- Inbox rows and summaries gain `person` (null for section threads); `member` stays as it is.
+- Audience, linked-member rule, resolve, unread and the report-delete cascade are unchanged.
+
+**Try:** an elder starts a thread on a guest's row; the leader sees it in *Needs my reply*; person
+and section threads on member groups are unchanged.
+
+## Stage 6: Docs
+
+`docs/ARCHITECTURE.md`: the new routes in the role × route table, a *Guests* section (table, scope,
+setting, the database rules), and notes in *Small group reports* and *Report conversations*.
+`CLAUDE.md`: one line for the guests domain and the setting. `.env.example` already has the setting
+(stage 1).
+
+## Stage 7: Cleanup (later)
+
+Only after staff-app's stage that reads `person` everywhere is deployed: drop `memberId` /
+`memberName` from guest-capable rows (group detail, roster, report detail attendance, conversation
+summaries and inbox), keeping `member` where it means "the member" (e.g. the submitter). Tell the
+staff-app side to regenerate types.
+
+## For the other repos
+
+- auth-server: the `guests` statement must ship first (its handoff).
+- staff-app: new types (`person`, `audience`, `features.guestGroups`, the `/guests` shapes); turn
+  `GUEST_GROUPS_ENABLED` on in an environment only after staff-app's `person` stage is deployed (the
+  spec's deploy-order note).
