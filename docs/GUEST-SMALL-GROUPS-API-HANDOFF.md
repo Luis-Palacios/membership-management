@@ -42,8 +42,8 @@ queries, services, results), imported in `data/models.py`.
 | 1. Setting, migration, models, seed | ✅ | `f5b141e` |
 | 2. Guest groups and guest participants | ✅ | `b147ff0` |
 | 3. `/guests` routes and scope | ✅ | `716a9f3` |
-| 4. Guests in reports | ✅ | (hash in stage 5's commit) |
-| 5. Guests in conversations | ⬜ | |
+| 4. Guests in reports | ✅ | `32fffb0` |
+| 5. Guests in conversations | ✅ | (hash in stage 6's commit) |
 | 6. Docs | ⬜ | |
 | 7. Cleanup: drop `memberId`/`memberName` on guest-capable rows | ⬜ (after staff-app stage 6) | |
 
@@ -208,6 +208,31 @@ queries, services, results), imported in `data/models.py`.
   shapes, a member-group report created and edited as before, deleting a report with guest rows.
   Against stage 3's dump, every existing response differs only by the added `audience` and `person`
   keys (same values and order).
+- **Stage 5, anchors in code:** `ConversationAnchor` was a member id or a `ReportSection`; it is now a
+  `PersonKey` (`("member"|"guest", id)`) or a `ReportSection`, so the lookup, `_check_can_start`,
+  `_get_or_create` (which sets `member_id`, `guest_id` or `section`) and the report-delete cascade are
+  the one code path. `person_on_report_query` replaces `member_on_report_query`;
+  `MemberNotOnReportError` keeps its name and now covers guests too (422 "That person has no
+  attendance row on this report.").
+- **Stage 5, shapes:** the anchor union is now three schemas switched by a callable discriminator
+  (`type` alone is `"attendance"` for both persons): `{type: "attendance", memberId}`, `{type:
+  "attendance", guestId}` (no `memberId` key) and `{type: "section", key}`. Summaries, threads and
+  inbox rows gain `person: {type, id, name} | null` (null for a section thread); `member` is
+  unchanged, so it is null on a guest's row (for a guest, read `person`). The summaries and inbox
+  queries join the member and the guest for the name. New routes beside the member ones, sharing
+  their helpers and rate-limit scope: `GET` and `POST …/comments` on
+  `/small-group-reports/{id}/conversations/guests/{guestId}`. Audience, the linked-member rule,
+  resolve/reopen/edit/delete, unread, the counts and the cascade are the same code as for members.
+- **Stage 5, how it was tried:** 45 checks with the setting on and off: no thread yet (404), a guest
+  with no row on the report (422 on read and on starting), an unlinked elder writing (409), an elder
+  starting a thread on a guest (trimmed body, side, anchor, `person`, one thread for two comments), a
+  member thread and a section thread beside it with their shapes unchanged, the report's summaries,
+  the leader's inbox ("Needs my reply", badge count, group filter), a reply flipping who needs to
+  answer, resolve, reopen-by-comment, edit, delete, the reopen route, access (the other guest
+  group's leader, a member-group leader, a former leader of either kind, `user`, a full-scope caller
+  without `viewObservations`), the thread staying readable after the guest leaves, and the report
+  delete removing the guest's threads and comments. Against stage 4's dump only the inbox rows
+  changed, by the added `person`.
 
 ## Who can do what
 

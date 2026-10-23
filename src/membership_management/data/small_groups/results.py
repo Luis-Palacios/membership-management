@@ -352,12 +352,23 @@ class ConversationMember(NamedTuple):
     name: str
 
 
+class ConversationPerson(NamedTuple):
+    """Who a thread is about: a member or a guest (never set for a section thread)."""
+
+    type: Literal["member", "guest"]
+    id: int
+    name: str
+
+
 class ConversationSummary(NamedTuple):
     """A thread's row indicator on the report detail. `unread` and `needs_my_reply` are the caller's."""
 
     id: int
-    # The anchor: a person (`member_id`) or a report section, never both.
+    # The anchor: a member, a guest or a report section, exactly one.
     member_id: int | None
+    guest_id: int | None
+    # Null for a section thread.
+    person: ConversationPerson | None
     section: ReportSection | None
     status: ConversationStatus
     comment_count: int
@@ -392,9 +403,12 @@ class ConversationComment(NamedTuple):
 
 class ConversationThread(NamedTuple):
     id: int
-    # The anchor: a person (`member_id`, with their name) or a report section, never both.
+    # The anchor: a member (`member_id`, with their name), a guest or a report section, exactly one.
     member_id: int | None
     member_name: str | None
+    guest_id: int | None
+    # Null for a section thread.
+    person: ConversationPerson | None
     section: ReportSection | None
     status: ConversationStatus
     resolved_by: ConversationMember | None
@@ -429,8 +443,10 @@ class InboxRow(NamedTuple):
     status: ConversationStatus
     needs_my_reply: bool
     unread: bool
-    # None for a section thread.
+    # None for a section thread, and for a guest's (`person` has them).
     member: ConversationMember | None
+    # Who the thread is about, a member or a guest; None for a section thread.
+    person: ConversationPerson | None
     section: ReportSection | None
     group: InboxGroup
     report: InboxReport

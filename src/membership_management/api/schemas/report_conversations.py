@@ -1,17 +1,25 @@
 from datetime import date, datetime
 from typing import Annotated, Literal
 
-from pydantic import Field, StringConstraints
+from pydantic import Discriminator, StringConstraints, Tag
 
 from membership_management.api.schemas.base import CamelModel
+from membership_management.api.schemas.person import PersonSchema
 from membership_management.data.small_groups.models import ConversationSide, ConversationStatus, ReportSection
 
 
 class AttendanceAnchorSchema(CamelModel):
-    """A thread about one person's attendance row."""
+    """A thread about one member's attendance row."""
 
     type: Literal["attendance"] = "attendance"
     member_id: int
+
+
+class GuestAttendanceAnchorSchema(CamelModel):
+    """A thread about one guest's attendance row."""
+
+    type: Literal["attendance"] = "attendance"
+    guest_id: int
 
 
 class SectionAnchorSchema(CamelModel):
@@ -21,15 +29,31 @@ class SectionAnchorSchema(CamelModel):
     key: ReportSection
 
 
-# What the thread is about; clients switch on `type`.
+def _anchor_kind(value: object) -> str:
+    """Discriminator: `type` can't tell a member's attendance anchor from a guest's, so look at the id."""
+    if isinstance(value, dict):
+        kind, has_guest = value.get("type"), "guestId" in value or "guest_id" in value
+    else:
+        kind, has_guest = getattr(value, "type", None), hasattr(value, "guest_id")
+    if kind == "section":
+        return "section"
+    return "guest" if has_guest else "member"
+
+
+# What the thread is about; clients switch on `type`, then on which id is there (`memberId`/`guestId`).
 ConversationAnchorSchema = Annotated[
-    AttendanceAnchorSchema | SectionAnchorSchema, Field(discriminator="type")
+    Annotated[AttendanceAnchorSchema, Tag("member")]
+    | Annotated[GuestAttendanceAnchorSchema, Tag("guest")]
+    | Annotated[SectionAnchorSchema, Tag("section")],
+    Discriminator(_anchor_kind),
 ]
 
 
 class ConversationSummarySchema(CamelModel):
     id: int
     anchor: ConversationAnchorSchema
+    # Who it's about, a member or a guest; null for a section thread.
+    person: PersonSchema | None
     status: ConversationStatus
     comment_count: int
     unread: bool
@@ -78,8 +102,10 @@ class ConversationThreadSchema(CamelModel):
     id: int
     anchor: ConversationAnchorSchema
     # Same shape as the inbox row; the name comes from members, so it is there even when the
-    # attendance row is gone. Null for a section thread.
+    # attendance row is gone. Null for a section thread and for a guest's (`person` has them).
     member: InboxMemberSchema | None
+    # Who it's about, a member or a guest; null for a section thread.
+    person: PersonSchema | None
     status: ConversationStatus
     resolved_by: ConversationPersonSchema | None
     resolved_at: datetime | None
@@ -121,8 +147,10 @@ class InboxItemSchema(CamelModel):
     needs_my_reply: bool
     unread: bool
     anchor: ConversationAnchorSchema
-    # Null for a section thread.
+    # Null for a section thread and for a guest's (`person` has them).
     member: InboxMemberSchema | None
+    # Who it's about, a member or a guest; null for a section thread.
+    person: PersonSchema | None
     group: InboxGroupSchema
     report: InboxReportSchema
     last_comment: InboxLastCommentSchema
