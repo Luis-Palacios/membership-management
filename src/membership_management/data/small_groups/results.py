@@ -9,6 +9,18 @@ from membership_management.data.small_groups.models import (
     SmallGroupRole,
 )
 
+# A member or a guest, as in an attendance row: ("member", id) or ("guest", id).
+PersonKey = tuple[Literal["member", "guest"], int]
+
+
+def person_key(member_id: int | None, guest_id: int | None) -> PersonKey:
+    """The key of whoever a row is about: exactly one of the two ids is set."""
+    if member_id is not None:
+        return ("member", member_id)
+    if guest_id is not None:
+        return ("guest", guest_id)
+    raise ValueError("a row needs a member or a guest")
+
 
 class SmallGroupSummary(NamedTuple):
     id: int
@@ -54,8 +66,10 @@ class OtherGroup(NamedTuple):
 
 
 class RosterPeriod(NamedTuple):
-    member_id: int
-    member_name: str
+    # Exactly one of the two ids.
+    member_id: int | None
+    guest_id: int | None
+    name: str
     role: SmallGroupRole
     joined_at: date
     left_at: date | None
@@ -70,13 +84,20 @@ class AttendanceMark(NamedTuple):
 
 
 class RosterPerson(NamedTuple):
-    """Someone who belongs in a report for a date, with the role they held that day."""
+    """Someone who belongs in a report for a date, with the role they held that day: a member, or a
+    guest of a guest group (always a plain participant)."""
 
-    member_id: int
-    member_name: str
+    # Exactly one of the two ids.
+    member_id: int | None
+    guest_id: int | None
+    name: str
     role: SmallGroupRole
     joined_at: date
     missed_streak: int
+
+    @property
+    def key(self) -> PersonKey:
+        return person_key(self.member_id, self.guest_id)
 
 
 class ReportRoster(NamedTuple):
@@ -86,7 +107,9 @@ class ReportRoster(NamedTuple):
 
 
 class AttendanceInput(NamedTuple):
-    member_id: int
+    # Exactly one of the two ids.
+    member_id: int | None
+    guest_id: int | None
     attended_group: bool
     attended_church: bool
     observation: str | None
@@ -109,8 +132,10 @@ class ReportInput(NamedTuple):
 
 
 class ReportAttendanceView(NamedTuple):
-    member_id: int
-    member_name: str
+    # Exactly one of the two ids.
+    member_id: int | None
+    guest_id: int | None
+    name: str
     role: SmallGroupRole
     # Start of the membership period covering the meeting date; None if memberships were edited since.
     joined_at: date | None
@@ -125,6 +150,7 @@ class ReportDetail(NamedTuple):
     id: int
     small_group_id: int
     small_group_name: str
+    small_group_audience: GroupAudience
     small_group_meeting_address: str | None
     small_group_closed_at: date | None
     meeting_date: date
@@ -146,6 +172,7 @@ class ReportDetail(NamedTuple):
 class ReportGroupRow(NamedTuple):
     id: int
     name: str
+    audience: GroupAudience
     meeting_day: int | None
     closed_at: date | None
 
@@ -154,6 +181,7 @@ class FiledReportRow(NamedTuple):
     id: int
     small_group_id: int
     small_group_name: str
+    small_group_audience: GroupAudience
     small_group_closed_at: date | None
     meeting_date: date
     submitted_by_member_id: int
@@ -169,6 +197,7 @@ class FiledReportRow(NamedTuple):
 class NotFiledMeeting(NamedTuple):
     small_group_id: int
     small_group_name: str
+    small_group_audience: GroupAudience
     small_group_closed_at: date | None
     meeting_date: date
 
@@ -279,6 +308,7 @@ class SharedReportRow(NamedTuple):
     meeting_date: date
     small_group_id: int
     small_group_name: str
+    small_group_audience: GroupAudience
     group_prayer_request: str | None
     group_praise_report: str | None
     group_relevant_discussion: str | None
@@ -291,6 +321,7 @@ class SharedEntry(NamedTuple):
     meeting_date: date
     small_group_id: int
     small_group_name: str
+    small_group_audience: GroupAudience
     leaders: list[WeekLeader]
     prayer: str | None
     praise: str | None

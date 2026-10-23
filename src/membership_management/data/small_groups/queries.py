@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from datetime import date
 
-from sqlalchemy import ColumnElement, Select, and_, func, or_, select
+from sqlalchemy import ColumnElement, Integer, Select, and_, cast, func, null, or_, select, union_all
 from sqlalchemy.orm import aliased, joinedload, selectinload
 
 from membership_management.data.guests.models import Guest
@@ -108,26 +108,43 @@ def led_small_group_ids_query(member_id: int) -> Select:
 
 
 def roster_periods_on_date_query(small_group_id: int, d: date) -> Select:
-    """Membership periods that cover `d` (rule 3: joined by then, not left before it).
+    """Membership periods, members' and guests', that cover `d` (reports rule 3: joined by then, not
+    left before it).
 
-    A member can appear twice when their role changed on `d`; the service picks one per member.
+    A member can appear twice when their role changed on `d`; the service picks one per person.
     """
-    return (
+    covers = and_(
+        SmallGroupMember.small_group_id == small_group_id,
+        SmallGroupMember.joined_at <= d,
+        or_(SmallGroupMember.left_at.is_(None), SmallGroupMember.left_at >= d),
+    )
+    members = (
         select(
             Member.id.label("member_id"),
-            Member.name.label("member_name"),
+            cast(null(), Integer).label("guest_id"),
+            Member.name.label("name"),
             SmallGroupMember.role.label("role"),
             SmallGroupMember.joined_at.label("joined_at"),
             SmallGroupMember.left_at.label("left_at"),
             SmallGroupMember.id.label("period_id"),
         )
         .join(Member, Member.id == SmallGroupMember.member_id)
-        .where(
-            SmallGroupMember.small_group_id == small_group_id,
-            SmallGroupMember.joined_at <= d,
-            or_(SmallGroupMember.left_at.is_(None), SmallGroupMember.left_at >= d),
-        )
+        .where(covers)
     )
+    guests = (
+        select(
+            cast(null(), Integer).label("member_id"),
+            Guest.id.label("guest_id"),
+            Guest.name.label("name"),
+            SmallGroupMember.role.label("role"),
+            SmallGroupMember.joined_at.label("joined_at"),
+            SmallGroupMember.left_at.label("left_at"),
+            SmallGroupMember.id.label("period_id"),
+        )
+        .join(Guest, Guest.id == SmallGroupMember.guest_id)
+        .where(covers)
+    )
+    return select(union_all(members, guests).subquery())
 
 
 def report_in_scope_query(report_id: int, only_group_ids: frozenset[int] | None) -> Select:
@@ -138,7 +155,9 @@ def report_in_scope_query(report_id: int, only_group_ids: frozenset[int] | None)
         .options(
             joinedload(SmallGroupReport.small_group),
             joinedload(SmallGroupReport.submitted_by),
-            selectinload(SmallGroupReport.attendances).joinedload(SmallGroupReportAttendance.member),
+            selectinload(SmallGroupReport.attendances).options(
+                joinedload(SmallGroupReportAttendance.member), joinedload(SmallGroupReportAttendance.guest)
+            ),
         )
     )
     if only_group_ids is not None:
@@ -219,6 +238,7 @@ def report_groups_query(only_ids: frozenset[int] | None, small_group_id: int | N
     query = select(
         SmallGroup.id.label("id"),
         SmallGroup.name.label("name"),
+        SmallGroup.audience.label("audience"),
         SmallGroup.meeting_day.label("meeting_day"),
         SmallGroup.closed_at.label("closed_at"),
     ).order_by(SmallGroup.name, SmallGroup.id)
@@ -244,6 +264,7 @@ def filed_reports_query(
             SmallGroupReport.id.label("id"),
             SmallGroup.id.label("small_group_id"),
             SmallGroup.name.label("small_group_name"),
+            SmallGroup.audience.label("small_group_audience"),
             SmallGroup.closed_at.label("small_group_closed_at"),
             SmallGroupReport.meeting_date.label("meeting_date"),
             Member.id.label("submitted_by_member_id"),
@@ -401,6 +422,7 @@ def shared_reports_query(group_ids: frozenset[int], from_date: date, to_date: da
             SmallGroupReport.meeting_date.label("meeting_date"),
             SmallGroup.id.label("small_group_id"),
             SmallGroup.name.label("small_group_name"),
+            SmallGroup.audience.label("small_group_audience"),
             SmallGroupReport.group_prayer_request.label("group_prayer_request"),
             SmallGroupReport.group_praise_report.label("group_praise_report"),
             SmallGroupReport.group_relevant_discussion.label("group_relevant_discussion"),
