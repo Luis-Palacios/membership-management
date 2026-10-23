@@ -43,8 +43,8 @@ queries, services, results), imported in `data/models.py`.
 | 2. Guest groups and guest participants | ✅ | `b147ff0` |
 | 3. `/guests` routes and scope | ✅ | `716a9f3` |
 | 4. Guests in reports | ✅ | `32fffb0` |
-| 5. Guests in conversations | ✅ | (hash in stage 6's commit) |
-| 6. Docs | ⬜ | |
+| 5. Guests in conversations | ✅ | `5b9f978` |
+| 6. Docs | ✅ | this commit |
 | 7. Cleanup: drop `memberId`/`memberName` on guest-capable rows | ⬜ (after staff-app stage 6) | |
 
 ### Decisions and deviations
@@ -233,6 +233,11 @@ queries, services, results), imported in `data/models.py`.
   without `viewObservations`), the thread staying readable after the guest leaves, and the report
   delete removing the guest's threads and comments. Against stage 4's dump only the inbox rows
   changed, by the added `person`.
+- **Stage 6, docs:** `docs/ARCHITECTURE.md` gets the guest rows in the role × route table, a *Guests
+  and guest groups* section (setting, tables, the database rules, the search indexes, group and
+  `/guests` behaviour, errors, what is not here yet) and notes in *Small group reports* and *Report
+  conversations*; `CLAUDE.md` one bullet. Stage 7 stays open until staff-app reads `person`
+  everywhere (see the end of this file).
 
 ## Who can do what
 
