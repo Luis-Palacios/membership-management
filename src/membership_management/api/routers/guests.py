@@ -237,7 +237,7 @@ def get_guest_detail_route(
     description="Create a guest, in no group or straight into a guest group (they join today)",
     status_code=status.HTTP_201_CREATED,
     dependencies=[
-        Depends(require_permission("guests", "create", "all")),
+        Depends(require_permission("guests", "create")),
         Depends(rate_limit("20/minute", scope="create_guest")),
     ],
 )
@@ -255,6 +255,9 @@ def post_guest(
     today = church_today()
     try:
         if body.small_group_id is None:
+            # A guest in no group isn't in anyone's scope, so it takes `all`.
+            if not has_permission(claims, "guests", "all"):
+                raise HTTPException(status_code=403, detail="You don't have permission to do this.")
             guest = create_guest(db, new_guest, created_by_member_id=created_by, today=today)
         else:
             if not has_permission(claims, "smallGroups", "manageMembers") or group_scope is None:
