@@ -27,6 +27,7 @@ from membership_management.data.small_groups.models import (
     ReportConversationComment,
     ReportConversationCommentRevision,
     ReportConversationRead,
+    ReportSection,
 )
 from membership_management.data.small_groups.results import (
     CommentAuthor,
@@ -80,6 +81,11 @@ def is_unread(
     return last_comment_user_id != user_id and (last_read_at is None or last_read_at < last_comment_at)
 
 
+def _section(value: str | None) -> ReportSection | None:
+    """The stored `section` column (plain VARCHAR) as the enum."""
+    return ReportSection(value) if value is not None else None
+
+
 def get_conversation(session: Session, conversation_id: int) -> ReportConversation | None:
     return session.scalars(conversation_query(conversation_id)).one_or_none()
 
@@ -92,6 +98,7 @@ def get_report_conversations(
         ConversationSummary(
             id=row.id,
             member_id=row.member_id,
+            section=_section(row.section),
             status=row.status,
             comment_count=row.comment_count,
             unread=is_unread(row.last_comment_user_id, row.last_comment_at, row.last_read_at, user_id),
@@ -148,10 +155,12 @@ def build_thread(session: Session, conversation: ReportConversation, user_id: st
             )
         )
     resolved_by = conversation.resolved_by
+    member = conversation.member
     return ConversationThread(
         id=conversation.id,
         member_id=conversation.member_id,
-        member_name=conversation.member.name,
+        member_name=member.name if member is not None else None,
+        section=_section(conversation.section),
         status=conversation.status,
         resolved_by=ConversationMember(member_id=resolved_by.id, name=resolved_by.name)
         if resolved_by is not None
@@ -421,7 +430,10 @@ def get_inbox(
             status=r.status,
             needs_my_reply=needs_reply(r.status, r.last_comment_side, my_side),
             unread=is_unread(r.last_comment_user_id, r.last_comment_at, r.last_read_at, user_id),
-            member=ConversationMember(member_id=r.member_id, name=r.member_name),
+            member=ConversationMember(member_id=r.member_id, name=r.member_name)
+            if r.member_id is not None
+            else None,
+            section=_section(r.section),
             group=InboxGroup(id=r.group_id, name=r.group_name, closed=r.group_closed_at is not None),
             report=InboxReport(id=r.report_id, meeting_date=r.meeting_date),
             last_comment=InboxLastComment(

@@ -2,6 +2,7 @@ from membership_management.data.small_groups.models.report_conversation import (
     ConversationSide,
     ConversationStatus,
     ReportConversation,
+    ReportSection,
 )
 from membership_management.data.small_groups.models.report_conversation_comment import (
     ReportConversationComment,
@@ -27,6 +28,7 @@ __all__ = [
     "ReportConversationComment",
     "ReportConversationCommentRevision",
     "ReportConversationRead",
+    "ReportSection",
     "SmallGroup",
     "SmallGroupMember",
     "SmallGroupReport",

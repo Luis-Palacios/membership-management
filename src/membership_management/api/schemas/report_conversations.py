@@ -1,17 +1,30 @@
 from datetime import date, datetime
 from typing import Annotated, Literal
 
-from pydantic import StringConstraints
+from pydantic import Field, StringConstraints
 
 from membership_management.api.schemas.base import CamelModel
-from membership_management.data.small_groups.models import ConversationSide, ConversationStatus
+from membership_management.data.small_groups.models import ConversationSide, ConversationStatus, ReportSection
 
 
-class ConversationAnchorSchema(CamelModel):
-    """What the thread is about. Only attendance rows in v1; sections can be added without a client change."""
+class AttendanceAnchorSchema(CamelModel):
+    """A thread about one person's attendance row."""
 
     type: Literal["attendance"] = "attendance"
     member_id: int
+
+
+class SectionAnchorSchema(CamelModel):
+    """A thread about one of the report's texts (prayer & follow-up rule 14)."""
+
+    type: Literal["section"] = "section"
+    key: ReportSection
+
+
+# What the thread is about; clients switch on `type`.
+ConversationAnchorSchema = Annotated[
+    AttendanceAnchorSchema | SectionAnchorSchema, Field(discriminator="type")
+]
 
 
 class ConversationSummarySchema(CamelModel):
@@ -65,8 +78,8 @@ class ConversationThreadSchema(CamelModel):
     id: int
     anchor: ConversationAnchorSchema
     # Same shape as the inbox row; the name comes from members, so it is there even when the
-    # attendance row is gone.
-    member: InboxMemberSchema
+    # attendance row is gone. Null for a section thread.
+    member: InboxMemberSchema | None
     status: ConversationStatus
     resolved_by: ConversationPersonSchema | None
     resolved_at: datetime | None
@@ -107,7 +120,9 @@ class InboxItemSchema(CamelModel):
     status: ConversationStatus
     needs_my_reply: bool
     unread: bool
-    member: InboxMemberSchema
+    anchor: ConversationAnchorSchema
+    # Null for a section thread.
+    member: InboxMemberSchema | None
     group: InboxGroupSchema
     report: InboxReportSchema
     last_comment: InboxLastCommentSchema
