@@ -8,6 +8,7 @@ from membership_management.api.config import api_settings
 from membership_management.api.current_member import CurrentMemberDep
 from membership_management.api.dependencies import MembersSessionDep
 from membership_management.api.jwt_auth import AuthClaims, CurrentClaimsDep, has_permission
+from membership_management.data.guests.lookup_services import get_led_open_guest_group_ids, is_guest_in_groups
 from membership_management.data.members.models import Member
 from membership_management.data.members.services import is_member_active_in_open_groups
 from membership_management.data.small_groups.models import ConversationSide, SmallGroupReport, SmallGroupRole
@@ -96,6 +97,36 @@ def get_member_scope(
 
 
 MemberScopeDep = Annotated[MemberScope, Depends(get_member_scope)]
+
+
+@dataclass(frozen=True)
+class GuestScope:
+    """Which guests the caller may see and edit (guest-small-groups rule 17).
+
+    `full` is `guests: all`. Otherwise: guests with an open period in an open guest group the caller
+    leads or co-leads today (`group_ids`; computed for everyone with a linked member, since it also
+    says which groups' observations a caller leads). Leading only member groups, or a guest group that
+    has closed, gives nothing. Permissions say what the caller may do, this says on which guests.
+    """
+
+    full: bool
+    group_ids: frozenset[int]
+
+    def includes(self, db: Session, guest_id: int) -> bool:
+        return self.full or is_guest_in_groups(db, guest_id, self.group_ids)
+
+    @property
+    def can_search(self) -> bool:
+        """Search is church-wide but only for who leads at least one open guest group (or has `all`)."""
+        return self.full or bool(self.group_ids)
+
+
+def get_guest_scope(claims: CurrentClaimsDep, member: CurrentMemberDep, db: MembersSessionDep) -> GuestScope:
+    group_ids = get_led_open_guest_group_ids(db, member.id) if member is not None else frozenset()
+    return GuestScope(full=has_permission(claims, "guests", "all"), group_ids=group_ids)
+
+
+GuestScopeDep = Annotated[GuestScope, Depends(get_guest_scope)]
 
 
 _OWN_ROW = "Ask an admin or elder to change your own role in this group."

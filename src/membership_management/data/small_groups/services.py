@@ -1032,9 +1032,10 @@ def add_guest_to_group(
     move_from_other_group: bool,
     created_by_member_id: int | None,
     today: date,
-) -> None:
+) -> int:
     """Add an existing guest (`guest_id`) or a new one (`new_guest`; exactly one) from `joined_at`
-    (default today, never later; a past date lets the report form pass the meeting date).
+    (default today, never later; a past date lets the report form pass the meeting date). Returns the
+    guest's id.
 
     A guest active in another guest group is refused with `GuestInAnotherGroupError` (naming that
     group) unless `move_from_other_group`; then the old period ends and the new one starts in one
@@ -1066,6 +1067,7 @@ def add_guest_to_group(
 
     session.add(SmallGroupMember.for_group(small_group, guest_id=guest_id, joined_at=joined_at))
     _commit_or_raise_conflict(session)
+    return guest_id
 
 
 def _check_guest_can_join(

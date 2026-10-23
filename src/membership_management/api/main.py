@@ -22,6 +22,7 @@ from membership_management.api.middleware import (
 )
 from membership_management.api.routers import (
     applications,
+    guests,
     internal,
     me,
     members,
@@ -80,6 +81,7 @@ app.include_router(people.router)
 app.include_router(me.router)
 app.include_router(members.router)
 app.include_router(small_groups.router)
+app.include_router(guests.router)
 app.include_router(small_group_reports.router)
 app.include_router(report_conversations.router)
 app.include_router(internal.router)

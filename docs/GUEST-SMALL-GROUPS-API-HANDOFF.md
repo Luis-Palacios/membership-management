@@ -40,8 +40,8 @@ queries, services, results), imported in `data/models.py`.
 | Stage | Status | Commit |
 | --- | --- | --- |
 | 1. Setting, migration, models, seed | ✅ | `f5b141e` |
-| 2. Guest groups and guest participants | ✅ | (hash in stage 3's commit) |
-| 3. `/guests` routes and scope | ⬜ | |
+| 2. Guest groups and guest participants | ✅ | `b147ff0` |
+| 3. `/guests` routes and scope | ✅ | (hash in stage 4's commit) |
 | 4. Guests in reports | ⬜ | |
 | 5. Guests in conversations | ⬜ | |
 | 6. Docs | ⬜ | |
@@ -122,6 +122,58 @@ queries, services, results), imported in `data/models.py`.
   and with `leftAt` before and after the last report row, member removal with a reason, member joins
   and a leader swap in a guest group (audience stays `guests`), closing a guest group. The
   member-group routes compare equal to stage 1's dump except for the new keys.
+- **Stage 3, scope:** `GuestScope` (`api/access.py`): `full` is `guests: all`; `group_ids` are the
+  open guest groups the caller's member leads or co-leads *today* (an active leader/co-leader period
+  in an open group with audience `guests`; leading a closed guest group, a member group, or having
+  left, gives nothing). It's computed for everyone with a linked member, because it also decides whose
+  observations a leader reads. `GET /guests` needs `view` + `all` (leaders: 403, as the table says);
+  detail and edit need `view` / `update` and the scope (404 outside, the same message as a missing
+  guest); search needs `search` and `GuestScope.can_search` (`all`, or leading an open guest group),
+  otherwise `200 []`. The scope check is one indexed query (`guest_active_in_groups_query`).
+- **Stage 3, shapes:** (`GuestRow` is the one row type behind list, search and detail.)
+  - List: `{items, counts: {all, active, inactive}, total, page, pageSize}` (`page`, `pageSize` ≤ 100,
+    as the reports list), `status=all|active|inactive`, `q`. Counts follow `q` but not `status`, so
+    every tab has its number; `total` is the filtered one. Rows: `currentGroup {id, name, joinedAt}`,
+    `lastGroup {id, name, leftAt, leftReason}` (only for a guest in no group who has been in one),
+    `lastAttendedDate` (any group), `missedStreak` (current group as of today, null if in none; one
+    query per group on the page). By name.
+  - Search: `q` of 2+ characters (shorter is `[]`, not a 422, so a debounced box needs no special
+    case; a missing `q` is 422), at most 10, items are exactly `id, name, phoneLast4, currentGroup,
+    lastGroup {id, name, leftAt}, lastAttendedDate`. Order: exact name match, then name starts with
+    `q`, then the rest; each by most recently seen, then name. A test asserts no email, address,
+    full phone or observation appears in the payload.
+  - Matching: name through `guest_search_text` (case- and accent-insensitive, `LIKE %q%` with `_`,
+    `%` and `\` escaped); also the phone's digits when `q` has 3+ digits (so `+505 8367 0887` matches
+    `8367` and `0887`; `q` with fewer digits doesn't touch phones). The queries use the same
+    expressions as the stage 1 indexes (the digits one with SQL literals, not bound parameters);
+    `EXPLAIN` with sequential scans off shows both GIN indexes used, including with `ESCAPE`.
+  - Detail: contact fields, `firstVisitDate`, `invitedBy` / `createdBy` `{id, name}`, `createdAt`,
+    `currentGroup`, `lastAttendedDate`, `groupHistory` (every period, newest first: group, role,
+    joined, left, reason) and `recentAttendance` (last 12 rows: report id, date, group, attended
+    group/church, `observation`). A scoped caller's attendance rows are only those of the groups they
+    lead (the history still lists every period: only names). An observation is non-null when the caller
+    has `smallGroupReports: viewObservations` or leads that row's group (reports rule 9); a full-scope
+    caller without `viewObservations` gets none.
+- **Stage 3, create and edit:** `POST /guests` needs `guests: create` + `all`, then the setting (409)
+  and the body; `smallGroupId` also needs `smallGroups: manageMembers` and the group in the caller's
+  scope (403 / 404), is joined through stage 2's `add_guest_to_group` (one transaction, so a 422 `guest
+  group` or 409 closed creates nothing; it now returns the guest id) and the guest joins today.
+  `firstVisitDate` defaults to today (or the join date). No duplicate check, on purpose. `PATCH` takes
+  `name` (not null), `phone`, `email`, `sex`, `address`, `firstVisitDate`, `invitedByMemberId` (null
+  clears an optional field; an unknown member is 404); other keys, `smallGroupId` included, are
+  ignored. The group-join error mapping is shared by both routers (`guest_join_http_error`).
+- **Stage 3, how it was tried:** 98 checks with the setting on and 86 with it off (the rest are
+  creates), as `admin`, `elder` (linked and unlinked), the leader of each guest group, a leader of a
+  member group only, a former leader of a member group, a former leader of a guest group (closed
+  co-leader period), a deacon with no member, `user`, and a full-scope admin without
+  `viewObservations`. Covered: every role on every route; list counts, tabs, paging, `q` by accented
+  and unaccented names and by phone digits (3+ and fewer), wildcard characters; search ordering, the
+  field set, `phoneLast4`, the 10 limit, `[]` for non-searchers; detail scope (a guest who left the
+  leader's group is 404 for the leader and 200 for an elder; closing the group removes its leader's
+  scope), history and attendance limited to the scope, observations per row; create with and without
+  a group, a member group (422, nothing created), a closed group, unknown group and inviter, duplicate
+  names; patch with null clears, no group changes. The other routes' responses are unchanged from
+  stage 2 (only the test user links I added differ).
 
 ## Who can do what
 
