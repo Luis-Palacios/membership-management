@@ -40,8 +40,8 @@ Keep the existing conventions: routes call `services.py` / `conversation_service
 | 1. Shared texts endpoint | ✅ | `93a7ae4` |
 | 2. Section threads: migration, models, anchor union | ✅ | `90af585` |
 | 3. Section threads: routes, summaries, inbox | ✅ | `995ea4a` |
-| 4. Conversations on shared entries, seed | ✅ | this commit |
-| 5. Docs | ⬜ | |
+| 4. Conversations on shared entries, seed | ✅ | `64ccdf2` |
+| 5. Docs | ✅ | this commit |
 
 ### Decisions and deviations
 
@@ -128,6 +128,10 @@ Keep the existing conventions: routes call `services.py` / `conversation_service
   are capped at "today 08:00" of that UTC day, hours in the future. Such a thread stays `unread`
   after a read until that time passes. `--today` avoids it; switching the default to the church's
   date is a one-line follow-up.
+- **Stage 5:** `README.md` has no route list (the role × route table is in `docs/ARCHITECTURE.md`),
+  so the new routes went there: the table, a *Prayer & follow-up* entry under small group reports
+  and an *Anchor* entry under *Report conversations*. `CLAUDE.md`'s conversations line names section
+  threads, and `docs/REPORT-CONVERSATIONS-API-HANDOFF.md` has the pointer under its title.
 
 ## Who can do what
 

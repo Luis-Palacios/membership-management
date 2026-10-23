@@ -1,5 +1,8 @@
 # Small group reports: conversations (Part 1, no email)
 
+> **Section threads** (a thread about a report's prayer, praise or follow-up text instead of a
+> person) were added later by `docs/PRAYER-FOLLOW-UP-API-HANDOFF.md`; see `docs/ARCHITECTURE.md`.
+
 Handoff spec for the membership-management side of **report conversations**: elders and admins
 start a thread about one person's attendance row in a small group report, the group's leaders
 reply, and threads can be resolved. Cross-repo rules: `../docs/specs/report-conversations.md`
