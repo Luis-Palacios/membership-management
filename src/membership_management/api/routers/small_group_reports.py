@@ -21,6 +21,7 @@ from membership_management.api.jwt_auth import (
     require_permission,
 )
 from membership_management.api.rate_limit import default_user_rate_limit, rate_limit
+from membership_management.api.schemas.person import PersonSchema
 from membership_management.api.schemas.small_group_reports import (
     FiledReportItemSchema,
     HeldReportBodySchema,
@@ -163,6 +164,7 @@ def get_report_roster_for_date(
         small_group=ReportRosterGroupSchema(
             id=small_group.id,
             name=small_group.name,
+            audience=small_group.audience,
             meeting_address=small_group.meeting_address,
             meeting_day=small_group.meeting_day,
             closed_at=small_group.closed_at,
@@ -173,8 +175,9 @@ def get_report_roster_for_date(
         existing_report_held=roster.existing_report_held,
         people=[
             ReportRosterPersonSchema(
+                person=_person(p.member_id, p.guest_id, p.name),
                 member_id=p.member_id,
-                name=p.member_name,
+                name=p.name,
                 role=p.role,
                 joined_at=p.joined_at,
                 missed_streak=p.missed_streak,
@@ -182,6 +185,14 @@ def get_report_roster_for_date(
             for p in roster.people
         ],
     )
+
+
+def _person(member_id: int | None, guest_id: int | None, name: str) -> PersonSchema:
+    if member_id is not None:
+        return PersonSchema(type="member", id=member_id, name=name)
+    if guest_id is not None:
+        return PersonSchema(type="guest", id=guest_id, name=name)
+    raise ValueError("a row needs a member or a guest")
 
 
 def _to_input(body: HeldReportBodySchema | NotHeldReportBodySchema) -> ReportInput:
@@ -203,7 +214,7 @@ def _to_input(body: HeldReportBodySchema | NotHeldReportBodySchema) -> ReportInp
         group_praise_report=body.group_praise_report,
         group_relevant_discussion=body.group_relevant_discussion,
         attendances=[
-            AttendanceInput(a.member_id, a.attended_group, a.attended_church, a.observation)
+            AttendanceInput(a.member_id, a.guest_id, a.attended_group, a.attended_church, a.observation)
             for a in body.attendances
         ],
         replaces_no_meeting=body.replaces_no_meeting,
@@ -217,8 +228,9 @@ def _detail_schema(detail: ReportDetail) -> ReportDetailSchema:
     open_group = detail.small_group_closed_at is None
     attendances = [
         ReportAttendanceSchema(
+            person=_person(a.member_id, a.guest_id, a.name),
             member_id=a.member_id,
-            name=a.member_name,
+            name=a.name,
             role=a.role,
             joined_at=a.joined_at,
             attended_group=a.attended_group,
@@ -240,6 +252,7 @@ def _detail_schema(detail: ReportDetail) -> ReportDetailSchema:
         small_group=ReportGroupSchema(
             id=detail.small_group_id,
             name=detail.small_group_name,
+            audience=detail.small_group_audience,
             meeting_address=detail.small_group_meeting_address,
             closed_at=detail.small_group_closed_at,
         ),
@@ -314,7 +327,10 @@ def get_small_group_reports(
     items: list[FiledReportItemSchema | NotFiledItemSchema] = []
     for item in result.items:
         group = ReportListGroupSchema(
-            id=item.small_group_id, name=item.small_group_name, closed_at=item.small_group_closed_at
+            id=item.small_group_id,
+            name=item.small_group_name,
+            audience=item.small_group_audience,
+            closed_at=item.small_group_closed_at,
         )
         if isinstance(item, NotFiledMeeting):
             items.append(NotFiledItemSchema(small_group=group, meeting_date=item.meeting_date))
@@ -369,6 +385,7 @@ def get_small_group_reports_summary(
             small_group=SummaryGroupSchema(
                 id=row.group.id,
                 name=row.group.name,
+                audience=row.group.audience,
                 meeting_day=row.group.meeting_day,
                 closed_at=row.group.closed_at,
             ),
@@ -423,7 +440,10 @@ def get_small_group_reports_week(
         groups=[
             WeekGroupSchema(
                 small_group=WeekSmallGroupSchema(
-                    id=g.group.id, name=g.group.name, meeting_day=g.group.meeting_day
+                    id=g.group.id,
+                    name=g.group.name,
+                    audience=g.group.audience,
+                    meeting_day=g.group.meeting_day,
                 ),
                 leaders=[
                     WeekLeaderSchema(member_id=l.member_id, name=l.name, role=l.role) for l in g.leaders
@@ -492,7 +512,9 @@ def get_small_group_reports_shared(
             ReportSharedEntrySchema(
                 report_id=e.report_id,
                 meeting_date=e.meeting_date,
-                small_group=SharedSmallGroupSchema(id=e.small_group_id, name=e.small_group_name),
+                small_group=SharedSmallGroupSchema(
+                    id=e.small_group_id, name=e.small_group_name, audience=e.small_group_audience
+                ),
                 leaders=[
                     WeekLeaderSchema(member_id=l.member_id, name=l.name, role=l.role) for l in e.leaders
                 ],
@@ -514,7 +536,9 @@ def get_small_group_reports_shared(
         ],
         still_to_report=[
             ReportStillToReportSchema(
-                small_group=SharedSmallGroupSchema(id=g.group.id, name=g.group.name),
+                small_group=SharedSmallGroupSchema(
+                    id=g.group.id, name=g.group.name, audience=g.group.audience
+                ),
                 status=g.status,
                 meeting_date=g.meeting_date,
             )

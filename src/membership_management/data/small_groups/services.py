@@ -53,6 +53,7 @@ from membership_management.data.small_groups.results import (
     LeadershipPeriod,
     NotFiledMeeting,
     OtherGroup,
+    PersonKey,
     RecentMeeting,
     ReportAttendanceView,
     ReportCounts,
@@ -76,6 +77,7 @@ from membership_management.data.small_groups.results import (
     WeekLeader,
     WeekReportRow,
     WeekStatus,
+    person_key,
 )
 
 # Reports looked at for a "missed the last N meetings" hint (rule 11); plenty for a hint.
@@ -233,35 +235,37 @@ _ROLE_ORDER = {SmallGroupRole.LEADER: 0, SmallGroupRole.CO_LEADER: 1, SmallGroup
 
 
 def roster_on_date(session: Session, small_group_id: int, d: date) -> list[RosterPerson]:
-    """Everyone whose membership covers `d` (rule 3): leader, then co-leaders, then members, by name.
+    """Everyone whose membership covers `d` (reports rule 3): leader, then co-leaders, then members,
+    then guests (in a guest group), each by name.
 
     `missed_streak` is filled in by `get_report_roster`; here it is 0.
     """
-    best: dict[int, RosterPeriod] = {}
+    best: dict[PersonKey, RosterPeriod] = {}
     for period in all_as(session, roster_periods_on_date_query(small_group_id, d), RosterPeriod):
-        current = best.get(period.member_id)
+        key = person_key(period.member_id, period.guest_id)
+        current = best.get(key)
         if current is None or _period_rank(period, d) > _period_rank(current, d):
-            best[period.member_id] = period
+            best[key] = period
     people = [
-        RosterPerson(p.member_id, p.member_name, p.role, p.joined_at, missed_streak=0) for p in best.values()
+        RosterPerson(p.member_id, p.guest_id, p.name, p.role, p.joined_at, missed_streak=0)
+        for p in best.values()
     ]
-    return sorted(people, key=lambda p: (_ROLE_ORDER[p.role], p.member_name, p.member_id))
+    return sorted(people, key=_roster_order)
+
+
+def _roster_order(person: RosterPerson | ReportAttendanceView) -> tuple[int, bool, str, int]:
+    """Leader, co-leaders, then plain participants; members before guests; then by name."""
+    return (
+        _ROLE_ORDER[person.role],
+        person.guest_id is not None,
+        person.name,
+        person.guest_id if person.guest_id is not None else (person.member_id or 0),
+    )
 
 
 def _period_rank(period: RosterPeriod, d: date) -> tuple[bool, date, int]:
     """Prefer the period still running at the end of `d` (a role change on `d`), else the latest."""
     return (period.left_at is None or period.left_at > d, period.joined_at, period.period_id)
-
-
-PersonKey = tuple[Literal["member", "guest"], int]
-
-
-def _mark_key(mark: AttendanceMark) -> PersonKey:
-    if mark.member_id is not None:
-        return ("member", mark.member_id)
-    if mark.guest_id is not None:
-        return ("guest", mark.guest_id)
-    raise ValueError("attendance row without a person")
 
 
 def missed_streaks_by_person(
@@ -281,7 +285,7 @@ def missed_streaks_by_person(
     streaks = dict.fromkeys(people, 0)
     attended_since: set[PersonKey] = set()
     for mark in marks:
-        key = _mark_key(mark)
+        key = person_key(mark.member_id, mark.guest_id)
         if key not in streaks or key in attended_since:
             continue
         if mark.attended_group:
@@ -308,10 +312,10 @@ def get_report_roster(session: Session, small_group: SmallGroup, d: date, *, tod
     if d > today:
         raise FutureMeetingDateError
     people = roster_on_date(session, small_group.id, d)
-    streaks = missed_streaks(session, small_group.id, [p.member_id for p in people], d)
+    streaks = missed_streaks_by_person(session, small_group.id, [p.key for p in people], d)
     existing = session.execute(report_on_date_query(small_group.id, d)).one_or_none()
     return ReportRoster(
-        people=[p._replace(missed_streak=streaks[p.member_id]) for p in people],
+        people=[p._replace(missed_streak=streaks[p.key]) for p in people],
         existing_report_id=existing[0] if existing is not None else None,
         existing_report_held=existing[1] if existing is not None else None,
     )
@@ -331,6 +335,13 @@ def observations_visible_to(*, sees_all_observations: bool, leads_group: bool) -
     return sees_all_observations or leads_group
 
 
+def _attendance_person_name(attendance: SmallGroupReportAttendance) -> str:
+    person = attendance.member if attendance.member is not None else attendance.guest
+    if person is None:
+        raise ValueError("an attendance row needs a member or a guest")
+    return person.name
+
+
 def build_report_detail(
     session: Session, report: SmallGroupReport, *, sees_all_observations: bool, leads_group: bool
 ) -> ReportDetail:
@@ -338,34 +349,30 @@ def build_report_detail(
     observations_visible = observations_visible_to(
         sees_all_observations=sees_all_observations, leads_group=leads_group
     )
-    roster = {p.member_id: p for p in roster_on_date(session, report.small_group_id, report.meeting_date)}
-    # Members only until guests reach reports (guest-small-groups stage 4).
-    member_rows: list[tuple[SmallGroupReportAttendance, int, Member]] = []
-    for a in report.attendances:
-        if a.member_id is not None and a.member is not None:
-            member_rows.append((a, a.member_id, a.member))
-    streaks = missed_streaks(
-        session, report.small_group_id, [member_id for _, member_id, _ in member_rows], report.meeting_date
-    )
+    roster = {p.key: p for p in roster_on_date(session, report.small_group_id, report.meeting_date)}
+    keys = [person_key(a.member_id, a.guest_id) for a in report.attendances]
+    streaks = missed_streaks_by_person(session, report.small_group_id, keys, report.meeting_date)
     views = [
         ReportAttendanceView(
-            member_id=member_id,
-            member_name=member.name,
-            # Memberships edited after the report could drop someone from the roster: show a member.
-            role=roster[member_id].role if member_id in roster else SmallGroupRole.MEMBER,
-            joined_at=roster[member_id].joined_at if member_id in roster else None,
+            member_id=a.member_id,
+            guest_id=a.guest_id,
+            name=_attendance_person_name(a),
+            # Memberships edited after the report could drop someone from the roster: show a participant.
+            role=roster[key].role if key in roster else SmallGroupRole.MEMBER,
+            joined_at=roster[key].joined_at if key in roster else None,
             attended_group=a.attended_group,
             attended_church=a.attended_church,
-            missed_streak=streaks[member_id],
+            missed_streak=streaks[key],
             observation=a.observation if observations_visible else None,
         )
-        for a, member_id, member in member_rows
+        for a, key in zip(report.attendances, keys, strict=True)
     ]
-    views.sort(key=lambda v: (_ROLE_ORDER[v.role], v.member_name, v.member_id))
+    views.sort(key=_roster_order)
     return ReportDetail(
         id=report.id,
         small_group_id=report.small_group_id,
         small_group_name=report.small_group.name,
+        small_group_audience=report.small_group.audience,
         small_group_meeting_address=report.small_group.meeting_address,
         small_group_closed_at=report.small_group.closed_at,
         meeting_date=report.meeting_date,
@@ -424,6 +431,7 @@ def create_report(
         attendances=[
             SmallGroupReportAttendance(
                 member_id=a.member_id,
+                guest_id=a.guest_id,
                 attended_group=a.attended_group,
                 attended_church=a.attended_church,
                 observation=a.observation,
@@ -452,8 +460,9 @@ def update_report(
 ) -> SmallGroupReport:
     """Replace the report's content (rule 6: `submitted_by_member_id` and `submitted_at` never change).
 
-    Attendance rows are updated in place by member so stored observations survive. A caller who
-    can't see observations (rule 9) can't change them either: theirs are ignored, stored ones kept.
+    Attendance rows are updated in place by person (member or guest) so stored observations survive.
+    A caller who can't see observations (rule 9) can't change them either: theirs are ignored, stored
+    ones kept.
     """
     if body.held != report.held or body.replaces_no_meeting:
         raise ReportKindChangeError
@@ -479,17 +488,18 @@ def update_report(
     report.group_prayer_request = body.group_prayer_request
     report.group_praise_report = body.group_praise_report
     report.group_relevant_discussion = body.group_relevant_discussion
-    sent = {a.member_id: a for a in body.attendances}
-    existing = {row.member_id: row for row in report.attendances}
-    for member_id, row in existing.items():
-        if member_id not in sent:
+    sent = {person_key(a.member_id, a.guest_id): a for a in body.attendances}
+    existing = {person_key(row.member_id, row.guest_id): row for row in report.attendances}
+    for key, row in existing.items():
+        if key not in sent:
             report.attendances.remove(row)  # delete-orphan removes the row
-    for member_id, attendance in sent.items():
-        row = existing.get(member_id)
+    for key, attendance in sent.items():
+        row = existing.get(key)
         if row is None:
             report.attendances.append(
                 SmallGroupReportAttendance(
-                    member_id=member_id,
+                    member_id=attendance.member_id,
+                    guest_id=attendance.guest_id,
                     attended_group=attendance.attended_group,
                     attended_church=attendance.attended_church,
                     observation=attendance.observation if may_edit_observations else None,
@@ -618,7 +628,9 @@ def list_reports(
         min(to_date, today - timedelta(days=1)),
     )
     not_filed = [
-        NotFiledMeeting(g.id, g.name, g.closed_at, day) for g in groups for day in missing.get(g.id, [])
+        NotFiledMeeting(g.id, g.name, g.audience, g.closed_at, day)
+        for g in groups
+        for day in missing.get(g.id, [])
     ]
     if q is not None and q.strip():
         needle = _fold(q.strip())
@@ -736,6 +748,7 @@ def get_report_shared(
             meeting_date=r.meeting_date,
             small_group_id=r.small_group_id,
             small_group_name=r.small_group_name,
+            small_group_audience=r.small_group_audience,
             leaders=leaders.get(r.small_group_id, []),
             prayer=_trimmed(r.group_prayer_request),
             praise=_trimmed(r.group_praise_report),
@@ -875,9 +888,10 @@ def _validated_roster(session: Session, small_group: SmallGroup, body: ReportInp
     roster = roster_on_date(session, small_group.id, body.meeting_date)
     if not body.held:
         return roster
-    sent_ids = [a.member_id for a in body.attendances]
-    # Exactly one row per person on the roster: no missing, extra or repeated members.
-    if len(sent_ids) != len(set(sent_ids)) or set(sent_ids) != {p.member_id for p in roster}:
+    sent_keys = [person_key(a.member_id, a.guest_id) for a in body.attendances]
+    # Exactly one row per person on the roster, members and guests together: no missing, extra or
+    # repeated people.
+    if len(sent_keys) != len(set(sent_keys)) or set(sent_keys) != {p.key for p in roster}:
         raise AttendanceMismatchError
     return roster
 

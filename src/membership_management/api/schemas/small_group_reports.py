@@ -1,11 +1,21 @@
 from datetime import date, datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
-from pydantic import BeforeValidator, ConfigDict, Discriminator, Field, StringConstraints, Tag
+from pydantic import (
+    BeforeValidator,
+    ConfigDict,
+    Discriminator,
+    Field,
+    StringConstraints,
+    Tag,
+    model_validator,
+)
 
 from membership_management.api.schemas.base import CamelModel
+from membership_management.api.schemas.person import PersonSchema
 from membership_management.data.small_groups.models import (
     ConversationStatus,
+    GroupAudience,
     ReportSection,
     SmallGroupRole,
     Weekday,
@@ -34,13 +44,16 @@ ReportReason = Annotated[
 class ReportRosterGroupSchema(CamelModel):
     id: int
     name: str
+    audience: GroupAudience
     meeting_address: str | None
     meeting_day: Weekday | None
     closed_at: date | None
 
 
 class ReportRosterPersonSchema(CamelModel):
-    member_id: int
+    person: PersonSchema
+    # Null on guest rows until staff-app reads `person` everywhere (stage 7 of the API handoff).
+    member_id: int | None
     name: str
     role: SmallGroupRole
     joined_at: date
@@ -57,10 +70,19 @@ class ReportRosterSchema(CamelModel):
 
 
 class ReportAttendanceInputSchema(CamelModel):
-    member_id: int
+    """One person's line: `memberId` or `guestId`, exactly one."""
+
+    member_id: int | None = None
+    guest_id: int | None = None
     attended_group: bool
     attended_church: bool
     observation: Observation = None
+
+    @model_validator(mode="after")
+    def exactly_one_person(self) -> Self:
+        if (self.member_id is None) == (self.guest_id is None):
+            raise ValueError("Send either memberId or guestId.")
+        return self
 
 
 class HeldReportBodySchema(CamelModel):
@@ -102,6 +124,7 @@ ReportBodySchema = Annotated[
 class ReportGroupSchema(CamelModel):
     id: int
     name: str
+    audience: GroupAudience
     meeting_address: str | None
     closed_at: date | None
 
@@ -112,7 +135,9 @@ class ReportPersonSchema(CamelModel):
 
 
 class ReportAttendanceSchema(CamelModel):
-    member_id: int
+    person: PersonSchema
+    # Null on guest rows until staff-app reads `person` everywhere (stage 7 of the API handoff).
+    member_id: int | None
     name: str
     role: SmallGroupRole
     # Null when the member's membership no longer covers the meeting date (memberships edited later).
@@ -163,6 +188,7 @@ class ReportDetailSchema(CamelModel):
 class ReportListGroupSchema(CamelModel):
     id: int
     name: str
+    audience: GroupAudience
     closed_at: date | None
 
 
@@ -204,6 +230,7 @@ class ReportListSchema(CamelModel):
 class SummaryGroupSchema(CamelModel):
     id: int
     name: str
+    audience: GroupAudience
     meeting_day: Weekday | None
     closed_at: date | None
 
@@ -234,6 +261,7 @@ class ReportSummaryItemSchema(CamelModel):
 class WeekSmallGroupSchema(CamelModel):
     id: int
     name: str
+    audience: GroupAudience
     meeting_day: Weekday | None
 
 
@@ -274,6 +302,7 @@ class ReportWeekSchema(CamelModel):
 class SharedSmallGroupSchema(CamelModel):
     id: int
     name: str
+    audience: GroupAudience
 
 
 class SharedConversationSchema(CamelModel):

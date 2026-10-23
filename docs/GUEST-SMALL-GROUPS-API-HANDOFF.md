@@ -41,8 +41,8 @@ queries, services, results), imported in `data/models.py`.
 | --- | --- | --- |
 | 1. Setting, migration, models, seed | ✅ | `f5b141e` |
 | 2. Guest groups and guest participants | ✅ | `b147ff0` |
-| 3. `/guests` routes and scope | ✅ | (hash in stage 4's commit) |
-| 4. Guests in reports | ⬜ | |
+| 3. `/guests` routes and scope | ✅ | `716a9f3` |
+| 4. Guests in reports | ✅ | (hash in stage 5's commit) |
 | 5. Guests in conversations | ⬜ | |
 | 6. Docs | ⬜ | |
 | 7. Cleanup: drop `memberId`/`memberName` on guest-capable rows | ⬜ (after staff-app stage 6) | |
@@ -174,6 +174,40 @@ queries, services, results), imported in `data/models.py`.
   a group, a member group (422, nothing created), a closed group, unknown group and inviter, duplicate
   names; patch with null clears, no group changes. The other routes' responses are unchanged from
   stage 2 (only the test user links I added differ).
+- **Stage 4, shapes:** the roster, in code `RosterPerson`, is now `(member_id | guest_id, name, role,
+  joined_at, missed_streak)` with a `key` (`("member"|"guest", id)`, `PersonKey` in `results.py`), and
+  everything that compared member ids compares keys: `roster_on_date` (a `UNION ALL` of the member and
+  the guest periods covering the date, the best period per person), `_validated_roster` (completeness,
+  reports rule 3, over members and guests together), `create_report`, `update_report` (attendance
+  rows are updated in place by person, so a guest's stored observation survives an edit) and
+  `build_report_detail`. Roster and detail rows are ordered leader, co-leaders, members, then guests,
+  each by name. `ReportAttendanceView.member_name` and `RosterPeriod.member_name` became `name`.
+  Schemas: roster people and detail attendances gain `person` (`memberId` stays, null on guest rows,
+  until stage 7); an attendance input takes `memberId` or `guestId` (both or neither is a pydantic
+  422; a wrong, missing, repeated or not-in-the-group person is the existing 422 `attendance`).
+- **Stage 4, `audience`:** on the group object of the roster, the detail (`smallGroup`), the list
+  items (filed and not filed), the summary, the week and the shared entries and `stillToReport`.
+  Nothing else changes in those shapes. `rosterCount` and the attended counts in the list count
+  attendance rows, so a guest group's figures include its guests (per report, rule 20).
+- **Stage 4, missed streaks:** the roster's and the detail's are `missed_streaks_by_person`, so a
+  guest's counts the same way as a member's (reports before the date, no meetings skipped).
+- **Stage 4, left as it was:** `leads_group()` (`api/access.py`) is true for any full-scope caller, so
+  a full-scope caller without `viewObservations` still reads and edits observations in *reports*
+  (admins and elders have both permissions, so no role is affected). The guest detail of stage 3 is
+  stricter (rule 9 read literally: `viewObservations` or leading that row's group). Worth aligning
+  the reports side if a full-scope role without `viewObservations` is ever added.
+- **Stage 4, how it was tried:** 49 checks with the setting on and off: the roster of a guest group
+  (people, order, streaks, a guest who joined later or left earlier), filing a report with members
+  and guests, every validation (a missing row, a guest outside the group, a repeated row, both ids,
+  neither, members only, a `guestId` in a member group's report), the stale roster after a guest
+  joined from the report form (`joinedAt` = meeting date; in that date's roster, not the day
+  before), *Remove after this report* (`leftAt` = meeting date: the filed report keeps the row, the
+  same-date roster still lists them, the next day's doesn't), editing the previous week's report
+  after a guest left on a later date (200, same rows), dropping a guest row (422), a guest's
+  attendance and observation changed in place, audience on the list, summary, week and shared
+  shapes, a member-group report created and edited as before, deleting a report with guest rows.
+  Against stage 3's dump, every existing response differs only by the added `audience` and `person`
+  keys (same values and order).
 
 ## Who can do what
 
