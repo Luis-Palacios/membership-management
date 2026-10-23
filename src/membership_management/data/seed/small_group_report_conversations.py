@@ -28,11 +28,13 @@ def seed_report_conversations(ctx: SeedContext) -> None:
     account matches: every comment shows as someone else's, whoever you sign in as.
     """
     session = ctx.session
-    leader_ids = set(
-        session.scalars(
+    leader_ids = {
+        member_id
+        for member_id in session.scalars(
             select(SmallGroupMember.member_id).where(SmallGroupMember.role != SmallGroupRole.MEMBER)
         )
-    )
+        if member_id is not None
+    }
     elders = _pick_elders(ctx, leader_ids)
     elder_member_ids = {member_id for member_id, _ in elders}
     now_cap = datetime.combine(ctx.today, time(8, 0), MANAGUA_TZ)

@@ -11,8 +11,9 @@ from membership_management.data.small_groups.models.report_conversation_comment_
     ReportConversationCommentRevision,
 )
 from membership_management.data.small_groups.models.report_conversation_read import ReportConversationRead
-from membership_management.data.small_groups.models.small_group import SmallGroup, Weekday
+from membership_management.data.small_groups.models.small_group import GroupAudience, SmallGroup, Weekday
 from membership_management.data.small_groups.models.small_group_member import (
+    LeftReason,
     SmallGroupMember,
     SmallGroupRole,
 )
@@ -24,6 +25,8 @@ from membership_management.data.small_groups.models.small_group_report_attendanc
 __all__ = [
     "ConversationSide",
     "ConversationStatus",
+    "GroupAudience",
+    "LeftReason",
     "ReportConversation",
     "ReportConversationComment",
     "ReportConversationCommentRevision",

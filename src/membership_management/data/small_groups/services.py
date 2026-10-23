@@ -254,22 +254,27 @@ def build_report_detail(
         sees_all_observations=sees_all_observations, leads_group=leads_group
     )
     roster = {p.member_id: p for p in roster_on_date(session, report.small_group_id, report.meeting_date)}
+    # Members only until guests reach reports (guest-small-groups stage 4).
+    member_rows: list[tuple[SmallGroupReportAttendance, int, Member]] = []
+    for a in report.attendances:
+        if a.member_id is not None and a.member is not None:
+            member_rows.append((a, a.member_id, a.member))
     streaks = missed_streaks(
-        session, report.small_group_id, [a.member_id for a in report.attendances], report.meeting_date
+        session, report.small_group_id, [member_id for _, member_id, _ in member_rows], report.meeting_date
     )
     views = [
         ReportAttendanceView(
-            member_id=a.member_id,
-            member_name=a.member.name,
+            member_id=member_id,
+            member_name=member.name,
             # Memberships edited after the report could drop someone from the roster: show a member.
-            role=roster[a.member_id].role if a.member_id in roster else SmallGroupRole.MEMBER,
-            joined_at=roster[a.member_id].joined_at if a.member_id in roster else None,
+            role=roster[member_id].role if member_id in roster else SmallGroupRole.MEMBER,
+            joined_at=roster[member_id].joined_at if member_id in roster else None,
             attended_group=a.attended_group,
             attended_church=a.attended_church,
-            missed_streak=streaks[a.member_id],
+            missed_streak=streaks[member_id],
             observation=a.observation if observations_visible else None,
         )
-        for a in report.attendances
+        for a, member_id, member in member_rows
     ]
     views.sort(key=lambda v: (_ROLE_ORDER[v.role], v.member_name, v.member_id))
     return ReportDetail(
@@ -861,7 +866,7 @@ def add_small_group_member(
     if _overlaps_past_period(session, small_group.id, member_id, joined_at):
         raise MembershipOverlapError
     _ensure_leader_slot_free(session, small_group.id, role)
-    _add_membership(session, small_group.id, member_id, role, joined_at)
+    _add_membership(session, small_group, member_id, role, joined_at)
     _commit_or_raise_conflict(session)
 
 
@@ -902,7 +907,7 @@ def set_small_group_leader(session: Session, small_group: SmallGroup, *, member_
         session.flush()
     membership = get_active_membership(session, small_group.id, member_id)
     if membership is None:
-        _add_membership(session, small_group.id, member_id, SmallGroupRole.LEADER, today)
+        _add_membership(session, small_group, member_id, SmallGroupRole.LEADER, today)
     else:
         _apply_role_change(session, membership, SmallGroupRole.LEADER, today)
     _commit_or_raise_conflict(session)
@@ -920,11 +925,9 @@ def remove_small_group_member(
 
 
 def _add_membership(
-    session: Session, small_group_id: int, member_id: int, role: SmallGroupRole, today: date
+    session: Session, small_group: SmallGroup, member_id: int, role: SmallGroupRole, joined_at: date
 ) -> None:
-    session.add(
-        SmallGroupMember(small_group_id=small_group_id, member_id=member_id, role=role, joined_at=today)
-    )
+    session.add(SmallGroupMember.for_group(small_group, member_id=member_id, role=role, joined_at=joined_at))
 
 
 def _apply_role_change(
@@ -939,7 +942,10 @@ def _apply_role_change(
     # Inserts run before updates in a flush, so close the old period first or the partial
     # unique indexes (one active row per member/leader) would see both as active.
     session.flush()
-    _add_membership(session, membership.small_group_id, membership.member_id, role, today)
+    # Guests are always plain participants, so only members change role.
+    if membership.member_id is None:
+        raise ValueError("only members change role")
+    _add_membership(session, membership.small_group, membership.member_id, role, today)
 
 
 def get_active_membership(session: Session, small_group_id: int, member_id: int) -> SmallGroupMember | None:

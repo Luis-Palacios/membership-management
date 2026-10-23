@@ -7,7 +7,12 @@ from membership_management.data.members.models import Member, MemberSex
 from membership_management.data.seed import fixtures
 from membership_management.data.seed.context import SeedContext
 from membership_management.data.seed.members import managua_address
-from membership_management.data.small_groups.models import SmallGroup, SmallGroupMember, SmallGroupRole
+from membership_management.data.small_groups.models import (
+    GroupAudience,
+    SmallGroup,
+    SmallGroupMember,
+    SmallGroupRole,
+)
 
 # Active members per group, leader and co-leader included.
 GROUP_SIZE_RANGE = (8, 10)
@@ -40,7 +45,9 @@ def seed_small_groups(ctx: SeedContext) -> None:
         started = today - timedelta(days=rng.randint(400, 1100))
         # The group meets at the leader's home, so move the leader into the group's neighborhood.
         leader.address = managua_address(rng, neighborhood)
-        group = SmallGroup(name=name, meeting_address=leader.address, meeting_day=meeting_day)
+        group = SmallGroup(
+            name=name, meeting_address=leader.address, meeting_day=meeting_day, audience=GroupAudience.MEMBERS
+        )
         ctx.session.add(group)
         groups.append((group, started))
 
@@ -75,6 +82,8 @@ def seed_small_groups(ctx: SeedContext) -> None:
         if row.joined_at - other_started < timedelta(days=60):
             continue
         joined = _between(rng, other_started, row.joined_at - timedelta(days=30))
+        if row.member is None:  # only members are seeded here
+            continue
         _add(ctx, other_group, row.member, SmallGroupRole.MEMBER, joined, left_at=row.joined_at)
         transfers += 1
 
@@ -89,7 +98,10 @@ def _add(
     joined_at: date,
     left_at: date | None = None,
 ) -> SmallGroupMember:
-    row = SmallGroupMember(small_group=group, member=member, role=role, joined_at=joined_at, left_at=left_at)
+    row = SmallGroupMember.for_group(
+        group, member_id=member.id, role=role, joined_at=joined_at, left_at=left_at
+    )
+    row.member = member
     ctx.session.add(row)
     return row
 
