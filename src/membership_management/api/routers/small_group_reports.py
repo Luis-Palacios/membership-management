@@ -37,9 +37,13 @@ from membership_management.api.schemas.small_group_reports import (
     ReportRosterGroupSchema,
     ReportRosterPersonSchema,
     ReportRosterSchema,
+    ReportSharedEntrySchema,
+    ReportSharedSchema,
+    ReportStillToReportSchema,
     ReportSummaryItemSchema,
     ReportTotalsSchema,
     ReportWeekSchema,
+    SharedSmallGroupSchema,
     SummaryGroupSchema,
     SummaryLastReportSchema,
     WeekGroupSchema,
@@ -70,6 +74,7 @@ from membership_management.data.small_groups.services import (
     delete_report,
     get_report,
     get_report_roster,
+    get_report_shared,
     get_report_summary,
     get_report_week,
     get_small_group,
@@ -439,6 +444,58 @@ def get_small_group_reports_week(
                 ],
             )
             for g in week.groups
+        ],
+    )
+
+
+@router.get(
+    "/small-group-reports/shared",
+    name="get_small_group_reports_shared",
+    description="The week's prayer, praise and follow-up texts of groups in scope, and who's still to report",
+    dependencies=[Depends(require_permission("smallGroupReports", "view"))],
+)
+def get_small_group_reports_shared(
+    db: MembersSessionDep,
+    scope: SmallGroupScopeDep,
+    week_date: Annotated[date | None, Query(alias="date")] = None,
+) -> ReportSharedSchema:
+    today = church_today()
+    try:
+        shared = get_report_shared(
+            db,
+            day=week_date if week_date is not None else today,
+            today=today,
+            only_group_ids=None if scope.full else scope.group_ids,
+        )
+    except FutureWeekError as exc:
+        raise _http_error(exc) from exc
+    return ReportSharedSchema(
+        week_start=shared.week_start,
+        week_end=shared.week_end,
+        today=shared.today,
+        is_current_week=shared.is_current_week,
+        entries=[
+            ReportSharedEntrySchema(
+                report_id=e.report_id,
+                meeting_date=e.meeting_date,
+                small_group=SharedSmallGroupSchema(id=e.small_group_id, name=e.small_group_name),
+                leaders=[
+                    WeekLeaderSchema(member_id=l.member_id, name=l.name, role=l.role) for l in e.leaders
+                ],
+                prayer=e.prayer,
+                praise=e.praise,
+                follow_up=e.follow_up,
+                conversations={},
+            )
+            for e in shared.entries
+        ],
+        still_to_report=[
+            ReportStillToReportSchema(
+                small_group=SharedSmallGroupSchema(id=g.group.id, name=g.group.name),
+                status=g.status,
+                meeting_date=g.meeting_date,
+            )
+            for g in shared.still_to_report
         ],
     )
 

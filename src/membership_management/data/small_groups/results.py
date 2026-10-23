@@ -245,6 +245,48 @@ class ReportWeek(NamedTuple):
     groups: list[WeekGroup]
 
 
+class SharedReportRow(NamedTuple):
+    report_id: int
+    meeting_date: date
+    small_group_id: int
+    small_group_name: str
+    group_prayer_request: str | None
+    group_praise_report: str | None
+    group_relevant_discussion: str | None
+
+
+class SharedEntry(NamedTuple):
+    """A held report's three texts, trimmed (blank is None), with the group's leaders today."""
+
+    report_id: int
+    meeting_date: date
+    small_group_id: int
+    small_group_name: str
+    leaders: list[WeekLeader]
+    prayer: str | None
+    praise: str | None
+    follow_up: str | None
+
+
+StillToReportStatus = Literal["notFiled", "today", "upcoming"]
+
+
+class StillToReport(NamedTuple):
+    group: ReportGroupRow
+    status: StillToReportStatus
+    meeting_date: date
+
+
+class ReportShared(NamedTuple):
+    week_start: date
+    week_end: date
+    today: date
+    is_current_week: bool
+    entries: list[SharedEntry]
+    # Open groups that may still add texts this week (or didn't, in a past week), as the week view.
+    still_to_report: list[StillToReport]
+
+
 class ConversationMember(NamedTuple):
     member_id: int
     name: str

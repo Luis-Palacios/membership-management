@@ -31,6 +31,7 @@ from membership_management.data.small_groups.queries import (
     report_in_scope_query,
     report_on_date_query,
     roster_periods_on_date_query,
+    shared_reports_query,
     small_group_active_members_query,
     week_reports_query,
 )
@@ -51,11 +52,15 @@ from membership_management.data.small_groups.results import (
     ReportInput,
     ReportPage,
     ReportRoster,
+    ReportShared,
     ReportWeek,
     RosterPeriod,
     RosterPerson,
+    SharedEntry,
+    SharedReportRow,
     SmallGroupActiveMember,
     SmallGroupSummary,
+    StillToReport,
     WeekGroup,
     WeekLeader,
     WeekReportRow,
@@ -609,37 +614,110 @@ def get_report_week(session: Session, *, day: date, today: date) -> ReportWeek:
     A week after the current one is refused; any later day of the current week is the same week. Only
     counts of observations are read (rule 9), so the caller must be a full role.
     """
-    week_start = church_sunday(day)
-    current_week_start = church_sunday(today)
-    if week_start > current_week_start:
-        raise FutureWeekError
-    week_end = week_start + timedelta(days=6)
-    groups = [g for g in all_as(session, report_groups_query(None), ReportGroupRow) if g.closed_at is None]
+    week_start, week_end, is_current_week = _week_bounds(day, today)
+    groups = _open_report_groups(session, None)
     if not groups:
-        return ReportWeek(week_start, week_end, today, week_start == current_week_start, [])
-    ids = frozenset(g.id for g in groups)
-    reports: dict[int, list[WeekReportRow]] = {}
-    for report in all_as(session, week_reports_query(week_start, week_end), WeekReportRow):
-        if report.small_group_id in ids:
-            reports.setdefault(report.small_group_id, []).append(report)
-    leadership = _leadership_by_group(session, ids)
-    leaders: dict[int, list[WeekLeader]] = {}
-    for row in all_as(session, active_leaders_query(ids), ActiveLeaderRow):
-        leaders.setdefault(row.small_group_id, []).append(
-            WeekLeader(row.member_id, row.member_name, row.role)
-        )
+        return ReportWeek(week_start, week_end, today, is_current_week, [])
+    leaders = _active_leaders_by_group(session, frozenset(g.id for g in groups))
     return ReportWeek(
         week_start=week_start,
         week_end=week_end,
         today=today,
-        is_current_week=week_start == current_week_start,
-        groups=[
-            _week_group(
-                g, week_start, today, reports.get(g.id, []), leaders.get(g.id, []), leadership.get(g.id, [])
-            )
-            for g in groups
-        ],
+        is_current_week=is_current_week,
+        groups=_week_groups(session, groups, week_start, today, leaders),
     )
+
+
+def get_report_shared(
+    session: Session, *, day: date, today: date, only_group_ids: frozenset[int] | None
+) -> ReportShared:
+    """The three group texts of every held report in the week containing `day`, for the open groups
+    in scope, and the groups still to report (prayer & follow-up rules 5-11). Same week rules as
+    `get_report_week`."""
+    week_start, week_end, is_current_week = _week_bounds(day, today)
+    groups = _open_report_groups(session, only_group_ids)
+    if not groups:
+        return ReportShared(week_start, week_end, today, is_current_week, [], [])
+    ids = frozenset(g.id for g in groups)
+    leaders = _active_leaders_by_group(session, ids)
+    entries = [
+        SharedEntry(
+            report_id=r.report_id,
+            meeting_date=r.meeting_date,
+            small_group_id=r.small_group_id,
+            small_group_name=r.small_group_name,
+            leaders=leaders.get(r.small_group_id, []),
+            prayer=_trimmed(r.group_prayer_request),
+            praise=_trimmed(r.group_praise_report),
+            follow_up=_trimmed(r.group_relevant_discussion),
+        )
+        for r in all_as(session, shared_reports_query(ids, week_start, week_end), SharedReportRow)
+    ]
+    still_to_report: list[StillToReport] = []
+    for g in _week_groups(session, groups, week_start, today, leaders):
+        match g.status:
+            # These statuses always have the week's meeting date.
+            case "notFiled" | "today" | "upcoming" if g.meeting_date is not None:
+                still_to_report.append(StillToReport(g.group, g.status, g.meeting_date))
+    # Rule 11, in the week view's order. Groups come by name and the sort is stable.
+    still_to_report.sort(key=lambda g: ("notFiled", "today", "upcoming").index(g.status))
+    return ReportShared(week_start, week_end, today, is_current_week, entries, still_to_report)
+
+
+def _trimmed(text: str | None) -> str | None:
+    return (text.strip() or None) if text is not None else None
+
+
+def _week_bounds(day: date, today: date) -> tuple[date, date, bool]:
+    """Start, end and "is the current week" of the church week containing `day`; a later week than
+    the current one raises `FutureWeekError`."""
+    week_start = church_sunday(day)
+    current_week_start = church_sunday(today)
+    if week_start > current_week_start:
+        raise FutureWeekError
+    return week_start, week_start + timedelta(days=6), week_start == current_week_start
+
+
+def _open_report_groups(session: Session, only_group_ids: frozenset[int] | None) -> list[ReportGroupRow]:
+    """Groups open today, all or only `only_group_ids`, by name."""
+    if only_group_ids is not None and not only_group_ids:
+        return []
+    return [
+        g for g in all_as(session, report_groups_query(only_group_ids), ReportGroupRow) if g.closed_at is None
+    ]
+
+
+def _active_leaders_by_group(session: Session, group_ids: frozenset[int]) -> dict[int, list[WeekLeader]]:
+    """Each group's leaders today: the leader first, then co-leaders by name."""
+    leaders: dict[int, list[WeekLeader]] = {}
+    for row in all_as(session, active_leaders_query(group_ids), ActiveLeaderRow):
+        leaders.setdefault(row.small_group_id, []).append(
+            WeekLeader(row.member_id, row.member_name, row.role)
+        )
+    return leaders
+
+
+def _week_groups(
+    session: Session,
+    groups: Sequence[ReportGroupRow],
+    week_start: date,
+    today: date,
+    leaders: dict[int, list[WeekLeader]],
+) -> list[WeekGroup]:
+    """Each group's week status (dashboard rule 6), in the order of `groups`."""
+    ids = frozenset(g.id for g in groups)
+    reports: dict[int, list[WeekReportRow]] = {}
+    for report in all_as(
+        session, week_reports_query(ids, week_start, week_start + timedelta(days=6)), WeekReportRow
+    ):
+        reports.setdefault(report.small_group_id, []).append(report)
+    leadership = _leadership_by_group(session, ids)
+    return [
+        _week_group(
+            g, week_start, today, reports.get(g.id, []), leaders.get(g.id, []), leadership.get(g.id, [])
+        )
+        for g in groups
+    ]
 
 
 def _week_group(

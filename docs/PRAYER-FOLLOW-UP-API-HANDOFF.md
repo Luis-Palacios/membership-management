@@ -37,7 +37,7 @@ Keep the existing conventions: routes call `services.py` / `conversation_service
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. Shared texts endpoint | ⬜ | |
+| 1. Shared texts endpoint | ✅ | this commit |
 | 2. Section threads: migration, models, anchor union | ⬜ | |
 | 3. Section threads: routes, summaries, inbox | ⬜ | |
 | 4. Conversations on shared entries, seed | ⬜ | |
@@ -45,7 +45,26 @@ Keep the existing conventions: routes call `services.py` / `conversation_service
 
 ### Decisions and deviations
 
-- (fill in per stage)
+- **How it was tried:** no test runner, so throwaway `TestClient` scripts (not committed) with
+  `get_current_claims` overridden per role, against a scratch Postgres database (`pfu-scratch`,
+  migrated and seeded, plus fixture rows; today = 2026-10-22). The dev database was not touched.
+- **Stage 1:** `get_report_week` is split into `_week_bounds` (week, `FutureWeekError`),
+  `_open_report_groups`, `_active_leaders_by_group` and `_week_groups` (per-group status over any set
+  of groups); `get_report_shared` reuses all four on the scoped open groups. `week_reports_query` now
+  takes the group ids and filters in SQL (it filtered in Python before). The week endpoint's body was
+  compared with `main` for five dates (current, three past, one future): identical. Entries come
+  from a new `shared_reports_query` (held only, ordered meeting date, group name, report id); texts
+  are trimmed in the service. A report with all three texts empty is kept, as the handoff says.
+  `stillToReport` is `StillToReport` (status narrowed to `notFiled`/`today`/`upcoming`, date never
+  null). `conversations` is already typed with its stage 4 shape (`SharedConversationSchema`, keys
+  `prayer`/`praise`/`followUp`) so the staff app's generated types don't change later; it's `{}`.
+  Tried: admin, elder linked and unlinked see every open group; a no-meeting report and a closed
+  group's held report never appear; blank and spaces-only text is `null`, line breaks kept; a Sunday
+  and a Saturday report of one group land in the same week; any day of a week gives the same body;
+  `notHeld`, `submitted`, `noLeader` and `noMeetingDay` groups aren't listed, the rest order
+  `notFiled`, `today`, `upcoming`, then name; leader of one group sees only that group (entries and
+  still to report); former leader (only a closed group) and deacon with no member get empty lists;
+  `user` 403; next week 422 `The week can't be in the future.`
 
 ## Who can do what
 

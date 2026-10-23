@@ -278,9 +278,9 @@ def member_active_roles_query(member_id: int, group_ids: frozenset[int]) -> Sele
     )
 
 
-def week_reports_query(from_date: date, to_date: date) -> Select:
-    """Reports dated in [from_date, to_date] with attendance counts, newest first. Counts only: the
-    observation text is never selected (rule 9), just how many rows have one."""
+def week_reports_query(group_ids: frozenset[int], from_date: date, to_date: date) -> Select:
+    """The groups' reports dated in [from_date, to_date] with attendance counts, newest first. Counts
+    only: the observation text is never selected (rule 9), just how many rows have one."""
     attendance = SmallGroupReportAttendance
     return (
         select(
@@ -302,7 +302,11 @@ def week_reports_query(from_date: date, to_date: date) -> Select:
         )
         .join(Member, Member.id == SmallGroupReport.submitted_by_member_id)
         .outerjoin(attendance, attendance.report_id == SmallGroupReport.id)
-        .where(SmallGroupReport.meeting_date >= from_date, SmallGroupReport.meeting_date <= to_date)
+        .where(
+            SmallGroupReport.small_group_id.in_(group_ids),
+            SmallGroupReport.meeting_date >= from_date,
+            SmallGroupReport.meeting_date <= to_date,
+        )
         .group_by(SmallGroupReport.id, Member.id)
         .order_by(SmallGroupReport.meeting_date.desc(), SmallGroupReport.id.desc())
     )
@@ -329,4 +333,28 @@ def active_leaders_query(group_ids: frozenset[int]) -> Select:
             Member.name,
             Member.id,
         )
+    )
+
+
+def shared_reports_query(group_ids: frozenset[int], from_date: date, to_date: date) -> Select:
+    """The groups' held reports dated in [from_date, to_date] with their three group texts (prayer &
+    follow-up rule 6), oldest meeting first, then group name. No-meeting reports have no texts."""
+    return (
+        select(
+            SmallGroupReport.id.label("report_id"),
+            SmallGroupReport.meeting_date.label("meeting_date"),
+            SmallGroup.id.label("small_group_id"),
+            SmallGroup.name.label("small_group_name"),
+            SmallGroupReport.group_prayer_request.label("group_prayer_request"),
+            SmallGroupReport.group_praise_report.label("group_praise_report"),
+            SmallGroupReport.group_relevant_discussion.label("group_relevant_discussion"),
+        )
+        .join(SmallGroup, SmallGroup.id == SmallGroupReport.small_group_id)
+        .where(
+            SmallGroupReport.small_group_id.in_(group_ids),
+            SmallGroupReport.held.is_(True),
+            SmallGroupReport.meeting_date >= from_date,
+            SmallGroupReport.meeting_date <= to_date,
+        )
+        .order_by(SmallGroupReport.meeting_date, SmallGroup.name, SmallGroupReport.id)
     )
