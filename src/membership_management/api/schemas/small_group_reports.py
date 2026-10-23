@@ -4,7 +4,8 @@ from typing import Annotated, Literal
 from pydantic import BeforeValidator, ConfigDict, Discriminator, Field, StringConstraints, Tag
 
 from membership_management.api.schemas.base import CamelModel
-from membership_management.data.small_groups.models import SmallGroupRole, Weekday
+from membership_management.data.small_groups.models import ConversationStatus, SmallGroupRole, Weekday
+from membership_management.data.small_groups.results import StillToReportStatus
 
 
 def _blank_to_none(value: object) -> object:
@@ -263,3 +264,46 @@ class ReportWeekSchema(CamelModel):
     today: date
     is_current_week: bool
     groups: list[WeekGroupSchema]
+
+
+class SharedSmallGroupSchema(CamelModel):
+    id: int
+    name: str
+
+
+class SharedConversationSchema(CamelModel):
+    """A section thread's indicator on a shared entry; `unread` and `needsMyReply` are the caller's."""
+
+    id: int
+    status: ConversationStatus
+    comment_count: int
+    unread: bool
+    needs_my_reply: bool
+
+
+class ReportSharedEntrySchema(CamelModel):
+    report_id: int
+    meeting_date: date
+    small_group: SharedSmallGroupSchema
+    leaders: list[WeekLeaderSchema]
+    # null when empty after trimming.
+    prayer: str | None
+    praise: str | None
+    follow_up: str | None
+    # Section threads only, keyed by section; a key is absent when that section has no thread.
+    conversations: dict[Literal["prayer", "praise", "followUp"], SharedConversationSchema]
+
+
+class ReportStillToReportSchema(CamelModel):
+    small_group: SharedSmallGroupSchema
+    status: StillToReportStatus
+    meeting_date: date
+
+
+class ReportSharedSchema(CamelModel):
+    week_start: date
+    week_end: date
+    today: date
+    is_current_week: bool
+    entries: list[ReportSharedEntrySchema]
+    still_to_report: list[ReportStillToReportSchema]
