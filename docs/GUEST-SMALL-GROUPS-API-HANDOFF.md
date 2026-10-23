@@ -44,8 +44,8 @@ queries, services, results), imported in `data/models.py`.
 | 3. `/guests` routes and scope | ✅ | `716a9f3` |
 | 4. Guests in reports | ✅ | `32fffb0` |
 | 5. Guests in conversations | ✅ | `5b9f978` |
-| 6. Docs | ✅ | this commit |
-| 7. Cleanup: drop `memberId`/`memberName` on guest-capable rows | ⬜ (after staff-app stage 6) | |
+| 6. Docs | ✅ | `339eb4a` |
+| 7. Cleanup: drop `memberId`/`memberName` on guest-capable rows | ✅ | this commit |
 
 ### Decisions and deviations
 
@@ -240,6 +240,22 @@ queries, services, results), imported in `data/models.py`.
   `/guests` behaviour, errors, what is not here yet) and notes in *Small group reports* and *Report
   conversations*; `CLAUDE.md` one bullet. Stage 7 stays open until staff-app reads `person`
   everywhere (see the end of this file).
+- **Stage 7, removed:** `memberId` and `memberName` from the small group member rows
+  (`GET /small-groups/{id}`), `memberId` from the report roster people and the report detail
+  attendance rows, and the `member` object (`{id, name}`) from conversation threads and inbox rows.
+  Roster and attendance rows keep `name`. Kept: `memberId` on the member anchor (`{type, memberId}` /
+  `{type, guestId}` / section), comment authors and `resolvedBy` (`memberId`), the report submitter,
+  group leaders. The `member` on the conversation summaries never existed (they have `anchor` and
+  `person`).
+- **Stage 7, added:** `audience` (`members` | `guests`) on the inbox row's `group`
+  (`{id, name, closed, audience}`), read from `small_groups.audience` in the same inbox query.
+- **Stage 7, how it was tried:** against `gsg-scratch`, as `elder`: group 6 (guest) and group 1
+  (member) detail rows have `person`, `role`, `joinedAt` and no `memberId`/`memberName`; the roster
+  and both reports' attendance rows have `person` and no `memberId`; summaries, a guest thread and a
+  member thread have no `member` and the right `person` and anchor; comment authors keep `memberId`;
+  the inbox has a guest-group row with `audience: guests` and a member-group row with `members`, no
+  `member`, and the `group` has exactly `id, name, closed, audience`. `ruff check` and `ty check`
+  clean. No tests are committed (still no test runner).
 
 ## Who can do what
 
@@ -423,7 +439,7 @@ setting, the database rules), and notes in *Small group reports* and *Report con
 
 ## Stage 7: Cleanup (later)
 
-Only after staff-app's stage that reads `person` everywhere is deployed: drop `memberId` /
+Done (see the log). Only after staff-app's stage that reads `person` everywhere is deployed: drop `memberId` /
 `memberName` from guest-capable rows (group detail, roster, report detail attendance, conversation
 summaries and inbox), keeping `member` where it means "the member" (e.g. the submitter). Tell the
 staff-app side to regenerate types.

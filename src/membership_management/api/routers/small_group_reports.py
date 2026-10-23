@@ -176,7 +176,6 @@ def get_report_roster_for_date(
         people=[
             ReportRosterPersonSchema(
                 person=_person(p.member_id, p.guest_id, p.name),
-                member_id=p.member_id,
                 name=p.name,
                 role=p.role,
                 joined_at=p.joined_at,
@@ -229,7 +228,6 @@ def _detail_schema(detail: ReportDetail) -> ReportDetailSchema:
     attendances = [
         ReportAttendanceSchema(
             person=_person(a.member_id, a.guest_id, a.name),
-            member_id=a.member_id,
             name=a.name,
             role=a.role,
             joined_at=a.joined_at,

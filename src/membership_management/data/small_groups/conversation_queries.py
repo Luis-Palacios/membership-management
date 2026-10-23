@@ -287,6 +287,7 @@ def inbox_rows_query(
             SmallGroup.id.label("group_id"),
             SmallGroup.name.label("group_name"),
             SmallGroup.closed_at.label("group_closed_at"),
+            SmallGroup.audience.label("group_audience"),
             SmallGroupReport.id.label("report_id"),
             SmallGroupReport.meeting_date.label("meeting_date"),
             last_comment.c.author_user_id.label("lc_author_user_id"),

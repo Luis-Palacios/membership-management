@@ -511,7 +511,12 @@ def get_inbox(
             else None,
             person=_person(r.member_id, r.member_name, r.guest_id, r.guest_name),
             section=_section(r.section),
-            group=InboxGroup(id=r.group_id, name=r.group_name, closed=r.group_closed_at is not None),
+            group=InboxGroup(
+                id=r.group_id,
+                name=r.group_name,
+                closed=r.group_closed_at is not None,
+                audience=r.group_audience,
+            ),
             report=InboxReport(id=r.report_id, meeting_date=r.meeting_date),
             last_comment=InboxLastComment(
                 author_name=r.lc_author_name,

@@ -5,7 +5,12 @@ from pydantic import Discriminator, StringConstraints, Tag
 
 from membership_management.api.schemas.base import CamelModel
 from membership_management.api.schemas.person import PersonSchema
-from membership_management.data.small_groups.models import ConversationSide, ConversationStatus, ReportSection
+from membership_management.data.small_groups.models import (
+    ConversationSide,
+    ConversationStatus,
+    GroupAudience,
+    ReportSection,
+)
 
 
 class AttendanceAnchorSchema(CamelModel):
@@ -93,18 +98,11 @@ class ConversationCommentSchema(CamelModel):
     mine: bool
 
 
-class InboxMemberSchema(CamelModel):
-    id: int
-    name: str
-
-
 class ConversationThreadSchema(CamelModel):
     id: int
     anchor: ConversationAnchorSchema
-    # Same shape as the inbox row; the name comes from members, so it is there even when the
-    # attendance row is gone. Null for a section thread and for a guest's (`person` has them).
-    member: InboxMemberSchema | None
-    # Who it's about, a member or a guest; null for a section thread.
+    # Who it's about, a member or a guest; there even when the attendance row is gone. Null for a
+    # section thread.
     person: PersonSchema | None
     status: ConversationStatus
     resolved_by: ConversationPersonSchema | None
@@ -125,6 +123,7 @@ class InboxGroupSchema(CamelModel):
     id: int
     name: str
     closed: bool
+    audience: GroupAudience
 
 
 class InboxReportSchema(CamelModel):
@@ -147,8 +146,6 @@ class InboxItemSchema(CamelModel):
     needs_my_reply: bool
     unread: bool
     anchor: ConversationAnchorSchema
-    # Null for a section thread and for a guest's (`person` has them).
-    member: InboxMemberSchema | None
     # Who it's about, a member or a guest; null for a section thread.
     person: PersonSchema | None
     group: InboxGroupSchema
