@@ -123,11 +123,12 @@ Keep the existing conventions: routes call `services.py` / `conversation_service
   reply raises `commentCount` and flips both sides, deleting it puts both back (deleted comments
   aren't counted); report 14's summary agrees with its shared entry. Summaries, threads, counts and
   the inbox for every role are identical to stage 3 on the same data.
-- **Seed quirk (pre-existing, not fixed here):** the seed's default `today` is the UTC date
-  (`runner.py`), so run on a Managua evening it is already tomorrow and the newest reports' comments
-  are capped at "today 08:00" of that UTC day, hours in the future. Such a thread stays `unread`
-  after a read until that time passes. `--today` avoids it; switching the default to the church's
-  date is a one-line follow-up.
+- **Seed quirk (pre-existing, fixed after stage 5):** the seed's default `today` was the UTC date,
+  so run on a Managua evening it was already tomorrow and the newest reports' times, capped at
+  "today 08:00", landed hours in the future (such a thread stayed `unread` after a read). The default
+  is now Managua's date; `MANAGUA_TZ` moved to `data/seed/context.py` and is shared by the runner and
+  both seeders that used it. Checked on a Managua evening (UTC already the next day): no report,
+  comment or thread time after `now()`; with `--today` pinned the rows are identical to before.
 - **Stage 5:** `README.md` has no route list (the role × route table is in `docs/ARCHITECTURE.md`),
   so the new routes went there: the table, a *Prayer & follow-up* entry under small group reports
   and an *Anchor* entry under *Report conversations*. `CLAUDE.md`'s conversations line names section

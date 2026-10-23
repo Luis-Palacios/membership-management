@@ -1,5 +1,5 @@
 import random
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 
 from sqlalchemy import exists, select, text
 from sqlalchemy.orm import Session
@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 import membership_management.data.models  # noqa: F401
 from membership_management.data.config import settings
 from membership_management.data.database import MemberManagementBase
-from membership_management.data.seed.context import SeedContext, Seeder
+from membership_management.data.seed.context import MANAGUA_TZ, SeedContext, Seeder
 from membership_management.data.seed.members import seed_members
 from membership_management.data.seed.small_group_report_conversations import seed_report_conversations
 from membership_management.data.seed.small_group_reports import seed_small_group_reports
@@ -43,7 +43,9 @@ def run(
     ctx = SeedContext(
         session=session,
         rng=random.Random(rng_seed),  # noqa: S311 -- reproducible test data, not crypto
-        today=today or datetime.now(tz=UTC).date(),
+        # Managua's date, not UTC's: in the evening UTC is already tomorrow, and times capped at
+        # "today 08:00" would land in the future.
+        today=today or datetime.now(tz=MANAGUA_TZ).date(),
     )
     for seeder in SEEDERS:
         seeder(ctx)
