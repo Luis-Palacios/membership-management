@@ -1,5 +1,11 @@
 # Report conversations, Part 2: email notifications (membership-management)
 
+> **Read first (added Oct 2026):** this Part 2 handoff was written before section threads.
+> **Prayer & follow-up** (`docs/specs/prayer-follow-up.md`) ships first and adds conversations about a
+> report section (prayer, praise, follow-up), not only about a person. Before starting Part 2, apply
+> that spec's *Changes for report conversations Part 2* here (stage 2: `path` with `?section=` and the `topic` field). Part 2 still comes next,
+> slowly, one change at a time, as described below.
+
 Handoff spec for the API side of **conversation emails**: a transactional outbox written in the same
 transaction as the comment, a fast path with FastAPI `BackgroundTasks`, a sweeper loop that retries,
 and the opt-out. Cross-repo rules: `../docs/specs/report-conversations.md` (*Contracts (Part 2:
