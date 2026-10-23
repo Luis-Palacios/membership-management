@@ -4,7 +4,12 @@ from typing import Annotated, Literal
 from pydantic import BeforeValidator, ConfigDict, Discriminator, Field, StringConstraints, Tag
 
 from membership_management.api.schemas.base import CamelModel
-from membership_management.data.small_groups.models import ConversationStatus, SmallGroupRole, Weekday
+from membership_management.data.small_groups.models import (
+    ConversationStatus,
+    ReportSection,
+    SmallGroupRole,
+    Weekday,
+)
 from membership_management.data.small_groups.results import StillToReportStatus
 
 
@@ -291,7 +296,7 @@ class ReportSharedEntrySchema(CamelModel):
     praise: str | None
     follow_up: str | None
     # Section threads only, keyed by section; a key is absent when that section has no thread.
-    conversations: dict[Literal["prayer", "praise", "followUp"], SharedConversationSchema]
+    conversations: dict[ReportSection, SharedConversationSchema]
 
 
 class ReportStillToReportSchema(CamelModel):

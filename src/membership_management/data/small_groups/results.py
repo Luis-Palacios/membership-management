@@ -4,6 +4,7 @@ from typing import Literal, NamedTuple
 from membership_management.data.small_groups.models import (
     ConversationSide,
     ConversationStatus,
+    ReportSection,
     SmallGroupRole,
 )
 
@@ -296,7 +297,9 @@ class ConversationSummary(NamedTuple):
     """A thread's row indicator on the report detail. `unread` and `needs_my_reply` are the caller's."""
 
     id: int
-    member_id: int
+    # The anchor: a person (`member_id`) or a report section, never both.
+    member_id: int | None
+    section: ReportSection | None
     status: ConversationStatus
     comment_count: int
     unread: bool
@@ -330,8 +333,10 @@ class ConversationComment(NamedTuple):
 
 class ConversationThread(NamedTuple):
     id: int
-    member_id: int
-    member_name: str
+    # The anchor: a person (`member_id`, with their name) or a report section, never both.
+    member_id: int | None
+    member_name: str | None
+    section: ReportSection | None
     status: ConversationStatus
     resolved_by: ConversationMember | None
     resolved_at: datetime | None
@@ -365,7 +370,9 @@ class InboxRow(NamedTuple):
     status: ConversationStatus
     needs_my_reply: bool
     unread: bool
-    member: ConversationMember
+    # None for a section thread.
+    member: ConversationMember | None
+    section: ReportSection | None
     group: InboxGroup
     report: InboxReport
     last_comment: InboxLastComment

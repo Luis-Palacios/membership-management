@@ -51,6 +51,7 @@ def report_conversation_summaries_query(report_id: int, user_id: str) -> Select:
         select(
             ReportConversation.id.label("id"),
             ReportConversation.member_id.label("member_id"),
+            ReportConversation.section.label("section"),
             ReportConversation.status.label("status"),
             comment_count.label("comment_count"),
             ReportConversation.last_comment_at.label("last_comment_at"),
@@ -241,6 +242,7 @@ def inbox_rows_query(
             read.last_read_at.label("last_read_at"),
             about.id.label("member_id"),
             about.name.label("member_name"),
+            ReportConversation.section.label("section"),
             resolver.id.label("resolver_id"),
             resolver.name.label("resolver_name"),
             SmallGroup.id.label("group_id"),
@@ -259,7 +261,8 @@ def inbox_rows_query(
         .join(ReportConversation, ReportConversation.id == page_ids.c.id)
         .join(SmallGroupReport, SmallGroupReport.id == ReportConversation.report_id)
         .join(SmallGroup, SmallGroup.id == SmallGroupReport.small_group_id)
-        .join(about, about.id == ReportConversation.member_id)
+        # Outer: a section thread has no member.
+        .outerjoin(about, about.id == ReportConversation.member_id)
         .outerjoin(resolver, resolver.id == ReportConversation.resolved_by_member_id)
         .outerjoin(read, and_(read.conversation_id == ReportConversation.id, read.user_id == user_id))
         .join(last_comment, true())

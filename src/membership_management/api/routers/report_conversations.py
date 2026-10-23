@@ -20,9 +20,9 @@ from membership_management.api.jwt_auth import (
 )
 from membership_management.api.rate_limit import default_user_rate_limit, rate_limit
 from membership_management.api.schemas.report_conversations import (
+    AttendanceAnchorSchema,
     CommentAuthorSchema,
     CommentBodySchema,
-    ConversationAnchorSchema,
     ConversationCommentSchema,
     ConversationCountsSchema,
     ConversationPersonSchema,
@@ -38,6 +38,7 @@ from membership_management.api.schemas.report_conversations import (
     NeedsMyReplyCountSchema,
     ReportConversationsSchema,
     ResolveBodySchema,
+    SectionAnchorSchema,
 )
 from membership_management.data.members.models import Member
 from membership_management.data.small_groups.conversation_services import (
@@ -65,6 +66,7 @@ from membership_management.data.small_groups.conversation_services import (
 from membership_management.data.small_groups.models import (
     ReportConversation,
     ReportConversationComment,
+    ReportSection,
     SmallGroupReport,
 )
 from membership_management.data.small_groups.results import ConversationThread
@@ -139,11 +141,24 @@ def _conversation_or_404(
     return conversation
 
 
+def _anchor(
+    member_id: int | None, section: ReportSection | None
+) -> AttendanceAnchorSchema | SectionAnchorSchema:
+    """The API anchor of a thread: a person or a section (the database allows exactly one)."""
+    if section is not None:
+        return SectionAnchorSchema(key=section)
+    if member_id is None:
+        raise ValueError("A conversation has neither a member nor a section.")
+    return AttendanceAnchorSchema(member_id=member_id)
+
+
 def _thread_schema(thread: ConversationThread) -> ConversationThreadSchema:
     return ConversationThreadSchema(
         id=thread.id,
-        anchor=ConversationAnchorSchema(member_id=thread.member_id),
-        member=InboxMemberSchema(id=thread.member_id, name=thread.member_name),
+        anchor=_anchor(thread.member_id, thread.section),
+        member=InboxMemberSchema(id=thread.member_id, name=thread.member_name)
+        if thread.member_id is not None and thread.member_name is not None
+        else None,
         status=thread.status,
         resolved_by=ConversationPersonSchema(
             member_id=thread.resolved_by.member_id, name=thread.resolved_by.name
@@ -184,7 +199,7 @@ def get_report_conversation_summaries(
         conversations=[
             ConversationSummarySchema(
                 id=s.id,
-                anchor=ConversationAnchorSchema(member_id=s.member_id),
+                anchor=_anchor(s.member_id, s.section),
                 status=s.status,
                 comment_count=s.comment_count,
                 unread=s.unread,
@@ -429,7 +444,10 @@ def get_report_conversation_inbox(
                 status=i.status,
                 needs_my_reply=i.needs_my_reply,
                 unread=i.unread,
-                member=InboxMemberSchema(id=i.member.member_id, name=i.member.name),
+                anchor=_anchor(i.member.member_id if i.member is not None else None, i.section),
+                member=InboxMemberSchema(id=i.member.member_id, name=i.member.name)
+                if i.member is not None
+                else None,
                 group=InboxGroupSchema(id=i.group.id, name=i.group.name, closed=i.group.closed),
                 report=InboxReportSchema(id=i.report.id, meeting_date=i.report.meeting_date),
                 last_comment=InboxLastCommentSchema(

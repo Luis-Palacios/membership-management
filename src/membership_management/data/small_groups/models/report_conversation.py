@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import StrEnum
 from typing import TYPE_CHECKING, Literal
 
 from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Identity, Index, String, UniqueConstraint, desc
@@ -19,8 +20,29 @@ ConversationStatus = Literal["open", "resolved"]
 ConversationSide = Literal["elders", "leaders"]
 
 
+class ReportSection(StrEnum):
+    """A report text a thread can be about instead of a person (prayer & follow-up rule 14)."""
+
+    PRAYER = "prayer"
+    PRAISE = "praise"
+    FOLLOW_UP = "followUp"
+
+    @property
+    def report_attribute(self) -> str:
+        """The `SmallGroupReport` attribute holding this section's text."""
+        return _SECTION_REPORT_ATTRIBUTES[self]
+
+
+_SECTION_REPORT_ATTRIBUTES = {
+    ReportSection.PRAYER: "group_prayer_request",
+    ReportSection.PRAISE: "group_praise_report",
+    ReportSection.FOLLOW_UP: "group_relevant_discussion",
+}
+
+
 class ReportConversation(MemberManagementBase):
-    """A thread about one person's attendance row in a small group report (one per report and member).
+    """A thread about one person's attendance row in a small group report (one per report and member),
+    or about one of its sections (one per report and section); exactly one of `member_id`, `section`.
 
     The user ids are JWT `sub`s of auth-server users: string references with no foreign key. The
     `last_comment_*` columns are denormalised on every write so the inbox query stays simple.
@@ -28,7 +50,12 @@ class ReportConversation(MemberManagementBase):
 
     __tablename__ = "report_conversations"
     __table_args__ = (
+        # NULLs are distinct in Postgres, so section threads (member_id NULL) never collide here.
         UniqueConstraint("report_id", "member_id"),
+        # Named: the convention's `uq` name uses only the first column, which the one above already took.
+        UniqueConstraint("report_id", "section", name="uq_report_conversations_report_id_section"),
+        CheckConstraint("section IN ('prayer', 'praise', 'followUp')", name="section_valid"),
+        CheckConstraint("(member_id IS NULL) <> (section IS NULL)", name="one_anchor"),
         CheckConstraint("status IN ('open', 'resolved')", name="status_valid"),
         CheckConstraint("last_comment_side IN ('elders', 'leaders')", name="last_comment_side_valid"),
         CheckConstraint(
@@ -46,7 +73,8 @@ class ReportConversation(MemberManagementBase):
     report_id: Mapped[int] = mapped_column(
         ForeignKey("small_group_reports.id", ondelete="CASCADE"), index=True
     )
-    member_id: Mapped[int] = mapped_column(ForeignKey("members.id"), index=True)
+    member_id: Mapped[int | None] = mapped_column(ForeignKey("members.id"), index=True)
+    section: Mapped[ReportSection | None] = mapped_column(String(16))
     status: Mapped[ConversationStatus] = mapped_column(String(16), default="open")
     created_by_user_id: Mapped[str] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -58,7 +86,7 @@ class ReportConversation(MemberManagementBase):
     last_comment_user_id: Mapped[str] = mapped_column(String)
 
     report: Mapped["SmallGroupReport"] = relationship(back_populates="conversations")
-    member: Mapped["Member"] = relationship(foreign_keys=[member_id])
+    member: Mapped["Member | None"] = relationship(foreign_keys=[member_id])
     resolved_by: Mapped["Member | None"] = relationship(foreign_keys=[resolved_by_member_id])
     comments: Mapped[list["ReportConversationComment"]] = relationship(
         back_populates="conversation", cascade="all, delete-orphan", passive_deletes=True

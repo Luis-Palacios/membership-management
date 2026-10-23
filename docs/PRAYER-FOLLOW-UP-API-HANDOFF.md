@@ -37,8 +37,8 @@ Keep the existing conventions: routes call `services.py` / `conversation_service
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. Shared texts endpoint | ✅ | this commit |
-| 2. Section threads: migration, models, anchor union | ⬜ | |
+| 1. Shared texts endpoint | ✅ | `93a7ae4` |
+| 2. Section threads: migration, models, anchor union | ✅ | this commit |
 | 3. Section threads: routes, summaries, inbox | ⬜ | |
 | 4. Conversations on shared entries, seed | ⬜ | |
 | 5. Docs | ⬜ | |
@@ -65,6 +65,26 @@ Keep the existing conventions: routes call `services.py` / `conversation_service
   `notFiled`, `today`, `upcoming`, then name; leader of one group sees only that group (entries and
   still to report); former leader (only a closed group) and deacon with no member get empty lists;
   `user` 403; next week 422 `The week can't be in the future.`
+- **Stage 2:** migration `a0bb7197cbc8`. Autogenerate found only the column and the nullable
+  `member_id`; the two checks (`ck_report_conversations_section_valid`, `..._one_anchor`) and the
+  unique constraint are hand-written. The unique constraint is **named explicitly**
+  (`uq_report_conversations_report_id_section`): the `uq` naming convention uses only the first
+  column, so it would have clashed with the existing `uq_report_conversations_report_id` (which is
+  also why autogenerate didn't see it). The downgrade fails if section threads exist (they can't
+  be expressed without `section`); delete them first. `ReportSection` (`StrEnum`) lives next to the
+  model with `report_attribute` mapping each key to its `SmallGroupReport` attribute; the column is
+  VARCHAR + CHECK like `role` and `sex`, so a new section needs a hand-written migration. Beyond the
+  handoff: the thread response's `member` is nullable too (a section thread has none), inbox rows
+  already carry `anchor` (the contract says they do; harmless before stage 3), and the shared
+  entry's `conversations` keys are typed `ReportSection`. Tried: `alembic check` clean, downgrade
+  -1 and upgrade round-trip on the scratch DB; inserts with both anchors, no anchor, an unknown
+  section and a duplicate section each fail on the right constraint. Summaries, every person thread
+  (incl. 404 no thread, 422 not on the report), counts and all three inbox tabs with and without a
+  group filter were dumped for admin, elder linked and unlinked, two leaders, former leader, deacon
+  with no member and `user` on this branch and on `main`: identical once the inbox `anchor` is
+  removed, and every inbox `anchor` is `attendance` with the row's member. A hand-inserted prayer
+  thread (deleted afterwards) shows in the summary with a section anchor, in the inbox with `member:
+  null`, and counts toward *needs my reply* for the leader, not the elder who wrote it.
 
 ## Who can do what
 
