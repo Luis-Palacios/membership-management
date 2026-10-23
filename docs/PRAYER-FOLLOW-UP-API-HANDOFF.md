@@ -39,8 +39,8 @@ Keep the existing conventions: routes call `services.py` / `conversation_service
 | --- | --- | --- |
 | 1. Shared texts endpoint | ✅ | `93a7ae4` |
 | 2. Section threads: migration, models, anchor union | ✅ | `90af585` |
-| 3. Section threads: routes, summaries, inbox | ✅ | this commit |
-| 4. Conversations on shared entries, seed | ⬜ | |
+| 3. Section threads: routes, summaries, inbox | ✅ | `995ea4a` |
+| 4. Conversations on shared entries, seed | ✅ | this commit |
 | 5. Docs | ⬜ | |
 
 ### Decisions and deviations
@@ -105,6 +105,29 @@ Keep the existing conventions: routes call `services.py` / `conversation_service
   and gets 409 on comment; a leader starts a follow-up thread; person threads unchanged; clearing
   the prayer text keeps the thread readable and repliable; report detail counted 3 threads, and
   deleting the report left no threads or comments (the thread id is then 404).
+- **Stage 4:** the summaries query is split into `_conversation_summaries_query` (now also selecting
+  `report_id`), filtered by one report (`report_conversation_summaries_query`, unchanged output) or
+  by several reports' section threads (`section_conversation_summaries_query`); both services build
+  rows with one `_summary`. The shared route calls `get_section_conversations` once for every
+  entry, limited to `conversation_group_ids` (the conversations' audience): for today's roles that's
+  the whole scope, but a full role without `viewObservations` gets `{}` everywhere instead of
+  threads it couldn't open. Seed: `SeedThread.section`; a section thread takes the first held report
+  from `report` back that has text in that section. Three threads: `followUp` on GP-#2's newest
+  report (elder, then leader: waiting for the elders), `prayer` on GP-#1's newest (resolved by an
+  elder), `praise` with one elder comment on GP-#4's newest (waiting for the leaders); two
+  `--reset` runs gave identical rows. Tried on the reseeded scratch DB: one conversations query per
+  request (none when no report is in the audience); the elder and the group's leader see opposite
+  `needsMyReply` on the follow-up and praise threads; unlinked elder same as linked; a leader sees
+  only their groups' threads; former leader, deacon with no member: no entries; `user` 403; a week
+  with no threads is `{}` on every entry; a read clears `unread` for the reader only; a leader's
+  reply raises `commentCount` and flips both sides, deleting it puts both back (deleted comments
+  aren't counted); report 14's summary agrees with its shared entry. Summaries, threads, counts and
+  the inbox for every role are identical to stage 3 on the same data.
+- **Seed quirk (pre-existing, not fixed here):** the seed's default `today` is the UTC date
+  (`runner.py`), so run on a Managua evening it is already tomorrow and the newest reports' comments
+  are capped at "today 08:00" of that UTC day, hours in the future. Such a thread stays `unread`
+  after a read until that time passes. `--today` avoids it; switching the default to the church's
+  date is a one-line follow-up.
 
 ## Who can do what
 

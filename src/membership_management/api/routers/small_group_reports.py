@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from membership_management.api.access import (
     SmallGroupScope,
     SmallGroupScopeDep,
+    comment_side,
+    conversation_group_ids,
     leads_group,
     sees_all_observations,
 )
@@ -43,6 +45,7 @@ from membership_management.api.schemas.small_group_reports import (
     ReportSummaryItemSchema,
     ReportTotalsSchema,
     ReportWeekSchema,
+    SharedConversationSchema,
     SharedSmallGroupSchema,
     SummaryGroupSchema,
     SummaryLastReportSchema,
@@ -51,6 +54,7 @@ from membership_management.api.schemas.small_group_reports import (
     WeekReportSchema,
     WeekSmallGroupSchema,
 )
+from membership_management.data.small_groups.conversation_services import get_section_conversations
 from membership_management.data.small_groups.models import SmallGroup
 from membership_management.data.small_groups.results import (
     AttendanceInput,
@@ -456,6 +460,7 @@ def get_small_group_reports_week(
 )
 def get_small_group_reports_shared(
     db: MembersSessionDep,
+    claims: CurrentClaimsDep,
     scope: SmallGroupScopeDep,
     week_date: Annotated[date | None, Query(alias="date")] = None,
 ) -> ReportSharedSchema:
@@ -469,6 +474,15 @@ def get_small_group_reports_shared(
         )
     except FutureWeekError as exc:
         raise _http_error(exc) from exc
+    # Only reports whose conversations the caller may see (`conversation_group_ids`): today that's the
+    # whole scope, but a full scope without `viewObservations` gets none.
+    audience = conversation_group_ids(claims, scope)
+    conversations = get_section_conversations(
+        db,
+        frozenset(e.report_id for e in shared.entries if audience is None or e.small_group_id in audience),
+        claims.sub,
+        comment_side(claims),
+    )
     return ReportSharedSchema(
         week_start=shared.week_start,
         week_end=shared.week_end,
@@ -485,7 +499,16 @@ def get_small_group_reports_shared(
                 prayer=e.prayer,
                 praise=e.praise,
                 follow_up=e.follow_up,
-                conversations={},
+                conversations={
+                    section: SharedConversationSchema(
+                        id=c.id,
+                        status=c.status,
+                        comment_count=c.comment_count,
+                        unread=c.unread,
+                        needs_my_reply=c.needs_my_reply,
+                    )
+                    for section, c in conversations.get(e.report_id, {}).items()
+                },
             )
             for e in shared.entries
         ],

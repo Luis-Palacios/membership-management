@@ -2,6 +2,8 @@
 
 from typing import Literal, NamedTuple
 
+from membership_management.data.small_groups.models import ReportSection
+
 FEMALE_GIVEN_NAMES = [
     "María José", "Ana Lucía", "Karla Vanessa", "Fátima", "Yahoska", "Jessenia", "Martha Elena",
     "Rosa Argentina", "Claudia", "Gabriela", "Hazel", "Scarleth", "Ruth", "Sofía", "Valeria",
@@ -105,8 +107,9 @@ ABSENCE_OBSERVATIONS = [
 ]
 
 
-# Report conversations: threads on a person's attendance row. Each thread is one report (`group`: the
-# n-th seeded group, `report`: how many held reports back from the newest) and its comments in order.
+# Report conversations: threads on a person's attendance row, or on a report section when `section` is
+# set. Each thread is one report (`group`: the n-th seeded group, `report`: how many held reports back
+# from the newest; for a section, the first from there with text in it) and its comments in order.
 class SeedComment(NamedTuple):
     side: Literal["elders", "leaders"]
     body: str
@@ -121,6 +124,7 @@ class SeedThread(NamedTuple):
     comments: list[SeedComment]
     # "elders" / "leaders": who resolved it; None = still open.
     resolved_by: Literal["elders", "leaders"] | None = None
+    section: ReportSection | None = None
 
 
 CONVERSATION_THREADS = [
@@ -196,6 +200,40 @@ CONVERSATION_THREADS = [
         comments=[
             SeedComment("leaders", "Ella pidió oración por su mamá, que sigue hospitalizada."),
             SeedComment("elders", "Gracias por avisar. Un anciano la llamará esta semana."),
+        ],
+    ),
+    # Section threads (prayer & follow-up). Follow-up started by an elder, the leader answered last.
+    SeedThread(
+        group=1,
+        report=0,
+        section=ReportSection.FOLLOW_UP,
+        comments=[
+            SeedComment(
+                "elders", "¿Quieren que un anciano los acompañe en la visita? Díganme qué día les sirve."
+            ),
+            SeedComment("leaders", "Sí, por favor. El sábado en la tarde nos queda bien a todos."),
+        ],
+    ),
+    # A prayer request, resolved by an elder.
+    SeedThread(
+        group=0,
+        report=0,
+        section=ReportSection.PRAYER,
+        resolved_by="elders",
+        comments=[
+            SeedComment("elders", "Lo incluimos en la oración del domingo. ¿Hay alguna novedad?"),
+            SeedComment("leaders", "Gracias. Ya le dieron trabajo; quedó contestada."),
+        ],
+    ),
+    # Praise with a single comment, waiting for the leaders.
+    SeedThread(
+        group=3,
+        report=0,
+        section=ReportSection.PRAISE,
+        comments=[
+            SeedComment(
+                "elders", "¡Gloria a Dios! Compártanlo también el domingo en el anuncio de testimonios."
+            ),
         ],
     ),
 ]
