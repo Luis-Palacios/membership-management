@@ -107,6 +107,12 @@ class ApiSettings(BaseSettings):
     # multi-tenancy lands this moves onto the church/ministry. Validated at startup.
     church_timezone: str = "America/Managua"
 
+    # Whether this church runs guest small groups (guest-small-groups spec, rule 1). Off: creating a
+    # guest group or a guest is 409 `guest groups are off`; existing guest data stays readable and is
+    # never touched. Shipped to staff-app in `GET /me` (`features.guestGroups`). Like church_timezone,
+    # one value per deployment for now; it moves onto the church once multi-tenancy lands.
+    guest_groups_enabled: bool = False
+
     # Same .env handling as the data layer's Settings (see env_file.py).
     model_config = SettingsConfigDict(env_file=ENV_FILE, env_file_encoding="utf-8", extra="ignore")
 

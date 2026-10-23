@@ -13,8 +13,13 @@ class MeLeadSchema(CamelModel):
     role: SmallGroupRole
 
 
+class MeFeaturesSchema(CamelModel):
+    guest_groups: bool
+
+
 class MeSchema(CamelModel):
     user_id: str
     role: str
     member: MeMemberSchema | None
     leads: list[MeLeadSchema]
+    features: MeFeaturesSchema

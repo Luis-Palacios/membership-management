@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
 
+from membership_management.api.config import api_settings
 from membership_management.api.current_member import CurrentMemberDep
 from membership_management.api.dependencies import MembersSessionDep
 from membership_management.api.jwt_auth import CurrentClaimsDep, get_current_claims, require_permission
 from membership_management.api.rate_limit import default_user_rate_limit, rate_limit
 from membership_management.api.routers.members import member_detail
-from membership_management.api.schemas.me import MeLeadSchema, MeMemberSchema, MeSchema
+from membership_management.api.schemas.me import MeFeaturesSchema, MeLeadSchema, MeMemberSchema, MeSchema
 from membership_management.api.schemas.members import MemberDetailSchema, MyMemberUpdateSchema
 from membership_management.data.members.services import get_member_leads, update_member
 
@@ -18,8 +19,9 @@ router = APIRouter(
 
 @router.get("", name="get_me", description="Signed-in user, their member (if linked) and groups led")
 def get_me(claims: CurrentClaimsDep, member: CurrentMemberDep, db: MembersSessionDep) -> MeSchema:
+    features = MeFeaturesSchema(guest_groups=api_settings.guest_groups_enabled)
     if member is None:
-        return MeSchema(user_id=claims.sub, role=claims.role, member=None, leads=[])
+        return MeSchema(user_id=claims.sub, role=claims.role, member=None, leads=[], features=features)
     return MeSchema(
         user_id=claims.sub,
         role=claims.role,
@@ -28,6 +30,7 @@ def get_me(claims: CurrentClaimsDep, member: CurrentMemberDep, db: MembersSessio
             MeLeadSchema(small_group_id=lead.small_group_id, name=lead.small_group_name, role=lead.role)
             for lead in get_member_leads(db, member.id)
         ],
+        features=features,
     )
 
 
