@@ -57,6 +57,12 @@ class SmallGroupDetailSchema(CamelModel):
     members: list[SmallGroupMemberSchema]
 
 
+class SmallGroupGuestAddedSchema(SmallGroupDetailSchema):
+    """The group after adding a guest, plus that guest's id (a new guest's id isn't anywhere else)."""
+
+    guest_id: int
+
+
 class SmallGroupCreateSchema(CamelModel):
     name: Name
     meeting_address: MeetingAddress | None = None

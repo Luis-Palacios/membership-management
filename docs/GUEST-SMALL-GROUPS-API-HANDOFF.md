@@ -208,6 +208,8 @@ queries, services, results), imported in `data/models.py`.
   shapes, a member-group report created and edited as before, deleting a report with guest rows.
   Against stage 3's dump, every existing response differs only by the added `audience` and `person`
   keys (same values and order).
+- **After stage 6:** `POST /small-groups/{id}/guests` returns the group detail plus `guestId` (the added guest's
+  id, new or existing), so the report form needn't diff the roster to find a new guest's row.
 - **Stage 5, anchors in code:** `ConversationAnchor` was a member id or a `ReportSection`; it is now a
   `PersonKey` (`("member"|"guest", id)`) or a `ReportSection`, so the lookup, `_check_can_start`,
   `_get_or_create` (which sets `member_id`, `guest_id` or `section`) and the report-delete cascade are

@@ -23,6 +23,7 @@ from membership_management.api.schemas.person import PersonSchema
 from membership_management.api.schemas.small_groups import (
     SmallGroupCreateSchema,
     SmallGroupDetailSchema,
+    SmallGroupGuestAddedSchema,
     SmallGroupGuestAddSchema,
     SmallGroupLeaderSchema,
     SmallGroupLeaveSchema,
@@ -418,7 +419,7 @@ def post_small_group_guest(
     claims: CurrentClaimsDep,
     member: CurrentMemberDep,
     scope: SmallGroupScopeDep,
-) -> SmallGroupDetailSchema:
+) -> SmallGroupGuestAddedSchema:
     small_group = _get_or_404(db, small_group_id, scope)
     new_guest = None
     if body.new_guest is not None:
@@ -428,7 +429,7 @@ def post_small_group_guest(
         ensure_guest_groups_enabled()
         new_guest = NewGuest(**body.new_guest.model_dump())
     try:
-        add_guest_to_group(
+        guest_id = add_guest_to_group(
             db,
             small_group,
             guest_id=body.guest_id,
@@ -440,7 +441,7 @@ def post_small_group_guest(
         )
     except GUEST_JOIN_ERRORS as exc:
         raise guest_join_http_error(exc) from exc
-    return _detail(db, small_group)
+    return SmallGroupGuestAddedSchema(**_detail(db, small_group).model_dump(), guest_id=guest_id)
 
 
 @router.delete(
