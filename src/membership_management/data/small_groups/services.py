@@ -7,9 +7,13 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from membership_management.data.guests.models import Guest
+from membership_management.data.guests.services import NewGuest, add_guest
 from membership_management.data.members.models import Member
 from membership_management.data.query_helpers import all_as
 from membership_management.data.small_groups.models import (
+    GroupAudience,
+    LeftReason,
     ReportConversation,
     SmallGroup,
     SmallGroupMember,
@@ -18,8 +22,11 @@ from membership_management.data.small_groups.models import (
     SmallGroupRole,
 )
 from membership_management.data.small_groups.queries import (
+    active_guest_period_query,
     active_leaders_query,
     filed_reports_query,
+    guests_last_attended_query,
+    latest_guest_report_date_query,
     latest_report_ids_query,
     leadership_periods_query,
     led_small_group_ids_query,
@@ -32,6 +39,7 @@ from membership_management.data.small_groups.queries import (
     report_on_date_query,
     roster_periods_on_date_query,
     shared_reports_query,
+    small_group_active_guests_query,
     small_group_active_members_query,
     week_reports_query,
 )
@@ -41,8 +49,10 @@ from membership_management.data.small_groups.results import (
     FiledReportRow,
     GroupReportSummary,
     GroupRole,
+    GuestStanding,
     LeadershipPeriod,
     NotFiledMeeting,
+    OtherGroup,
     RecentMeeting,
     ReportAttendanceView,
     ReportCounts,
@@ -58,6 +68,7 @@ from membership_management.data.small_groups.results import (
     RosterPerson,
     SharedEntry,
     SharedReportRow,
+    SmallGroupActiveGuest,
     SmallGroupActiveMember,
     SmallGroupSummary,
     StillToReport,
@@ -105,6 +116,38 @@ class ActiveMembershipNotFoundError(Exception):
 
 class LeaderAlreadyExistsError(Exception):
     """The group already has an active leader."""
+
+
+class NotGuestGroupError(Exception):
+    """Guests can only be in guest groups (rule 6)."""
+
+
+class GuestNotFoundError(Exception):
+    """No guest with the given ID exists."""
+
+
+class GuestAlreadyInGroupError(Exception):
+    """The guest already has an active period in this group."""
+
+
+class GuestInAnotherGroupError(Exception):
+    """The guest is active in another guest group and the caller didn't ask to move them (rule 7)."""
+
+    def __init__(self, other_group: OtherGroup) -> None:
+        super().__init__(other_group.id)
+        self.other_group = other_group
+
+
+class GuestPeriodOverlapError(Exception):
+    """The join date overlaps an earlier period of the guest (in this or another group)."""
+
+
+class LeftInFutureError(Exception):
+    """The leave date is after today."""
+
+
+class LeftTooEarlyError(Exception):
+    """The leave date is before the period started or before a report that already has the guest's row."""
 
 
 class ReportAlreadyExistsError(Exception):
@@ -167,6 +210,25 @@ def get_small_group_active_members(session: Session, small_group_id: int) -> Seq
     return all_as(session, small_group_active_members_query(small_group_id), SmallGroupActiveMember)
 
 
+def get_small_group_active_guests(
+    session: Session, small_group_id: int, *, today: date
+) -> list[tuple[SmallGroupActiveGuest, GuestStanding]]:
+    """The guests currently in the group, by name, each with their missed streak in this group as of
+    `today` and the last date they attended any group's meeting (None if never)."""
+    guests = list(all_as(session, small_group_active_guests_query(small_group_id), SmallGroupActiveGuest))
+    if not guests:
+        return []
+    ids = [g.guest_id for g in guests]
+    streaks = missed_streaks_by_person(session, small_group_id, [("guest", i) for i in ids], today)
+    last_attended = {
+        row.guest_id: row.last_attended_date for row in session.execute(guests_last_attended_query(ids)).all()
+    }
+    return [
+        (g, GuestStanding(g.guest_id, streaks[("guest", g.guest_id)], last_attended.get(g.guest_id)))
+        for g in guests
+    ]
+
+
 _ROLE_ORDER = {SmallGroupRole.LEADER: 0, SmallGroupRole.CO_LEADER: 1, SmallGroupRole.MEMBER: 2}
 
 
@@ -191,12 +253,24 @@ def _period_rank(period: RosterPeriod, d: date) -> tuple[bool, date, int]:
     return (period.left_at is None or period.left_at > d, period.joined_at, period.period_id)
 
 
-def missed_streaks(
-    session: Session, small_group_id: int, member_ids: Sequence[int], before: date
-) -> dict[int, int]:
-    """Per member, how many of the group's latest reports before `before` they missed in a row (rule 11).
+PersonKey = tuple[Literal["member", "guest"], int]
 
-    Counts the leading run of `attended_group = false`, newest report first; reports where the member
+
+def _mark_key(mark: AttendanceMark) -> PersonKey:
+    if mark.member_id is not None:
+        return ("member", mark.member_id)
+    if mark.guest_id is not None:
+        return ("guest", mark.guest_id)
+    raise ValueError("attendance row without a person")
+
+
+def missed_streaks_by_person(
+    session: Session, small_group_id: int, people: Sequence[PersonKey], before: date
+) -> dict[PersonKey, int]:
+    """Per member or guest, how many of the group's latest reports before `before` they missed in a row
+    (reports rule 11).
+
+    Counts the leading run of `attended_group = false`, newest report first; reports where the person
     has no row neither break nor extend it.
     """
     marks = all_as(
@@ -204,16 +278,27 @@ def missed_streaks(
         recent_attendance_marks_query(small_group_id, before, MISSED_STREAK_REPORT_WINDOW),
         AttendanceMark,
     )
-    streaks = dict.fromkeys(member_ids, 0)
-    attended_since: set[int] = set()
+    streaks = dict.fromkeys(people, 0)
+    attended_since: set[PersonKey] = set()
     for mark in marks:
-        if mark.member_id not in streaks or mark.member_id in attended_since:
+        key = _mark_key(mark)
+        if key not in streaks or key in attended_since:
             continue
         if mark.attended_group:
-            attended_since.add(mark.member_id)
+            attended_since.add(key)
         else:
-            streaks[mark.member_id] += 1
+            streaks[key] += 1
     return streaks
+
+
+def missed_streaks(
+    session: Session, small_group_id: int, member_ids: Sequence[int], before: date
+) -> dict[int, int]:
+    """`missed_streaks_by_person` for members only, keyed by member id."""
+    by_person = missed_streaks_by_person(
+        session, small_group_id, [("member", member_id) for member_id in member_ids], before
+    )
+    return {member_id: by_person[("member", member_id)] for member_id in member_ids}
 
 
 def get_report_roster(session: Session, small_group: SmallGroup, d: date, *, today: date) -> ReportRoster:
@@ -811,9 +896,16 @@ def _commit_report_or_raise_conflict(session: Session, small_group_id: int, meet
 
 
 def create_small_group(
-    session: Session, *, name: str, meeting_address: str | None, meeting_day: int | None
+    session: Session,
+    *,
+    name: str,
+    meeting_address: str | None,
+    meeting_day: int | None,
+    audience: GroupAudience = GroupAudience.MEMBERS,
 ) -> SmallGroup:
-    small_group = SmallGroup(name=name, meeting_address=meeting_address, meeting_day=meeting_day)
+    small_group = SmallGroup(
+        name=name, meeting_address=meeting_address, meeting_day=meeting_day, audience=audience
+    )
     session.add(small_group)
     session.commit()
     return small_group
@@ -914,13 +1006,133 @@ def set_small_group_leader(session: Session, small_group: SmallGroup, *, member_
 
 
 def remove_small_group_member(
-    session: Session, small_group: SmallGroup, *, member_id: int, today: date
+    session: Session,
+    small_group: SmallGroup,
+    *,
+    member_id: int,
+    today: date,
+    left_reason: LeftReason | None = None,
 ) -> None:
     """End the member's current period; the row stays as history."""
     membership = get_active_membership(session, small_group.id, member_id)
     if membership is None:
         raise ActiveMembershipNotFoundError
     membership.left_at = today
+    membership.left_reason = left_reason
+    session.commit()
+
+
+def add_guest_to_group(
+    session: Session,
+    small_group: SmallGroup,
+    *,
+    guest_id: int | None,
+    new_guest: NewGuest | None,
+    joined_at: date | None,
+    move_from_other_group: bool,
+    created_by_member_id: int | None,
+    today: date,
+) -> None:
+    """Add an existing guest (`guest_id`) or a new one (`new_guest`; exactly one) from `joined_at`
+    (default today, never later; a past date lets the report form pass the meeting date).
+
+    A guest active in another guest group is refused with `GuestInAnotherGroupError` (naming that
+    group) unless `move_from_other_group`; then the old period ends and the new one starts in one
+    transaction (rule 7). The old period ends the day before `joined_at` (the roster counts the end
+    date as a day in the group); if it started on `joined_at` itself it ends that same day, since a
+    period never ends before it starts. One that started *after* `joined_at` is an overlap, not a
+    move. A new guest is created in the same transaction.
+    """
+    joined_at = joined_at or today
+    if joined_at > today:
+        raise JoinedInFutureError
+    if small_group.closed_at is not None:
+        raise SmallGroupClosedError
+    if small_group.audience != GroupAudience.GUESTS:
+        raise NotGuestGroupError
+
+    if guest_id is not None:
+        if session.get(Guest, guest_id) is None:
+            raise GuestNotFoundError
+        _check_guest_can_join(
+            session, small_group, guest_id, joined_at, move_from_other_group=move_from_other_group
+        )
+    elif new_guest is not None:
+        guest_id = add_guest(
+            session, new_guest, created_by_member_id=created_by_member_id, default_first_visit=joined_at
+        ).id
+    else:
+        raise ValueError("guest_id or new_guest is required")
+
+    session.add(SmallGroupMember.for_group(small_group, guest_id=guest_id, joined_at=joined_at))
+    _commit_or_raise_conflict(session)
+
+
+def _check_guest_can_join(
+    session: Session, small_group: SmallGroup, guest_id: int, joined_at: date, *, move_from_other_group: bool
+) -> None:
+    """Rule 7 for an existing guest; with a move, ends the other period (flushed, not committed)."""
+    current = session.execute(active_guest_period_query(guest_id)).one_or_none()
+    moving: SmallGroupMember | None = None
+    if current is not None:
+        period, group_name = current
+        if period.small_group_id == small_group.id:
+            raise GuestAlreadyInGroupError
+        if not move_from_other_group:
+            raise GuestInAnotherGroupError(OtherGroup(period.small_group_id, group_name, period.joined_at))
+        if period.joined_at > joined_at:
+            raise GuestPeriodOverlapError
+        moving = period
+    # Earlier closed periods (this group or any other) must be over before the join date.
+    earlier_end = session.scalars(
+        select(func.max(SmallGroupMember.left_at)).where(
+            SmallGroupMember.guest_id == guest_id,
+            SmallGroupMember.left_at.is_not(None),
+            SmallGroupMember.id != (moving.id if moving is not None else None),
+        )
+    ).one()
+    if earlier_end is not None and earlier_end >= joined_at:
+        raise GuestPeriodOverlapError
+    if moving is not None:
+        moving.left_at = max(joined_at - timedelta(days=1), moving.joined_at)
+        moving.left_reason = LeftReason.MOVED_GROUP
+        # Close the old period before the new one is inserted, or the partial unique index on
+        # active guest periods would see two.
+        session.flush()
+
+
+def remove_guest_from_group(
+    session: Session,
+    small_group: SmallGroup,
+    *,
+    guest_id: int,
+    left_reason: LeftReason | None,
+    left_at: date | None,
+    today: date,
+) -> None:
+    """End the guest's current period in the group on `left_at` (default today); the row stays as history.
+
+    `left_at` may be earlier (the report form ends it on the meeting date, so that report keeps the
+    guest's row) but never before the period started or before the group's latest report that has an
+    attendance row for the guest, so filed reports stay complete.
+    """
+    left_at = left_at or today
+    if left_at > today:
+        raise LeftInFutureError
+    membership = session.scalars(
+        select(SmallGroupMember).where(
+            SmallGroupMember.small_group_id == small_group.id,
+            SmallGroupMember.guest_id == guest_id,
+            SmallGroupMember.left_at.is_(None),
+        )
+    ).one_or_none()
+    if membership is None:
+        raise ActiveMembershipNotFoundError
+    last_report_date = session.scalar(latest_guest_report_date_query(small_group.id, guest_id))
+    if left_at < membership.joined_at or (last_report_date is not None and left_at < last_report_date):
+        raise LeftTooEarlyError
+    membership.left_at = left_at
+    membership.left_reason = left_reason
     session.commit()
 
 
@@ -994,9 +1206,11 @@ def _commit_or_raise_conflict(session: Session) -> None:
     except IntegrityError as exc:
         session.rollback()
         message = str(exc.orig)
-        # Check the leader index first: the other index name is a prefix of it.
+        # Check the longer index names first: "uq_small_group_members_active" is a prefix of both.
         if "uq_small_group_members_active_leader" in message:
             raise LeaderAlreadyExistsError from exc
+        if "uq_small_group_members_active_guest" in message:
+            raise GuestAlreadyInGroupError from exc
         if "uq_small_group_members_active" in message:
             raise MemberAlreadyInGroupError from exc
         raise

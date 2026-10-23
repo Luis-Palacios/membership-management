@@ -4,6 +4,7 @@ from typing import Annotated
 from fastapi import Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from membership_management.api.config import api_settings
 from membership_management.api.current_member import CurrentMemberDep
 from membership_management.api.dependencies import MembersSessionDep
 from membership_management.api.jwt_auth import AuthClaims, CurrentClaimsDep, has_permission
@@ -173,3 +174,11 @@ def conversation_group_ids(claims: AuthClaims, scope: SmallGroupScope | None) ->
     if scope.full:
         return None if sees_all_observations(claims) else frozenset()
     return scope.group_ids
+
+
+def ensure_guest_groups_enabled() -> None:
+    """Rule 1: creating a guest group or a guest is 409 while the setting is off. Reading is never blocked."""
+    if not api_settings.guest_groups_enabled:
+        raise HTTPException(
+            status_code=409, detail="Guests can't be created while guest groups are off for this church."
+        )

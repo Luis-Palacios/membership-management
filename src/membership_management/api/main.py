@@ -100,6 +100,24 @@ async def duplicate_report_handler(
     )
 
 
+@app.exception_handler(small_groups.GuestInAnotherGroupHTTPError)
+async def guest_in_another_group_handler(
+    _request: Request, exc: small_groups.GuestInAnotherGroupHTTPError
+) -> JSONResponse:
+    # Same shape as any HTTPException, plus the guest's other group so the staff app can ask to move them.
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "detail": exc.detail,
+            "otherGroup": {
+                "id": exc.other_group.id,
+                "name": exc.other_group.name,
+                "joinedAt": exc.other_group.joined_at.isoformat(),
+            },
+        },
+    )
+
+
 @app.exception_handler(report_conversations.StaleConversationHTTPError)
 async def stale_conversation_handler(
     _request: Request, exc: report_conversations.StaleConversationHTTPError

@@ -39,8 +39,8 @@ queries, services, results), imported in `data/models.py`.
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. Setting, migration, models, seed | ✅ | (hash in stage 2's commit) |
-| 2. Guest groups and guest participants | ⬜ | |
+| 1. Setting, migration, models, seed | ✅ | `f5b141e` |
+| 2. Guest groups and guest participants | ✅ | (hash in stage 3's commit) |
 | 3. `/guests` routes and scope | ⬜ | |
 | 4. Guests in reports | ⬜ | |
 | 5. Guests in conversations | ⬜ | |
@@ -91,6 +91,37 @@ queries, services, results), imported in `data/models.py`.
   (`moved_group`, old period ends the day before the new one); Hilario Mena stopped coming
   (`stopped_coming`, in no group); Carolina Baldizón / Baldizon share a phone. Two `--reset` runs
   give identical data.
+- **Stage 2, errors:** the staff app matches on a phrase inside `detail`, so the strings are sentences
+  that contain it: 409 "...while guest groups are off for this church." (creating a guest group, or
+  `newGuest`); 409 "This guest is in another group." with `otherGroup: {id, name, joinedAt}` (a
+  handler in `main.py`, like the duplicate report one; that message deliberately doesn't contain
+  "already"); 409 "This guest is already in the small group."; 422 "Only a guest group can have
+  guests."; 422 "A group's audience can't be changed." (even when it equals the current value, via
+  `model_fields_set`); 422 "The leave date can't be before the guest joined or before a report that
+  has them."; 409 "The join date overlaps an earlier period of this guest."
+- **Stage 2, move rule:** the old period ends the day before `joinedAt` (the roster counts `left_at`
+  as a day in the group). If it started on `joinedAt` itself it ends that same day (a period never
+  ends before it starts, and a zero-length period can't be rewritten in place across two groups), so
+  that one day is in both rosters; one that started after `joinedAt` is the 409 overlap, not a move.
+  A join is also refused (409 overlap) when any earlier closed period of the guest, in any group,
+  ends on or after `joinedAt`.
+- **Stage 2, other choices:** `missed_streaks_by_person` (keys `("member"|"guest", id)`) is the one
+  streak implementation; `missed_streaks` keeps its member signature on top of it (stage 4 moves its
+  callers). `lastAttendedDate` is the newest meeting the guest attended in *any* group, the streak is
+  this group's. Adding an existing guest to a group works with the setting off (only creating is
+  blocked, rule 1). Guests are listed after the members in `members`, by name; `memberCount` and
+  `guestCount` count participants of each kind (a member-group detail has `guestCount: 0`).
+  `DELETE /members/{id}` takes `{leftReason}` only; `leftAt` there is 422, since members leave today.
+  `leftReason` accepts `stopped_coming` and `other` only (`moved_group` is a pydantic 422).
+  A removed guest's `leftAt` may equal the latest report's date (the report keeps the row, rule 12).
+- **Stage 2, how it was tried:** 55 checks with the setting on and 54 with it off (the off run swaps
+  one expectation), as admin, the leader of each guest group, the leader of a member group only, a
+  former leader, `user`, and the same leader without `guests: create`: group create/patch, list and
+  detail shapes and counts, add (existing, new, already in, in another group with and without the
+  move, same-day move, overlaps, member group, unknown guest, future date), remove with each reason
+  and with `leftAt` before and after the last report row, member removal with a reason, member joins
+  and a leader swap in a guest group (audience stays `guests`), closing a guest group. The
+  member-group routes compare equal to stage 1's dump except for the new keys.
 
 ## Who can do what
 

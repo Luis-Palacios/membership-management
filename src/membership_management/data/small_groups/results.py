@@ -4,6 +4,7 @@ from typing import Literal, NamedTuple
 from membership_management.data.small_groups.models import (
     ConversationSide,
     ConversationStatus,
+    GroupAudience,
     ReportSection,
     SmallGroupRole,
 )
@@ -12,10 +13,13 @@ from membership_management.data.small_groups.models import (
 class SmallGroupSummary(NamedTuple):
     id: int
     name: str
+    audience: GroupAudience
     meeting_address: str | None
     meeting_day: int | None
     closed_at: date | None
+    # Members only; guests are counted apart (guest-small-groups rule 20).
     active_member_count: int
+    active_guest_count: int
     leader_member_id: int | None
     leader_name: str | None
 
@@ -24,6 +28,28 @@ class SmallGroupActiveMember(NamedTuple):
     member_id: int
     member_name: str
     role: SmallGroupRole
+    joined_at: date
+
+
+class SmallGroupActiveGuest(NamedTuple):
+    guest_id: int
+    guest_name: str
+    joined_at: date
+
+
+class GuestStanding(NamedTuple):
+    """How a guest in a guest group is doing, for the group detail."""
+
+    guest_id: int
+    missed_streak: int
+    last_attended_date: date | None
+
+
+class OtherGroup(NamedTuple):
+    """The guest group a guest is active in, as much as a caller outside its scope may learn (rule 7)."""
+
+    id: int
+    name: str
     joined_at: date
 
 
@@ -37,7 +63,9 @@ class RosterPeriod(NamedTuple):
 
 
 class AttendanceMark(NamedTuple):
-    member_id: int
+    # Exactly one of the two ids, as in the attendance row.
+    member_id: int | None
+    guest_id: int | None
     attended_group: bool
 
 
