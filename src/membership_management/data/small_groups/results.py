@@ -422,6 +422,7 @@ class InboxGroup(NamedTuple):
     id: int
     name: str
     closed: bool
+    audience: GroupAudience
 
 
 class InboxReport(NamedTuple):

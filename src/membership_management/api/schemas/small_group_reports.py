@@ -52,8 +52,6 @@ class ReportRosterGroupSchema(CamelModel):
 
 class ReportRosterPersonSchema(CamelModel):
     person: PersonSchema
-    # Null on guest rows until staff-app reads `person` everywhere (stage 7 of the API handoff).
-    member_id: int | None
     name: str
     role: SmallGroupRole
     joined_at: date
@@ -136,8 +134,6 @@ class ReportPersonSchema(CamelModel):
 
 class ReportAttendanceSchema(CamelModel):
     person: PersonSchema
-    # Null on guest rows until staff-app reads `person` everywhere (stage 7 of the API handoff).
-    member_id: int | None
     name: str
     role: SmallGroupRole
     # Null when the member's membership no longer covers the meeting date (memberships edited later).

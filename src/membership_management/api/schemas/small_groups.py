@@ -28,14 +28,9 @@ class SmallGroupSummarySchema(CamelModel):
 
 
 class SmallGroupMemberSchema(CamelModel):
-    """One active participant: a member, or (in a guest group) a guest.
-
-    `memberId`/`memberName` are null on guest rows until staff-app reads `person` everywhere.
-    """
+    """One active participant: a member, or (in a guest group) a guest."""
 
     person: PersonSchema
-    member_id: int | None
-    member_name: str | None
     role: SmallGroupRole
     joined_at: date
     # Guest rows of a guest group only (null otherwise): how many of the group's latest reports they

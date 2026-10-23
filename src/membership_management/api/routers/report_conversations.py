@@ -34,7 +34,6 @@ from membership_management.api.schemas.report_conversations import (
     InboxGroupSchema,
     InboxItemSchema,
     InboxLastCommentSchema,
-    InboxMemberSchema,
     InboxReportSchema,
     InboxSchema,
     NeedsMyReplyCountSchema,
@@ -168,9 +167,6 @@ def _thread_schema(thread: ConversationThread) -> ConversationThreadSchema:
     return ConversationThreadSchema(
         id=thread.id,
         anchor=_anchor(thread.member_id, thread.guest_id, thread.section),
-        member=InboxMemberSchema(id=thread.member_id, name=thread.member_name)
-        if thread.member_id is not None and thread.member_name is not None
-        else None,
         person=_person(thread.person),
         status=thread.status,
         resolved_by=ConversationPersonSchema(
@@ -575,11 +571,13 @@ def get_report_conversation_inbox(
                     i.person.id if i.person is not None and i.person.type == "guest" else None,
                     i.section,
                 ),
-                member=InboxMemberSchema(id=i.member.member_id, name=i.member.name)
-                if i.member is not None
-                else None,
                 person=_person(i.person),
-                group=InboxGroupSchema(id=i.group.id, name=i.group.name, closed=i.group.closed),
+                group=InboxGroupSchema(
+                    id=i.group.id,
+                    name=i.group.name,
+                    closed=i.group.closed,
+                    audience=i.group.audience,
+                ),
                 report=InboxReportSchema(id=i.report.id, meeting_date=i.report.meeting_date),
                 last_comment=InboxLastCommentSchema(
                     author_name=i.last_comment.author_name,

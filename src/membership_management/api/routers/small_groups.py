@@ -119,8 +119,6 @@ def _detail(db: MembersSessionDep, small_group: SmallGroup) -> SmallGroupDetailS
     rows = [
         SmallGroupMemberSchema(
             person=PersonSchema(type="member", id=m.member_id, name=m.member_name),
-            member_id=m.member_id,
-            member_name=m.member_name,
             role=m.role,
             joined_at=m.joined_at,
         )
@@ -135,8 +133,6 @@ def _detail(db: MembersSessionDep, small_group: SmallGroup) -> SmallGroupDetailS
     rows += [
         SmallGroupMemberSchema(
             person=PersonSchema(type="guest", id=g.guest_id, name=g.guest_name),
-            member_id=None,
-            member_name=None,
             role=SmallGroupRole.MEMBER,
             joined_at=g.joined_at,
             missed_streak=standing.missed_streak,
