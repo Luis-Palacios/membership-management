@@ -1,9 +1,9 @@
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta
 
 from sqlalchemy import select
 
 from membership_management.data.seed import fixtures
-from membership_management.data.seed.context import SeedContext
+from membership_management.data.seed.context import MANAGUA_TZ, SeedContext
 from membership_management.data.small_groups.models import (
     SmallGroup,
     SmallGroupMember,
@@ -19,8 +19,6 @@ SKIPPED_WEEK_RATE = 0.15
 NO_MEETING_SHARE = 1 / 3
 ATTENDED_GROUP_RATE = 0.8
 ATTENDED_CHURCH_RATE = 0.85
-
-MANAGUA_TZ = timezone(timedelta(hours=-6))
 
 
 def seed_small_group_reports(ctx: SeedContext) -> None:

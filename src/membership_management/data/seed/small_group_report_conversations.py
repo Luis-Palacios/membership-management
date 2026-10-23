@@ -1,10 +1,10 @@
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime, time, timedelta
 
 from sqlalchemy import select
 
 from membership_management.data.members.models import Member, MemberSex
 from membership_management.data.seed import fixtures
-from membership_management.data.seed.context import SeedContext
+from membership_management.data.seed.context import MANAGUA_TZ, SeedContext
 from membership_management.data.small_groups.models import (
     ReportConversation,
     ReportConversationComment,
@@ -15,7 +15,6 @@ from membership_management.data.small_groups.models import (
     SmallGroupRole,
 )
 
-MANAGUA_TZ = timezone(timedelta(hours=-6))
 ELDER_COUNT = 2
 HOURS_BETWEEN_COMMENTS = 7
 
