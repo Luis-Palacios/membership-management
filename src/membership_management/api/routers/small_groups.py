@@ -10,6 +10,7 @@ from membership_management.api.access import (
     ensure_guest_groups_enabled,
 )
 from membership_management.api.church_time import church_today
+from membership_management.api.coded_errors import CodedHTTPError
 from membership_management.api.current_member import CurrentMemberDep
 from membership_management.api.dependencies import MembersSessionDep
 from membership_management.api.jwt_auth import (
@@ -34,6 +35,7 @@ from membership_management.api.schemas.small_groups import (
     SmallGroupUpdateSchema,
 )
 from membership_management.data.guests.services import InvitedByNotFoundError, NewGuest
+from membership_management.data.members.services import MemberInactiveError
 from membership_management.data.small_groups.models import GroupAudience, SmallGroup, SmallGroupRole
 from membership_management.data.small_groups.results import OtherGroup
 from membership_management.data.small_groups.services import (
@@ -259,6 +261,10 @@ def post_close_small_group(
     return _detail(db, small_group)
 
 
+def _member_inactive_error() -> CodedHTTPError:
+    return CodedHTTPError(409, "This member is inactive.", "member_inactive")
+
+
 def _today() -> date:
     return church_today()
 
@@ -295,6 +301,8 @@ def post_small_group_member(
         raise HTTPException(status_code=409, detail="This small group is closed.") from exc
     except MemberNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"Member with ID {body.member_id} not found.") from exc
+    except MemberInactiveError as exc:
+        raise _member_inactive_error() from exc
     except MemberAlreadyInGroupError as exc:
         raise HTTPException(status_code=409, detail="This member is already in the small group.") from exc
     except LeaderAlreadyExistsError as exc:
@@ -331,6 +339,8 @@ def patch_small_group_member(
         change_small_group_member_role(db, small_group, member_id=member_id, role=body.role, today=_today())
     except SmallGroupClosedError as exc:
         raise HTTPException(status_code=409, detail="This small group is closed.") from exc
+    except MemberInactiveError as exc:
+        raise _member_inactive_error() from exc
     except ActiveMembershipNotFoundError as exc:
         raise HTTPException(status_code=404, detail="This member is not in the small group.") from exc
     except LeaderAlreadyExistsError as exc:
@@ -357,6 +367,8 @@ def put_small_group_leader(
         raise HTTPException(status_code=409, detail="This small group is closed.") from exc
     except MemberNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"Member with ID {body.member_id} not found.") from exc
+    except MemberInactiveError as exc:
+        raise _member_inactive_error() from exc
     except LeaderAlreadyExistsError as exc:
         raise HTTPException(status_code=409, detail="This small group already has a leader.") from exc
     return _detail(db, small_group)

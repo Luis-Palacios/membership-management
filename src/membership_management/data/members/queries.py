@@ -1,7 +1,7 @@
-from sqlalchemy import Select, func, select
-from sqlalchemy.orm import aliased
+from sqlalchemy import ScalarSelect, Select, case, func, select
+from sqlalchemy.orm import InstrumentedAttribute, aliased
 
-from membership_management.data.members.models import Member, MemberStatusChange
+from membership_management.data.members.models import Member, MemberStatus, MemberStatusChange
 from membership_management.data.small_groups.models import (
     LeftReason,
     SmallGroup,
@@ -11,19 +11,43 @@ from membership_management.data.small_groups.models import (
 from membership_management.data.small_groups.queries import leads_in_scope_condition
 
 
-def list_members_query() -> Select:
-    return select(
+def _latest_status_change_column(column: InstrumentedAttribute) -> ScalarSelect:
+    """`column` of the member's latest status change (correlated to `members`)."""
+    return (
+        select(column)
+        .where(MemberStatusChange.member_id == Member.id)
+        .order_by(MemberStatusChange.created_at.desc(), MemberStatusChange.id.desc())
+        .limit(1)
+        .scalar_subquery()
+    )
+
+
+def list_members_query(status: MemberStatus | None = MemberStatus.ACTIVE) -> Select:
+    """Members with the given status (`None`: all of them). Inactive ones carry the date they left and why;
+    the reason is private, so callers without `members: setStatus` must not pass it on."""
+    inactive = Member.status == MemberStatus.INACTIVE
+    query = select(
         Member.id.label("id"),
         Member.name.label("name"),
         Member.email.label("email"),
         Member.phone.label("phone"),
         Member.user_id.label("user_id"),
+        Member.status.label("status"),
+        case((inactive, _latest_status_change_column(MemberStatusChange.effective_date))).label(
+            "inactive_since"
+        ),
+        case((inactive, _latest_status_change_column(MemberStatusChange.reason))).label("inactive_reason"),
     ).order_by(Member.id)
+    return query if status is None else query.where(Member.status == status)
 
 
 def member_options_query() -> Select:
-    """Every member's id and name, by name (the add-member picker)."""
-    return select(Member.id.label("id"), Member.name.label("name")).order_by(Member.name, Member.id)
+    """Every active member's id and name, by name (the add-member and leader pickers; rule 11)."""
+    return (
+        select(Member.id.label("id"), Member.name.label("name"))
+        .where(Member.status == MemberStatus.ACTIVE)
+        .order_by(Member.name, Member.id)
+    )
 
 
 def member_search_query(
@@ -37,7 +61,7 @@ def member_search_query(
     """
     escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     query = (
-        select(Member.id.label("id"), Member.name.label("name"))
+        select(Member.id.label("id"), Member.name.label("name"), Member.status.label("status"))
         .where(func.unaccent(Member.name).ilike(func.unaccent(f"%{escaped}%"), escape="\\"))
         .order_by(Member.name, Member.id)
         .limit(limit)

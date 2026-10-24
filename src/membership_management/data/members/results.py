@@ -11,11 +11,20 @@ class MemberSummary(NamedTuple):
     email: str | None
     phone: str | None
     user_id: str | None
+    status: MemberStatus
+    inactive_since: date | None
+    inactive_reason: MemberInactiveReason | None
 
 
 class MemberOption(NamedTuple):
     id: int
     name: str
+
+
+class MemberSearchResult(NamedTuple):
+    id: int
+    name: str
+    status: MemberStatus
 
 
 class MemberSmallGroup(NamedTuple):

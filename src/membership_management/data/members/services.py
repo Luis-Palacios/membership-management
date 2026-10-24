@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Sequence
 from datetime import UTC, date, datetime
 
@@ -30,12 +31,15 @@ from membership_management.data.members.results import (
     MemberLeadGroup,
     MemberOption,
     MemberPastSmallGroup,
+    MemberSearchResult,
     MemberSmallGroup,
     MemberStatusChangeRow,
     MemberSummary,
 )
 from membership_management.data.query_helpers import all_as
 from membership_management.data.small_groups.models import LeftReason, SmallGroupMember
+
+logger = logging.getLogger(__name__)
 
 
 class DuplicateMemberEmailError(Exception):
@@ -66,12 +70,19 @@ class MemberLeadsGroupError(Exception):
         self.groups = groups
 
 
+class MemberInactiveError(Exception):
+    """The member is inactive, so they can't join a group or be linked to a user (rule 11)."""
+
+
 class EffectiveDateInFutureError(Exception):
     """The date the member left is after today."""
 
 
-def list_members(session: Session) -> Sequence[MemberSummary]:
-    return all_as(session, list_members_query(), MemberSummary)
+def list_members(
+    session: Session, status: MemberStatus | None = MemberStatus.ACTIVE
+) -> Sequence[MemberSummary]:
+    """Members with the given status (`None`: all)."""
+    return all_as(session, list_members_query(status), MemberSummary)
 
 
 def list_member_options(session: Session) -> Sequence[MemberOption]:
@@ -80,12 +91,14 @@ def list_member_options(session: Session) -> Sequence[MemberOption]:
 
 def search_members(
     session: Session, text: str, only_group_ids: frozenset[int] | None, *, everyone: bool, limit: int
-) -> Sequence[MemberOption]:
-    """Members matching `text` by name within the caller's scope (`everyone`, or `only_group_ids`)."""
+) -> Sequence[MemberSearchResult]:
+    """Members matching `text` by name within the caller's scope (`everyone`, or `only_group_ids`).
+
+    Inactive members are found only with `everyone`: the scope otherwise needs an open group period."""
     if not everyone and only_group_ids is not None and not only_group_ids:
         return []
     return all_as(
-        session, member_search_query(text, only_group_ids, everyone=everyone, limit=limit), MemberOption
+        session, member_search_query(text, only_group_ids, everyone=everyone, limit=limit), MemberSearchResult
     )
 
 
@@ -159,6 +172,8 @@ def link_member_user(session: Session, member: Member, user_id: str) -> Member:
 
     The user id is not checked against auth-server (separate DB); callers only offer real users.
     """
+    if member.status == MemberStatus.INACTIVE:
+        raise MemberInactiveError
     if member.user_id == user_id:
         return member
     if member.user_id is not None:
@@ -182,8 +197,9 @@ def link_member_user(session: Session, member: Member, user_id: str) -> Member:
 def link_member_by_accepted_invite(session: Session, user_id: str, email: str) -> int | None:
     """Link the one unlinked member whose email matches (case-insensitive); return their id.
 
-    Changes nothing and returns None when the user is already linked or no unlinked member has
-    that email. Never raises for those cases: the caller is an invite acceptance that must not fail.
+    Changes nothing and returns None when the user is already linked, no unlinked member has that
+    email, or that member is inactive (rule 11). Never raises for those cases: the caller is an invite
+    acceptance that must not fail.
     """
     if session.scalar(select(Member.id).where(Member.user_id == user_id)) is not None:
         return None
@@ -192,6 +208,11 @@ def link_member_by_accepted_invite(session: Session, user_id: str, email: str) -
         select(Member).where(func.lower(Member.email) == email.lower(), Member.user_id.is_(None))
     )
     if member is None:
+        return None
+    if member.status == MemberStatus.INACTIVE:
+        logger.info(
+            "Accepted invite for user %s matches inactive member %s; not linking.", user_id, member.id
+        )
         return None
     member.user_id = user_id
     try:

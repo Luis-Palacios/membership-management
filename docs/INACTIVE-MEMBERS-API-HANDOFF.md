@@ -48,8 +48,8 @@ Keep the existing conventions:
 | Stage | Status | Commit |
 | --- | --- | --- |
 | 1. Migration, models, seed | ✅ | 2208a5a |
-| 2. Deactivate, reactivate, history | ✅ | this commit |
-| 3. Keeping inactive members out | ⬜ | |
+| 2. Deactivate, reactivate, history | ✅ | 438f306 |
+| 3. Keeping inactive members out | ✅ | this commit |
 | 4. Docs | ⬜ | |
 
 ### Decisions and deviations
