@@ -206,11 +206,15 @@ class AttendanceAnchorSchema(CamelModel):
     type: Literal["attendance"] = "attendance"
     member_id: int
 
+
 class SectionAnchorSchema(CamelModel):
     type: Literal["section"] = "section"
     key: ReportSection
 
-ConversationAnchorSchema = Annotated[AttendanceAnchorSchema | SectionAnchorSchema, Field(discriminator="type")]
+
+ConversationAnchorSchema = Annotated[
+    AttendanceAnchorSchema | SectionAnchorSchema, Field(discriminator="type")
+]
 ```
 
 Fix every place that builds an anchor from `member_id` (`_thread_schema`, the summaries) so it

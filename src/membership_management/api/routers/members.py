@@ -3,9 +3,12 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from membership_management.api.access import MemberScope, MemberScopeDep
+from membership_management.api.church_time import church_today
+from membership_management.api.coded_errors import CodedHTTPError
 from membership_management.api.current_member import CurrentMemberDep
 from membership_management.api.dependencies import MembersSessionDep
 from membership_management.api.jwt_auth import (
+    AuthClaims,
     CurrentClaimsDep,
     get_current_claims,
     has_permission,
@@ -14,24 +17,37 @@ from membership_management.api.jwt_auth import (
 from membership_management.api.rate_limit import default_user_rate_limit, rate_limit
 from membership_management.api.schemas.members import (
     MemberCreateSchema,
+    MemberDeactivateSchema,
     MemberDetailSchema,
     MemberOptionSchema,
+    MemberPastSmallGroupSchema,
+    MemberReactivateSchema,
     MemberSmallGroupSchema,
+    MemberStatusChangeSchema,
     MemberSummarySchema,
     MemberUpdateSchema,
     MemberUserLinkSchema,
 )
-from membership_management.data.members.models import Member
+from membership_management.data.members.models import Member, MemberStatus
 from membership_management.data.members.services import (
     DuplicateMemberEmailError,
+    EffectiveDateInFutureError,
+    MemberAlreadyActiveError,
+    MemberAlreadyInactiveError,
     MemberAlreadyLinkedError,
+    MemberLeadsGroupError,
     UserAlreadyLinkedError,
     create_member,
+    deactivate_member,
     get_member,
+    get_member_latest_status_change,
+    get_member_past_small_groups,
     get_member_small_groups,
+    get_member_status_history,
     link_member_user,
     list_member_options,
     list_members,
+    reactivate_member,
     search_members,
     unlink_member_user,
     update_member,
@@ -44,8 +60,13 @@ router = APIRouter(
 )
 
 
-def member_detail(db: MembersSessionDep, member: Member) -> MemberDetailSchema:
+def member_detail(db: MembersSessionDep, member: Member, claims: AuthClaims) -> MemberDetailSchema:
+    """The member as `claims` may see them: everyone who can see a member sees that they're inactive and
+    since when; the reason and note only go to `members: setStatus` (inactive-members rule 5)."""
     small_groups = get_member_small_groups(db, member.id)
+    inactive = member.status == MemberStatus.INACTIVE
+    change = get_member_latest_status_change(db, member.id) if inactive else None
+    private = change is not None and has_permission(claims, "members", "setStatus")
     return MemberDetailSchema(
         id=member.id,
         name=member.name,
@@ -63,6 +84,20 @@ def member_detail(db: MembersSessionDep, member: Member) -> MemberDetailSchema:
                 joined_at=group.joined_at,
             )
             for group in small_groups
+        ],
+        status=member.status,
+        inactive_since=change.effective_date if change is not None else None,
+        inactive_reason=change.reason if private and change is not None else None,
+        inactive_note=change.note if private and change is not None else None,
+        past_small_groups=[
+            MemberPastSmallGroupSchema(
+                small_group_id=group.small_group_id,
+                small_group_name=group.small_group_name,
+                role=group.role,
+                joined_at=group.joined_at,
+                left_at=group.left_at,
+            )
+            for group in (get_member_past_small_groups(db, member.id) if inactive else [])
         ],
     )
 
@@ -132,10 +167,10 @@ def get_membermember_detail(
 ) -> MemberDetailSchema:
     # The caller's own member is always readable (rule 11), whatever the role: My profile loads it.
     if current_member is not None and current_member.id == member_id:
-        return member_detail(db, current_member)
+        return member_detail(db, current_member, claims)
     if not has_permission(claims, "members", "view"):
         raise HTTPException(status_code=403, detail="You don't have permission to do this.")
-    return member_detail(db, _get_or_404(db, member_id, scope))
+    return member_detail(db, _get_or_404(db, member_id, scope), claims)
 
 
 @router.post(
@@ -148,7 +183,9 @@ def get_membermember_detail(
         Depends(rate_limit("20/minute", scope="create_member")),
     ],
 )
-def post_member(body: MemberCreateSchema, db: MembersSessionDep) -> MemberDetailSchema:
+def post_member(
+    body: MemberCreateSchema, db: MembersSessionDep, claims: CurrentClaimsDep
+) -> MemberDetailSchema:
     try:
         member = create_member(
             db,
@@ -161,7 +198,7 @@ def post_member(body: MemberCreateSchema, db: MembersSessionDep) -> MemberDetail
         )
     except DuplicateMemberEmailError as exc:
         raise HTTPException(status_code=409, detail="A member with this email already exists.") from exc
-    return member_detail(db, member)
+    return member_detail(db, member, claims)
 
 
 @router.patch(
@@ -197,7 +234,7 @@ def patch_member(
         member = update_member(db, member, changes)
     except DuplicateMemberEmailError as exc:
         raise HTTPException(status_code=409, detail="A member with this email already exists.") from exc
-    return member_detail(db, member)
+    return member_detail(db, member, claims)
 
 
 @router.put(
@@ -209,7 +246,9 @@ def patch_member(
         Depends(rate_limit("20/minute", scope="link_member_user")),
     ],
 )
-def put_member_user(member_id: int, body: MemberUserLinkSchema, db: MembersSessionDep) -> MemberDetailSchema:
+def put_member_user(
+    member_id: int, body: MemberUserLinkSchema, db: MembersSessionDep, claims: CurrentClaimsDep
+) -> MemberDetailSchema:
     member = _get_or_404(db, member_id)
     try:
         member = link_member_user(db, member, body.user_id)
@@ -217,7 +256,7 @@ def put_member_user(member_id: int, body: MemberUserLinkSchema, db: MembersSessi
         raise HTTPException(status_code=409, detail="This member is already linked to another user.") from exc
     except UserAlreadyLinkedError as exc:
         raise HTTPException(status_code=409, detail="This user is already linked to another member.") from exc
-    return member_detail(db, member)
+    return member_detail(db, member, claims)
 
 
 @router.delete(
@@ -233,3 +272,85 @@ def put_member_user(member_id: int, body: MemberUserLinkSchema, db: MembersSessi
 def delete_member_user(member_id: int, db: MembersSessionDep) -> None:
     member = _get_or_404(db, member_id)
     unlink_member_user(db, member)
+
+
+@router.post(
+    "/{member_id}/deactivate",
+    name="deactivate_member",
+    description="Mark the member inactive: ends every open group period today (members: setStatus)",
+    dependencies=[
+        Depends(require_permission("members", "setStatus")),
+        Depends(rate_limit("20/minute", scope="deactivate_member")),
+    ],
+)
+def post_member_deactivate(
+    member_id: int, body: MemberDeactivateSchema, db: MembersSessionDep, claims: CurrentClaimsDep
+) -> MemberDetailSchema:
+    member = _get_or_404(db, member_id)
+    # Rule 8, before the service: nobody marks their own member inactive.
+    if member.user_id == claims.sub:
+        raise CodedHTTPError(409, "You can't mark your own member as inactive.", "self")
+    try:
+        member = deactivate_member(
+            db,
+            member,
+            reason=body.reason,
+            effective_date=body.effective_date,
+            note=body.note,
+            changed_by_user_id=claims.sub,
+            today=church_today(),
+        )
+    except MemberAlreadyInactiveError as exc:
+        raise CodedHTTPError(409, "This member is already inactive.", "already_inactive") from exc
+    except MemberLeadsGroupError as exc:
+        raise CodedHTTPError(
+            409,
+            "This member leads a small group. Choose another leader first.",
+            "leads_group",
+            groups=[{"id": g.small_group_id, "name": g.small_group_name} for g in exc.groups],
+        ) from exc
+    except EffectiveDateInFutureError as exc:
+        raise HTTPException(status_code=422, detail="The date they left can't be in the future.") from exc
+    return member_detail(db, member, claims)
+
+
+@router.post(
+    "/{member_id}/reactivate",
+    name="reactivate_member",
+    description="Mark the member active again from today; their groups are not restored (members: setStatus)",
+    dependencies=[
+        Depends(require_permission("members", "setStatus")),
+        Depends(rate_limit("20/minute", scope="reactivate_member")),
+    ],
+)
+def post_member_reactivate(
+    member_id: int,
+    db: MembersSessionDep,
+    claims: CurrentClaimsDep,
+    body: MemberReactivateSchema | None = None,
+) -> MemberDetailSchema:
+    member = _get_or_404(db, member_id)
+    try:
+        member = reactivate_member(
+            db,
+            member,
+            note=body.note if body is not None else None,
+            changed_by_user_id=claims.sub,
+            today=church_today(),
+        )
+    except MemberAlreadyActiveError as exc:
+        raise CodedHTTPError(409, "This member is already active.", "already_active") from exc
+    return member_detail(db, member, claims)
+
+
+@router.get(
+    "/{member_id}/status-history",
+    name="get_member_status_history",
+    description="Every status change of the member, newest first (members: setStatus)",
+    dependencies=[Depends(require_permission("members", "setStatus"))],
+)
+def get_member_status_history_route(member_id: int, db: MembersSessionDep) -> list[MemberStatusChangeSchema]:
+    member = _get_or_404(db, member_id)
+    return [
+        MemberStatusChangeSchema(**change._asdict()) for change in get_member_status_history(db, member.id)
+    ]

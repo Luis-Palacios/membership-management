@@ -1,27 +1,41 @@
 from collections.abc import Sequence
-from datetime import date
+from datetime import UTC, date, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from membership_management.data.members.models import Member, MemberSex
+from membership_management.data.members.models import (
+    Member,
+    MemberInactiveReason,
+    MemberSex,
+    MemberStatus,
+    MemberStatusChange,
+)
 from membership_management.data.members.queries import (
     list_members_query,
     member_active_in_open_groups_query,
     member_active_leads_query,
     member_active_small_groups_query,
     member_by_user_id_query,
+    member_latest_status_change_query,
+    member_open_leader_groups_query,
     member_options_query,
+    member_past_small_groups_query,
     member_search_query,
+    member_status_history_query,
 )
 from membership_management.data.members.results import (
     MemberLead,
+    MemberLeadGroup,
     MemberOption,
+    MemberPastSmallGroup,
     MemberSmallGroup,
+    MemberStatusChangeRow,
     MemberSummary,
 )
 from membership_management.data.query_helpers import all_as
+from membership_management.data.small_groups.models import LeftReason, SmallGroupMember
 
 
 class DuplicateMemberEmailError(Exception):
@@ -34,6 +48,26 @@ class MemberAlreadyLinkedError(Exception):
 
 class UserAlreadyLinkedError(Exception):
     """Another member is already linked to this user."""
+
+
+class MemberAlreadyInactiveError(Exception):
+    """The member is already inactive."""
+
+
+class MemberAlreadyActiveError(Exception):
+    """The member is already active."""
+
+
+class MemberLeadsGroupError(Exception):
+    """The member is the leader of open groups, so they can't be deactivated (rule 7)."""
+
+    def __init__(self, groups: Sequence[MemberLeadGroup]) -> None:
+        super().__init__("The member leads open groups.")
+        self.groups = groups
+
+
+class EffectiveDateInFutureError(Exception):
+    """The date the member left is after today."""
 
 
 def list_members(session: Session) -> Sequence[MemberSummary]:
@@ -79,6 +113,19 @@ def get_member_leads(session: Session, member_id: int) -> Sequence[MemberLead]:
 
 def get_member_small_groups(session: Session, member_id: int) -> Sequence[MemberSmallGroup]:
     return all_as(session, member_active_small_groups_query(member_id), MemberSmallGroup)
+
+
+def get_member_latest_status_change(session: Session, member_id: int) -> MemberStatusChange | None:
+    return session.scalar(member_latest_status_change_query(member_id))
+
+
+def get_member_past_small_groups(session: Session, member_id: int) -> Sequence[MemberPastSmallGroup]:
+    """The periods the member's latest deactivation ended (empty if they were never deactivated)."""
+    return all_as(session, member_past_small_groups_query(member_id), MemberPastSmallGroup)
+
+
+def get_member_status_history(session: Session, member_id: int) -> Sequence[MemberStatusChangeRow]:
+    return all_as(session, member_status_history_query(member_id), MemberStatusChangeRow)
 
 
 def create_member(
@@ -162,6 +209,103 @@ def unlink_member_user(session: Session, member: Member) -> None:
         return
     member.user_id = None
     session.commit()
+
+
+def deactivate_member(
+    session: Session,
+    member: Member,
+    *,
+    reason: MemberInactiveReason,
+    effective_date: date,
+    note: str | None,
+    changed_by_user_id: str,
+    today: date,
+) -> Member:
+    """Mark the member inactive and end every open group period today (rule 6), in one transaction.
+
+    `effective_date` (the date they left) is only recorded; it never moves a period's `left_at`.
+    """
+    # Lock the row, so two deactivations (or a deactivation and a reactivation) queue up.
+    session.refresh(member, with_for_update=True)
+    if member.status == MemberStatus.INACTIVE:
+        session.rollback()
+        raise MemberAlreadyInactiveError
+    leads = all_as(session, member_open_leader_groups_query(member.id), MemberLeadGroup)
+    if leads:
+        session.rollback()
+        raise MemberLeadsGroupError(leads)
+    if effective_date > today:
+        session.rollback()
+        raise EffectiveDateInFutureError
+    session.execute(
+        update(SmallGroupMember)
+        .where(SmallGroupMember.member_id == member.id, SmallGroupMember.left_at.is_(None))
+        # greatest() keeps the left_after_joined check satisfied for a not-yet-started membership.
+        .values(
+            left_at=func.greatest(SmallGroupMember.joined_at, today), left_reason=LeftReason.MEMBER_INACTIVE
+        )
+        # The ORM rows aren't touched afterwards, so don't spend a SELECT syncing them.
+        .execution_options(synchronize_session=False)
+    )
+    _record_status_change(
+        session,
+        member,
+        MemberStatus.INACTIVE,
+        reason=reason,
+        effective_date=effective_date,
+        note=note,
+        changed_by_user_id=changed_by_user_id,
+    )
+    session.commit()
+    return member
+
+
+def reactivate_member(
+    session: Session, member: Member, *, note: str | None, changed_by_user_id: str, today: date
+) -> Member:
+    """Mark the member active from today. Their groups are not restored (rule 10)."""
+    session.refresh(member, with_for_update=True)
+    if member.status == MemberStatus.ACTIVE:
+        session.rollback()
+        raise MemberAlreadyActiveError
+    _record_status_change(
+        session,
+        member,
+        MemberStatus.ACTIVE,
+        reason=None,
+        effective_date=today,
+        note=note,
+        changed_by_user_id=changed_by_user_id,
+    )
+    session.commit()
+    return member
+
+
+def _record_status_change(
+    session: Session,
+    member: Member,
+    status: MemberStatus,
+    *,
+    reason: MemberInactiveReason | None,
+    effective_date: date,
+    note: str | None,
+    changed_by_user_id: str,
+) -> None:
+    """Append the history row and copy it onto the member (rule 2); the caller commits."""
+    now = datetime.now(UTC)
+    session.add(
+        MemberStatusChange(
+            member_id=member.id,
+            status=status,
+            reason=reason,
+            effective_date=effective_date,
+            note=note,
+            changed_by_user_id=changed_by_user_id,
+            created_at=now,
+        )
+    )
+    member.status = status
+    member.status_changed_at = now
 
 
 def _flush_or_raise_duplicate(session: Session) -> None:

@@ -14,6 +14,7 @@ from sqlalchemy.pool import QueuePool
 # SmallGroupMember -> Member) resolve classes by name, and fail with "expression 'Member' failed to
 # locate a name" if a route only imported one side.
 import membership_management.data.models  # noqa: F401
+from membership_management.api.coded_errors import CodedHTTPError
 from membership_management.api.config import api_settings
 from membership_management.api.logging_config import configure_logging
 from membership_management.api.middleware import (
@@ -85,6 +86,14 @@ app.include_router(guests.router)
 app.include_router(small_group_reports.router)
 app.include_router(report_conversations.router)
 app.include_router(internal.router)
+
+
+@app.exception_handler(CodedHTTPError)
+async def coded_error_handler(_request: Request, exc: CodedHTTPError) -> JSONResponse:
+    # Same shape as any HTTPException, plus `code` and the error's extra fields.
+    return JSONResponse(
+        status_code=exc.status_code, content={"detail": exc.detail, "code": exc.code, **exc.extra}
+    )
 
 
 @app.exception_handler(small_group_reports.DuplicateReportHTTPError)

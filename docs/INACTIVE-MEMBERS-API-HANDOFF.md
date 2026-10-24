@@ -47,14 +47,45 @@ Keep the existing conventions:
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. Migration, models, seed | ⬜ | |
-| 2. Deactivate, reactivate, history | ⬜ | |
+| 1. Migration, models, seed | ✅ | 2208a5a |
+| 2. Deactivate, reactivate, history | ✅ | this commit |
 | 3. Keeping inactive members out | ⬜ | |
 | 4. Docs | ⬜ | |
 
 ### Decisions and deviations
 
-- [Fill in per stage: what was tried, as which roles, against which database.]
+All stages were tried against the scratch database `ima-scratch` (never the dev one), with a
+`TestClient` and `get_current_claims` overridden per role. The permission sets copy
+`auth-server/src/permissions/statements.ts` on its `inactive-members` branch, where `setStatus` is
+already present. One slip: a final `uv run alembic check` ran without the scratch URL and read the dev
+DB (read-only; it only reported "not up to date").
+
+**Stage 1.**
+- `alembic upgrade head`, `alembic check`, `downgrade -1` and `upgrade head` round-trip on the scratch DB.
+- The downgrade refuses (`RuntimeError`) once a `member_inactive` period exists.
+- Seeded with the old code and again with the new: members 1-55, group periods, reports, attendances and
+  guests are byte-identical (compared column by column). The new rows are members 56-58, added by
+  `seed_inactive_members` (last in `SEEDERS`): 56 left, came back and left again (linked to
+  `seed-user-inactive-1`), 57 transferred, 58 deceased.
+- The `status` CHECK is also on `member_status_changes` (the spec lists it as VARCHAR(10) only).
+
+**Stage 2.** 39 checks in a scratch script, as `admin`, `elder` (linked and unlinked), `smallGroupLeader`
+(linked, leading the group), `deacon` and `user`:
+- Leader, deacon and user get 403 on all three routes. A leader of an open group gets 409 `leads_group`
+  with `groups` and nothing changes (no history row). A co-leader is removed from the group.
+- `left_at` is today (Managua) while `effective_date` stays as sent. Reactivating leaves groups closed.
+- Repeats give `already_inactive` / `already_active`. Self gives `self`. A future date, a note over 1000
+  characters and an unknown reason give 422. A blank note is stored as null.
+- A user viewing their own inactive member sees the status and `inactiveSince` but a null reason and note,
+  and gets 403 on the history. A leader gets 404 for a former member who is now inactive.
+- The history is newest first, and `changedByName` is the linked member's name or null.
+- `pastSmallGroups` is the `member_inactive` periods with the latest `left_at` (no timezone maths). If a
+  member is deactivated, reactivated and deactivated again on the same day, both periods have that
+  `left_at`, so both show. That only happens within one day.
+- `CodedHTTPError` (`api/coded_errors.py`) and one handler in `main.py` produce the 409 bodies
+  `{detail, code, ...extra}`; stage 3 reuses it.
+- `member_detail` now takes the caller's claims (to decide who sees the reason and note), so `PATCH
+  /me/member` and the other callers pass them.
 
 ## Stage 1: migration, models, seed
 

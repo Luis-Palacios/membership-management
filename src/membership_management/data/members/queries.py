@@ -1,7 +1,13 @@
 from sqlalchemy import Select, func, select
+from sqlalchemy.orm import aliased
 
-from membership_management.data.members.models import Member
-from membership_management.data.small_groups.models import SmallGroup, SmallGroupMember
+from membership_management.data.members.models import Member, MemberStatusChange
+from membership_management.data.small_groups.models import (
+    LeftReason,
+    SmallGroup,
+    SmallGroupMember,
+    SmallGroupRole,
+)
 from membership_management.data.small_groups.queries import leads_in_scope_condition
 
 
@@ -102,5 +108,83 @@ def member_active_leads_query(member_id: int) -> Select:
         )
         .join(SmallGroup, SmallGroup.id == SmallGroupMember.small_group_id)
         .where(SmallGroupMember.member_id == member_id, leads_in_scope_condition())
+        .order_by(SmallGroup.name)
+    )
+
+
+def member_open_leader_groups_query(member_id: int) -> Select:
+    """The open groups the member is the leader of right now (co-leaders don't count; rule 7)."""
+    return (
+        select(SmallGroup.id.label("small_group_id"), SmallGroup.name.label("small_group_name"))
+        .select_from(SmallGroupMember)
+        .join(SmallGroup, SmallGroup.id == SmallGroupMember.small_group_id)
+        .where(
+            SmallGroupMember.member_id == member_id,
+            SmallGroupMember.role == SmallGroupRole.LEADER,
+            SmallGroupMember.left_at.is_(None),
+            SmallGroup.closed_at.is_(None),
+        )
+        .order_by(SmallGroup.name)
+    )
+
+
+def member_latest_status_change_query(member_id: int) -> Select:
+    return (
+        select(MemberStatusChange)
+        .where(MemberStatusChange.member_id == member_id)
+        .order_by(MemberStatusChange.created_at.desc(), MemberStatusChange.id.desc())
+        .limit(1)
+    )
+
+
+def member_status_history_query(member_id: int) -> Select:
+    """Every status change of the member, newest first, with the name of whoever made it (when that
+    user is linked to a member)."""
+    changed_by = aliased(Member)
+    return (
+        select(
+            MemberStatusChange.status.label("status"),
+            MemberStatusChange.reason.label("reason"),
+            MemberStatusChange.effective_date.label("effective_date"),
+            MemberStatusChange.note.label("note"),
+            MemberStatusChange.changed_by_user_id.label("changed_by_user_id"),
+            changed_by.name.label("changed_by_name"),
+            MemberStatusChange.created_at.label("created_at"),
+        )
+        .outerjoin(changed_by, changed_by.user_id == MemberStatusChange.changed_by_user_id)
+        .where(MemberStatusChange.member_id == member_id)
+        .order_by(MemberStatusChange.created_at.desc(), MemberStatusChange.id.desc())
+    )
+
+
+def member_past_small_groups_query(member_id: int) -> Select:
+    """The periods the member's latest deactivation ended.
+
+    Deactivating closes every open period on the same day, so these are the `member_inactive` periods
+    with the latest `left_at`. Reactivating reopens nothing, so while the member is inactive no later
+    period can exist.
+    """
+    latest = (
+        select(func.max(SmallGroupMember.left_at))
+        .where(
+            SmallGroupMember.member_id == member_id,
+            SmallGroupMember.left_reason == LeftReason.MEMBER_INACTIVE,
+        )
+        .scalar_subquery()
+    )
+    return (
+        select(
+            SmallGroup.id.label("small_group_id"),
+            SmallGroup.name.label("small_group_name"),
+            SmallGroupMember.role.label("role"),
+            SmallGroupMember.joined_at.label("joined_at"),
+            SmallGroupMember.left_at.label("left_at"),
+        )
+        .join(SmallGroup, SmallGroup.id == SmallGroupMember.small_group_id)
+        .where(
+            SmallGroupMember.member_id == member_id,
+            SmallGroupMember.left_reason == LeftReason.MEMBER_INACTIVE,
+            SmallGroupMember.left_at == latest,
+        )
         .order_by(SmallGroup.name)
     )

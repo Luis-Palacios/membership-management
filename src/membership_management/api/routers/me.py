@@ -44,10 +44,10 @@ def get_me(claims: CurrentClaimsDep, member: CurrentMemberDep, db: MembersSessio
     ],
 )
 def patch_my_member(
-    body: MyMemberUpdateSchema, member: CurrentMemberDep, db: MembersSessionDep
+    body: MyMemberUpdateSchema, member: CurrentMemberDep, db: MembersSessionDep, claims: CurrentClaimsDep
 ) -> MemberDetailSchema:
     # Only the member linked to the JWT `sub`, never an id from the request, so no members scope (rule 2).
     if member is None:
         raise HTTPException(status_code=404, detail="Your account isn't linked to a member.")
     # No email field, so no duplicate-email case to handle.
-    return member_detail(db, update_member(db, member, body.model_dump(exclude_unset=True)))
+    return member_detail(db, update_member(db, member, body.model_dump(exclude_unset=True)), claims)
