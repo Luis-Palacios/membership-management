@@ -10,6 +10,7 @@ from membership_management.data.config import settings
 from membership_management.data.database import MemberManagementBase
 from membership_management.data.seed.context import MANAGUA_TZ, SeedContext, Seeder
 from membership_management.data.seed.guests import seed_guests
+from membership_management.data.seed.inactive_members import seed_inactive_members
 from membership_management.data.seed.members import seed_members
 from membership_management.data.seed.small_group_report_conversations import seed_report_conversations
 from membership_management.data.seed.small_group_reports import seed_small_group_reports
@@ -23,6 +24,8 @@ SEEDERS: list[Seeder] = [
     seed_report_conversations,
     # Last: its groups, guests and reports are extra rows, so the seeders above keep their output.
     seed_guests,
+    # After everything: new members with closed periods only, so no seeded row changes.
+    seed_inactive_members,
 ]
 
 DEFAULT_RNG_SEED = 2026

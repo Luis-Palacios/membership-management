@@ -21,10 +21,12 @@ class SmallGroupRole(StrEnum):
 
 class LeftReason(StrEnum):
     """Why a period ended (guest-small-groups spec, rule 8). Null for role changes, group closes and
-    history from before this existed. `moved_group` is only ever set by a move between guest groups."""
+    history from before this existed. `moved_group` is only ever set by a move between guest groups;
+    `member_inactive` only by deactivating the member (inactive-members spec, rule 6)."""
 
     STOPPED_COMING = "stopped_coming"
     MOVED_GROUP = "moved_group"
+    MEMBER_INACTIVE = "member_inactive"
     OTHER = "other"
 
 
