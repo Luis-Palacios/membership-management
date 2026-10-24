@@ -9,7 +9,8 @@ from sqlalchemy.orm import Session
 
 from membership_management.data.guests.models import Guest
 from membership_management.data.guests.services import NewGuest, add_guest
-from membership_management.data.members.models import Member
+from membership_management.data.members.models import Member, MemberStatus
+from membership_management.data.members.services import MemberInactiveError
 from membership_management.data.query_helpers import all_as
 from membership_management.data.small_groups.models import (
     GroupAudience,
@@ -965,8 +966,7 @@ def add_small_group_member(
         raise JoinedInFutureError
     if small_group.closed_at is not None:
         raise SmallGroupClosedError
-    if session.get(Member, member_id) is None:
-        raise MemberNotFoundError
+    _ensure_member_active(session, member_id)
     if get_active_membership(session, small_group.id, member_id) is not None:
         raise MemberAlreadyInGroupError
     if _overlaps_past_period(session, small_group.id, member_id, joined_at):
@@ -982,6 +982,9 @@ def change_small_group_member_role(
     """Change the role by closing the current period and opening a new one (kept as history)."""
     if small_group.closed_at is not None:
         raise SmallGroupClosedError
+    member = session.get(Member, member_id)
+    if member is not None and member.status == MemberStatus.INACTIVE:
+        raise MemberInactiveError
     membership = get_active_membership(session, small_group.id, member_id)
     if membership is None:
         raise ActiveMembershipNotFoundError
@@ -996,8 +999,7 @@ def set_small_group_leader(session: Session, small_group: SmallGroup, *, member_
     """Make the member the leader in one transaction, demoting any current leader to co-leader."""
     if small_group.closed_at is not None:
         raise SmallGroupClosedError
-    if session.get(Member, member_id) is None:
-        raise MemberNotFoundError
+    _ensure_member_active(session, member_id)
     current_leader = session.scalars(
         select(SmallGroupMember).where(
             SmallGroupMember.small_group_id == small_group.id,
@@ -1162,6 +1164,15 @@ def remove_guest_from_group(
     membership.left_at = left_at
     membership.left_reason = left_reason
     session.commit()
+
+
+def _ensure_member_active(session: Session, member_id: int) -> None:
+    """The member exists and is active: an inactive one can't join a group or become its leader (rule 11)."""
+    member = session.get(Member, member_id)
+    if member is None:
+        raise MemberNotFoundError
+    if member.status == MemberStatus.INACTIVE:
+        raise MemberInactiveError
 
 
 def _add_membership(

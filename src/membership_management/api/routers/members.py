@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -22,6 +22,7 @@ from membership_management.api.schemas.members import (
     MemberOptionSchema,
     MemberPastSmallGroupSchema,
     MemberReactivateSchema,
+    MemberSearchResultSchema,
     MemberSmallGroupSchema,
     MemberStatusChangeSchema,
     MemberSummarySchema,
@@ -35,6 +36,7 @@ from membership_management.data.members.services import (
     MemberAlreadyActiveError,
     MemberAlreadyInactiveError,
     MemberAlreadyLinkedError,
+    MemberInactiveError,
     MemberLeadsGroupError,
     UserAlreadyLinkedError,
     create_member,
@@ -113,13 +115,28 @@ def _get_or_404(db: MembersSessionDep, member_id: int, scope: MemberScope | None
 @router.get(
     "",
     name="list_members",
-    description="List all members, with email and phone",
+    description="List members with email and phone; active ones unless status is inactive or all",
     dependencies=[Depends(require_permission("members", "view", "all"))],
 )
-def get_members(db: MembersSessionDep) -> list[MemberSummarySchema]:
+def get_members(
+    db: MembersSessionDep,
+    claims: CurrentClaimsDep,
+    status: Annotated[Literal["active", "inactive", "all"], Query()] = "active",
+) -> list[MemberSummarySchema]:
+    # The reason is private (rule 5): only for callers who can mark members inactive.
+    private = has_permission(claims, "members", "setStatus")
     return [
-        MemberSummarySchema(id=m.id, name=m.name, email=m.email, phone=m.phone, user_id=m.user_id)
-        for m in list_members(db)
+        MemberSummarySchema(
+            id=m.id,
+            name=m.name,
+            email=m.email,
+            phone=m.phone,
+            user_id=m.user_id,
+            status=m.status,
+            inactive_since=m.inactive_since,
+            inactive_reason=m.inactive_reason if private else None,
+        )
+        for m in list_members(db, None if status == "all" else MemberStatus(status))
     ]
 
 
@@ -127,7 +144,7 @@ def get_members(db: MembersSessionDep) -> list[MemberSummarySchema]:
 @router.get(
     "/options",
     name="list_member_options",
-    description="Every member's id and name, by name (the add-member picker)",
+    description="Every active member's id and name, by name (the add-member picker)",
     dependencies=[Depends(require_permission("members", "search"))],
 )
 def get_member_options(db: MembersSessionDep) -> list[MemberOptionSchema]:
@@ -145,12 +162,12 @@ def get_member_search(
     scope: MemberScopeDep,
     q: Annotated[str, Query(min_length=2, max_length=100)],
     limit: Annotated[int, Query(ge=1, le=20)] = 10,
-) -> list[MemberOptionSchema]:
+) -> list[MemberSearchResultSchema]:
     text = q.strip()
     if len(text) < 2:
         return []
     found = search_members(db, text, scope.group_ids, everyone=scope.full, limit=limit)
-    return [MemberOptionSchema(id=m.id, name=m.name) for m in found]
+    return [MemberSearchResultSchema(id=m.id, name=m.name, status=m.status) for m in found]
 
 
 @router.get(
@@ -252,6 +269,8 @@ def put_member_user(
     member = _get_or_404(db, member_id)
     try:
         member = link_member_user(db, member, body.user_id)
+    except MemberInactiveError as exc:
+        raise CodedHTTPError(409, "This member is inactive.", "member_inactive") from exc
     except MemberAlreadyLinkedError as exc:
         raise HTTPException(status_code=409, detail="This member is already linked to another user.") from exc
     except UserAlreadyLinkedError as exc:

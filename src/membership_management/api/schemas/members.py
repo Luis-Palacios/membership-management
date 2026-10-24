@@ -19,12 +19,22 @@ class MemberOptionSchema(CamelModel):
     name: str
 
 
+class MemberSearchResultSchema(CamelModel):
+    id: int
+    name: str
+    status: MemberStatus
+
+
 class MemberSummarySchema(CamelModel):
     id: int
     name: str
     email: str | None
     phone: str | None
     user_id: str | None
+    status: MemberStatus
+    inactive_since: date | None
+    # Private (rule 5): null unless the caller has `members: setStatus`.
+    inactive_reason: MemberInactiveReason | None
 
 
 class MemberSmallGroupSchema(CamelModel):
