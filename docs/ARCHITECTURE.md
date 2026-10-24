@@ -54,13 +54,15 @@ also has (`ownProfile: update`); `pending` has nothing.
 | `POST /small-group-reports/{id}/conversations/{memberId}/comments`, `…/conversations/guests/{guestId}/comments`, `…/conversations/sections/{key}/comments`, `PATCH`/`DELETE /report-conversation-comments/{id}`, `POST /report-conversations/{id}/resolve`/`reopen` | same, and a linked member (409); edit and delete only your own comment | ✓ | scope |
 | `GET /report-conversations` (inbox) | `smallGroupReports: view`; every group with `smallGroups: all` + `viewObservations`, else the scope | ✓ | scope |
 | `GET /report-conversations/counts` | none: `{ needsMyReply: 0 }` outside the audience | ✓ | scope |
-| `GET /members` | `members: view` + `all` | ✓ | — |
-| `GET /members/options` | `members: search` | ✓ | ✓ (id and name only) |
-| `GET /members/search?q=` | `members: view` + members scope (name match, `q` ≥ 2 chars, ≤ 20 rows) | ✓ | scope (id and name only) |
-| `GET /members/{id}` | Own member: none (any role, rule 11). Others: `members: view` + members scope | ✓ | own + scope |
+| `GET /members?status=` | `members: view` + `all`; `status` is `active` (default), `inactive` or `all` (422 otherwise); `inactiveReason` only with `setStatus` | ✓ | — |
+| `GET /members/options` | `members: search`; active members only | ✓ | ✓ (id and name only) |
+| `GET /members/search?q=` | `members: view` + members scope (name match, `q` ≥ 2 chars, ≤ 20 rows); `status` on each row | ✓ | scope (id, name and status only; never an inactive member) |
+| `GET /members/{id}` | Own member: none (any role, rule 11). Others: `members: view` + members scope. `inactiveReason` / `inactiveNote` only with `setStatus` | ✓ | own + scope |
 | `POST /members` | `members: create` | ✓ | — |
 | `PATCH /members/{id}` | `members: update` + members scope; `email` needs `all` unless the member is unlinked | ✓ | scope, no `email` |
-| `PUT`, `DELETE /members/{id}/user` | `members: link` | ✓ | — |
+| `PUT`, `DELETE /members/{id}/user` | `members: link`; `PUT` is 409 `member_inactive` for an inactive member | ✓ | — |
+| `POST /members/{id}/deactivate`, `POST /members/{id}/reactivate` | `members: setStatus` | ✓ | — |
+| `GET /members/{id}/status-history` | `members: setStatus` | ✓ | — |
 | `GET /guests` | `guests: view` + `all` | ✓ | — |
 | `GET /guests/search?q=` | `guests: search`; church-wide, rule 14's fields only; `[]` unless `guests: all` or leading an open guest group | ✓ | ✓ if it leads an open guest group, else `[]` |
 | `GET /guests/{id}`, `PATCH /guests/{id}` | `guests: view` / `update` + guests scope | ✓ | scope (guests active in an open guest group they lead) |
@@ -116,6 +118,17 @@ People who aren't members take part in guest groups and their reports, never mix
 - **`/guests` scope (rule 17).** `GuestScopeDep` (`api/access.py`): `guests: all`, or the guests with an open period in an open guest group the caller leads or co-leads today; 404 outside it. Search is church-wide but only for who has `all` or leads such a group (otherwise `[]`) and returns exactly `id, name, phoneLast4, currentGroup | lastGroup, lastAttendedDate` (rule 14). Detail shows the group history and the last 12 attendance rows; a scoped caller gets only the rows of groups they lead, and an observation needs `viewObservations` or leading that row's group.
 - **Errors the staff app tells apart** (a phrase in `detail`): 409 "…guest groups are off…", 409 "This guest is in another group." (+ `otherGroup`), 409 "…already in the small group.", 422 "Only a guest group can have guests.", 422 "A group's audience can't be changed.", 422 "The leave date can't be before…".
 - **Not here yet.** Promoting a guest to member, importing, merging duplicates (rule 21).
+
+## Inactive members (built)
+
+A member who left the church is marked inactive, not deleted, and can come back. Rules and contracts: `docs/specs/inactive-members.md` (workspace repo, *rule N* below); this side: `docs/INACTIVE-MEMBERS-API-HANDOFF.md`. Code: `data/members/` (`models/member_status_change.py`, `services.py`, `queries.py`), `api/routers/members.py`, `api/coded_errors.py`.
+
+- **Status.** `members.status` (`active` | `inactive`, VARCHAR + CHECK) and `status_changed_at` are a copy of the latest row of `member_status_changes`, the append-only history (`reason` is required exactly when the new status is `inactive`; `effective_date` is the date they left; `changed_by_user_id` is a JWT `sub` with no FK). Only `deactivate_member` and `reactivate_member` write them, in one transaction with the member row locked (rule 2).
+- **Group periods.** Deactivating closes every open `small_group_members` period of the member, in member and guest groups, with `left_at` = `church_today()` (never `effective_date`) and `left_reason = 'member_inactive'` (rule 6). That value is written **only** by deactivation: the leave and move routes don't accept it. Reactivating restores nothing (rule 10), so the member's `pastSmallGroups` are the `member_inactive` periods with the latest `left_at`. A member who is the leader of an open group can't be deactivated (409 `leads_group` with `groups`, rule 7), nor can the caller's own member (409 `self`, rule 8).
+- **Private fields (rule 5).** Reason, note and history need `members: setStatus`; everyone who can see a member sees `status` and `inactiveSince`. `member_detail` and `GET /members` decide it from the claims.
+- **Kept out (rule 11).** `GET /members` lists active members by default, `options` only active ones, adding to a group, changing a role, setting the leader and linking a user are 409 `member_inactive`, and the internal accepted-invite route skips an inactive member (`linked: false`, logged at info). A scoped caller never sees an inactive member (404) because the members scope needs an open period. Reports, attendance and conversations keep their rows.
+- **409 bodies** with a `code` (`already_inactive`, `already_active`, `leads_group`, `self`, `member_inactive`) are `CodedHTTPError`: `{ detail, code, ...extra }`, so the staff app picks the dialog without parsing `detail`.
+- **Sign-in** is turned off by staff-app (a ban of the linked user) after the deactivation; this service never calls auth-server (rule 9).
 
 ## Infra / deployment target
 - Docker → Kubernetes → Terraform, deployed to AWS or GCP.
