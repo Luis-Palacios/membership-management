@@ -132,9 +132,11 @@ def get_member_latest_status_change(session: Session, member_id: int) -> MemberS
     return session.scalar(member_latest_status_change_query(member_id))
 
 
-def get_member_past_small_groups(session: Session, member_id: int) -> Sequence[MemberPastSmallGroup]:
-    """The periods the member's latest deactivation ended (empty if they were never deactivated)."""
-    return all_as(session, member_past_small_groups_query(member_id), MemberPastSmallGroup)
+def get_member_past_small_groups(
+    session: Session, member_id: int, deactivated_on: date
+) -> Sequence[MemberPastSmallGroup]:
+    """The periods the member's latest deactivation (made on `deactivated_on`) ended."""
+    return all_as(session, member_past_small_groups_query(member_id, deactivated_on), MemberPastSmallGroup)
 
 
 def get_member_status_history(session: Session, member_id: int) -> Sequence[MemberStatusChangeRow]:

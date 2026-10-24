@@ -7,3 +7,8 @@ from membership_management.api.config import api_settings
 def church_today() -> date:
     """Today's date where the church is, not in UTC: the single source of "today" for the API."""
     return datetime.now(ZoneInfo(api_settings.church_timezone)).date()
+
+
+def church_date(moment: datetime) -> date:
+    """The date `moment` falls on where the church is."""
+    return moment.astimezone(ZoneInfo(api_settings.church_timezone)).date()

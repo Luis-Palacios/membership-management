@@ -1,3 +1,5 @@
+from datetime import date
+
 from sqlalchemy import ScalarSelect, Select, case, func, select
 from sqlalchemy.orm import InstrumentedAttribute, aliased
 
@@ -181,12 +183,12 @@ def member_status_history_query(member_id: int) -> Select:
     )
 
 
-def member_past_small_groups_query(member_id: int) -> Select:
-    """The periods the member's latest deactivation ended.
+def member_past_small_groups_query(member_id: int, deactivated_on: date) -> Select:
+    """The periods the member's latest deactivation (made on `deactivated_on`) ended.
 
-    Deactivating closes every open period on the same day, so these are the `member_inactive` periods
-    with the latest `left_at`. Reactivating reopens nothing, so while the member is inactive no later
-    period can exist.
+    Deactivating closes every open period with `left_at` of that day or later (never earlier), so these
+    are the `member_inactive` periods with the latest `left_at`, if it isn't before `deactivated_on`: an
+    earlier one belongs to a previous deactivation, since reactivating reopens nothing.
     """
     latest = (
         select(func.max(SmallGroupMember.left_at))
@@ -209,6 +211,7 @@ def member_past_small_groups_query(member_id: int) -> Select:
             SmallGroupMember.member_id == member_id,
             SmallGroupMember.left_reason == LeftReason.MEMBER_INACTIVE,
             SmallGroupMember.left_at == latest,
+            SmallGroupMember.left_at >= deactivated_on,
         )
         .order_by(SmallGroup.name)
     )
