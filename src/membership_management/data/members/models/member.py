@@ -1,7 +1,7 @@
-from datetime import date
+from datetime import date, datetime
 from enum import StrEnum
 
-from sqlalchemy import Date, Enum, Identity, Index, String, func
+from sqlalchemy import Date, DateTime, Enum, Identity, Index, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from membership_management.data.database import MemberManagementBase
@@ -10,6 +10,11 @@ from membership_management.data.database import MemberManagementBase
 class MemberSex(StrEnum):
     MALE = "male"
     FEMALE = "female"
+
+
+class MemberStatus(StrEnum):
+    ACTIVE = "active"
+    INACTIVE = "inactive"
 
 
 class Member(MemberManagementBase):
@@ -32,6 +37,21 @@ class Member(MemberManagementBase):
             values_callable=lambda values: [v.value for v in values],
         ),
     )
+
+    # Copy of the latest member_status_changes row, written in the same transaction (inactive-members
+    # spec, rule 2). Never set directly: go through deactivate_member / reactivate_member.
+    status: Mapped[MemberStatus] = mapped_column(
+        Enum(
+            MemberStatus,
+            native_enum=False,
+            create_constraint=True,
+            length=10,
+            name="status",
+            values_callable=lambda values: [v.value for v in values],
+        ),
+        server_default=MemberStatus.ACTIVE.value,
+    )
+    status_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # ID of the linked user, managed by the separate better-auth service (auth-server).
     user_id: Mapped[str | None] = mapped_column(String(255), unique=True)
