@@ -79,9 +79,12 @@ DB (read-only; it only reported "not up to date").
 - A user viewing their own inactive member sees the status and `inactiveSince` but a null reason and note,
   and gets 403 on the history. A leader gets 404 for a former member who is now inactive.
 - The history is newest first, and `changedByName` is the linked member's name or null.
-- `pastSmallGroups` is the `member_inactive` periods with the latest `left_at` (no timezone maths). If a
-  member is deactivated, reactivated and deactivated again on the same day, both periods have that
-  `left_at`, so both show. That only happens within one day.
+- `pastSmallGroups` is the `member_inactive` periods with the latest `left_at`, as long as that is on or
+  after the day of the latest deactivation (no timezone maths). First built without that last check,
+  which showed an earlier deactivation's groups after a second one that ended none; fixed in
+  `88eb92b`. What remains: deactivated, reactivated and deactivated again **on the same day** with
+  no group joined in between still shows the first period, since both end that day. That only
+  happens within one day.
 - `CodedHTTPError` (`api/coded_errors.py`) and one handler in `main.py` produce the 409 bodies
   `{detail, code, ...extra}`; stage 3 reuses it.
 - `member_detail` now takes the caller's claims (to decide who sees the reason and note), so `PATCH
