@@ -168,7 +168,7 @@ async def _sweep_forever() -> None:
     await asyncio.sleep(random.uniform(0, 30))
     while True:
         try:
-            await anyio.to_thread.run_sync(sweep_once)   # its own session; process(ids=None)
+            await anyio.to_thread.run_sync(sweep_once)  # its own session; process(ids=None)
         except Exception:
             logger.exception("conversation notification sweep failed")
         await asyncio.sleep(120)
