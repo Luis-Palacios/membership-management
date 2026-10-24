@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from membership_management.api.access import MemberScope, MemberScopeDep
-from membership_management.api.church_time import church_today
+from membership_management.api.church_time import church_date, church_today
 from membership_management.api.coded_errors import CodedHTTPError
 from membership_management.api.current_member import CurrentMemberDep
 from membership_management.api.dependencies import MembersSessionDep
@@ -99,7 +99,11 @@ def member_detail(db: MembersSessionDep, member: Member, claims: AuthClaims) -> 
                 joined_at=group.joined_at,
                 left_at=group.left_at,
             )
-            for group in (get_member_past_small_groups(db, member.id) if inactive else [])
+            for group in (
+                get_member_past_small_groups(db, member.id, church_date(change.created_at))
+                if change is not None
+                else []
+            )
         ],
     )
 
