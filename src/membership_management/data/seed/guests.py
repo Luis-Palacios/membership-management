@@ -8,6 +8,7 @@ from membership_management.data.members.models import Member, MemberSex
 from membership_management.data.seed import fixtures
 from membership_management.data.seed.context import MANAGUA_TZ, SeedContext
 from membership_management.data.seed.members import _ascii, _phone, managua_address
+from membership_management.data.seed.report_items import add_report_items
 from membership_management.data.seed.small_group_reports import WEEKS_OF_REPORTS
 from membership_management.data.small_groups.models import (
     GroupAudience,
@@ -18,6 +19,7 @@ from membership_management.data.small_groups.models import (
     SmallGroupReportAttendance,
     SmallGroupRole,
 )
+from membership_management.data.small_groups.results import PersonKey, person_key
 
 STEADY_ATTENDANCE_RATE = 0.85
 ATTENDED_CHURCH_RATE = 0.5
@@ -208,6 +210,21 @@ def _seed_reports(
     periods: list[_Period],
 ) -> None:
     rng, session, today = ctx.rng, ctx.session, ctx.today
+    # Who a guest group's report can tag from another group: members in a member group today.
+    others: list[PersonKey] = sorted(
+        ("member", member_id)
+        for member_id in session.scalars(
+            select(SmallGroupMember.member_id)
+            .distinct()
+            .join(SmallGroup, SmallGroup.id == SmallGroupMember.small_group_id)
+            .where(
+                SmallGroupMember.left_at.is_(None),
+                SmallGroupMember.member_id.is_not(None),
+                SmallGroup.audience == GroupAudience.MEMBERS,
+            )
+        )
+        if member_id is not None
+    )
     for group_index, group in enumerate(groups):
         member_rows = list(
             session.scalars(
@@ -227,14 +244,13 @@ def _seed_reports(
                 small_group=group,
                 meeting_date=meeting_date,
                 address=group.meeting_address,
-                group_prayer_request=rng.choice(fixtures.GROUP_PRAYER_REQUESTS),
-                group_praise_report=rng.choice(fixtures.GROUP_PRAISE_REPORTS) if rng.random() < 0.7 else None,
-                group_relevant_discussion=(
-                    rng.choice(fixtures.GROUP_DISCUSSIONS) if rng.random() < 0.4 else None
-                ),
                 submitted_by_member_id=submitter.id,
                 submitted_at=submitted_at,
             )
+            # Drawn here, in the order they always were, so the shared RNG's sequence doesn't change.
+            prayer = rng.choice(fixtures.GROUP_PRAYER_REQUESTS)
+            praise = rng.choice(fixtures.GROUP_PRAISE_REPORTS) if rng.random() < 0.7 else None
+            follow_up = rng.choice(fixtures.GROUP_DISCUSSIONS) if rng.random() < 0.4 else None
             for member_row in member_rows:
                 attended = member_row.member_id == submitter.id or rng.random() < MEMBER_ATTENDANCE_RATE
                 report.attendances.append(
@@ -264,6 +280,17 @@ def _seed_reports(
                         ),
                     )
                 )
+            # Guest groups' reports mostly tag the guests on them (they're most of the list).
+            add_report_items(
+                session,
+                report,
+                group.name,
+                prayer=prayer,
+                praise=praise,
+                follow_up=follow_up,
+                roster=[person_key(a.member_id, a.guest_id) for a in report.attendances],
+                others=others,
+            )
             session.add(report)
     session.flush()
 

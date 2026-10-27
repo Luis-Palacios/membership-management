@@ -551,6 +551,8 @@ def get_small_group_reports_shared(
     db: MembersSessionDep,
     claims: CurrentClaimsDep,
     scope: SmallGroupScopeDep,
+    member_scope: MemberScopeDep,
+    guest_scope: GuestScopeDep,
     week_date: Annotated[date | None, Query(alias="date")] = None,
 ) -> ReportSharedSchema:
     today = church_today()
@@ -572,6 +574,10 @@ def get_small_group_reports_shared(
         claims.sub,
         comment_side(claims),
     )
+    # Decided once for everyone tagged in the week, not per entry.
+    viewable = viewable_tagged(
+        db, claims, [i for e in shared.entries for i in e.items], member_scope, guest_scope
+    )
     return ReportSharedSchema(
         week_start=shared.week_start,
         week_end=shared.week_end,
@@ -590,6 +596,7 @@ def get_small_group_reports_shared(
                 prayer=e.prayer,
                 praise=e.praise,
                 follow_up=e.follow_up,
+                sections=sections_schema(e.items, viewable),
                 conversations={
                     section: SharedConversationSchema(
                         id=c.id,

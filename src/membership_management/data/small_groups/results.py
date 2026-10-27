@@ -382,13 +382,10 @@ class SharedReportRow(NamedTuple):
     small_group_id: int
     small_group_name: str
     small_group_audience: GroupAudience
-    group_prayer_request: str | None
-    group_praise_report: str | None
-    group_relevant_discussion: str | None
 
 
 class SharedEntry(NamedTuple):
-    """A held report's three texts, trimmed (blank is None), with the group's leaders today."""
+    """A held report's items (and the old three texts derived from them), with the group's leaders today."""
 
     report_id: int
     meeting_date: date
@@ -396,9 +393,12 @@ class SharedEntry(NamedTuple):
     small_group_name: str
     small_group_audience: GroupAudience
     leaders: list[WeekLeader]
+    # Derived from `items` (one per line, people by full name); None when the section has no items.
     prayer: str | None
     praise: str | None
     follow_up: str | None
+    # By section, then position.
+    items: list[ReportItemView]
 
 
 StillToReportStatus = Literal["notFiled", "today", "upcoming"]

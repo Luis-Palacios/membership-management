@@ -400,10 +400,11 @@ class ReportSharedEntrySchema(CamelModel):
     meeting_date: date
     small_group: SharedSmallGroupSchema
     leaders: list[WeekLeaderSchema]
-    # null when empty after trimming.
+    # Derived from `sections` (one item per line, people by full name); null when the section is empty.
     prayer: str | None
     praise: str | None
     follow_up: str | None
+    sections: ReportSectionsSchema
     # Section threads only, keyed by section; a key is absent when that section has no thread.
     conversations: dict[ReportSection, SharedConversationSchema]
 

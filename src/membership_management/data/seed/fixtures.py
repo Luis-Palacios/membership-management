@@ -89,6 +89,29 @@ GROUP_DISCUSSIONS = [
     "Se planificó un convivio para fin de mes.",
 ]
 
+# Items that tag someone; {p} is where the person goes.
+TAGGED_PRAYER_REQUESTS = [
+    "Por {p}, que está buscando trabajo.",
+    "Por la salud de la mamá de {p}.",
+    "Por {p} y su familia, que se mudan este mes.",
+    "Por {p}, que tiene exámenes esta semana.",
+    "Por el viaje de {p} a Estelí.",
+    "Por {p}, que está pasando por un tiempo difícil en casa.",
+]
+
+TAGGED_PRAISE_REPORTS = [
+    "{p} consiguió trabajo esta semana.",
+    "Dios sanó a {p} de la fiebre.",
+    "{p} trajo a un vecino por primera vez.",
+    "{p} terminó su tratamiento con buenos resultados.",
+]
+
+TAGGED_DISCUSSIONS = [
+    "{p} pidió hablar con un anciano sobre el bautismo.",
+    "Visitar a {p}, que lleva dos semanas sin venir.",
+    "{p} quiere servir en el ministerio de niños.",
+]
+
 NOT_HELD_REASONS = [
     "Lluvia fuerte; casi nadie pudo llegar.",
     "Feriado; el grupo acordó no reunirse.",

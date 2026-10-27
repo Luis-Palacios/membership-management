@@ -40,8 +40,8 @@ database work stay plain `def`, and every `SmallGroupMember`-style person refere
 | **Part 1 (`report-tags`)** | | |
 | 1. Items and tags: migration, models, backfill | ✅ | `40f916a` |
 | 2. Write and read `sections` (both shapes accepted and returned) | ✅ | `37d817c` |
-| 3. Tag search | ✅ | *(this commit)* |
-| 4. Shared endpoint, section threads, seed | ⬜ | |
+| 3. Tag search | ✅ | `5e8a35d` |
+| 4. Shared endpoint, section threads, seed | ✅ | *(this commit)* |
 | *(staff app Part 1 deploys here)* | | |
 | 5. Contract: drop the old text fields and columns, docs | ⬜ | |
 | **Part 2 (`person-timeline`)** | | |
@@ -108,6 +108,27 @@ database work stay plain `def`, and every `SmallGroupMember`-style person refere
   `ma` → names starting with it before the rest, inside and outside the group. 404 out of scope, for
   the former leader, a deacon with no member and a missing group; 403 for `user` and `pending`. Rows
   carry only `person`, `inThisGroup`, `groups`, `phoneLast4`.
+- **Stage 4.** `section_has_items_query` replaces `section_text_query` in `conversation_queries.py`.
+  The thread responses carry no section text (the panel reads it from report detail), so they don't
+  change. `shared_reports_query` no longer selects the old columns: the entry's strings come from the
+  items, like report detail's. `report_attribute` is now used only by the stage 2 legacy code in
+  `services.py` (the conversation seeder looks at items instead), plus a comment in the stage 1
+  migration.
+- **Stage 4, seed.** Items go through `set_new_report_items` (the create path's validation). The
+  text each report seeder already drew becomes the first, untagged item of its section, so the shared
+  RNG's sequence is untouched and **every other seeded row is identical** to before (compared table
+  by table, old columns aside); the extra tagged items use an RNG seeded by group name and date. Per
+  held report: 1–3 prayer, 0–2 praise, 0–1 follow-up (half the drawn follow-ups become a tagged one);
+  a tag is someone on the report, or 25% of the time a member of another group; guest groups'
+  reports tag from their list, which is mostly guests. 184 items, 87 tags. Member-group reports can't
+  tag guests yet (guests are seeded last); stage 7 revisits that for the timeline.
+- **Stage 4, tried:** shared endpoint for five weeks as an elder, group 1's leader and a guest-group
+  leader, against stage 3's code on the same DB: bodies identical except the added `sections`, and
+  every old string equals its section's items joined. With the new seed, `viewable` per caller (the
+  guest-group leader: their guest yes, another group's member no; a deacon with no member: no entries;
+  `user`: 403). A section thread on a section with items whose old column was nulled starts; one with
+  no items is 422 `This section is empty.`. `seed --reset` twice: identical dumps. Stages 2 and 3
+  re-run on the new seed: all pass.
 
 ## Who can do what
 

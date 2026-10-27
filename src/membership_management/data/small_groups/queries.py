@@ -430,8 +430,8 @@ def active_leaders_query(group_ids: frozenset[int]) -> Select:
 
 
 def shared_reports_query(group_ids: frozenset[int], from_date: date, to_date: date) -> Select:
-    """The groups' held reports dated in [from_date, to_date] with their three group texts (prayer &
-    follow-up rule 6), oldest meeting first, then group name. No-meeting reports have no texts."""
+    """The groups' held reports dated in [from_date, to_date] (prayer & follow-up rule 6), oldest
+    meeting first, then group name. Their items are loaded apart; no-meeting reports have none."""
     return (
         select(
             SmallGroupReport.id.label("report_id"),
@@ -439,9 +439,6 @@ def shared_reports_query(group_ids: frozenset[int], from_date: date, to_date: da
             SmallGroup.id.label("small_group_id"),
             SmallGroup.name.label("small_group_name"),
             SmallGroup.audience.label("small_group_audience"),
-            SmallGroupReport.group_prayer_request.label("group_prayer_request"),
-            SmallGroupReport.group_praise_report.label("group_praise_report"),
-            SmallGroupReport.group_relevant_discussion.label("group_relevant_discussion"),
         )
         .join(SmallGroup, SmallGroup.id == SmallGroupReport.small_group_id)
         .where(
