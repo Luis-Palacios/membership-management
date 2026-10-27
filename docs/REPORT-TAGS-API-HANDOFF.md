@@ -46,7 +46,7 @@ database work stay plain `def`, and every `SmallGroupMember`-style person refere
 | 5. Contract: drop the old text fields and columns, docs | ⬜ | |
 | **Part 2 (`person-timeline`)** | | |
 | 6. Timeline service and indexes | ✅ | `a9fa6f9` |
-| 7. Timeline routes, seed check, docs | ⬜ | |
+| 7. Timeline routes, seed check, docs | ✅ | *(this commit)* |
 
 ### Decisions and deviations
 
@@ -155,6 +155,43 @@ database work stay plain `def`, and every `SmallGroupMember`-style person refere
   as an elder (observation and attendance rows, `role` member) and with an unrelated audience (items
   only). Range: future `to`, `from` after `to` and 732 days give the three messages, exactly 731 days
   passes, `to` 2026-10-15 defaults `from` to 2026-07-16 and 31 May to 1 March (month clamp).
+- **Stage 7.** Both routes take `MemberScopeDep`, `GuestScopeDep` and `OptionalSmallGroupScopeDep`
+  (chips need both scopes for `viewable`, the audience needs the group scope). The observation audience
+  is `conversation_group_ids` as it is, not a new function: the spec's "same check conversations use",
+  so it also needs `smallGroupReports: view`. Query parsing is one dependency
+  (`get_timeline_params`, `api/person_timeline.py`): it resolves the dates through `resolve_range` and
+  answers the `latest` conflicts, all 422 with a string `detail` (`latest` out of 1-10 and a malformed
+  date are FastAPI's own 422). It runs before the 404, so a bad range on a missing member is 422. The
+  person's own chip is always `viewable: true` (added to the set `viewable_people` returns, which for an
+  inactive member under a leader's scope would otherwise be false). `GET /members/{id}/timeline` doesn't
+  have the "your own member is always readable" exception of `GET /members/{id}`: the spec gives the
+  person no access to their own timeline (rule 23).
+- **Stage 7, seed.** Member-group reports are seeded before the guests exist, so they couldn't tag any:
+  `seed_guest_tags_in_member_reports` runs right after `seed_guests` and adds one prayer or praise item
+  tagging a guest to every third held member-group report (guests in id order, so all but one of the
+  twelve get a tag from a member group; 11 items and tags added: 195 items, 98 tags). It draws nothing
+  from the shared RNG; it re-sets those reports' items through `set_new_report_items` (after flushing
+  the deletes, as `update_report` does), so their item ids change. Compared table by table against the
+  stage 6 seed: every other table and every other column of `small_group_reports` identical; two
+  `--reset` runs give identical items. The old text columns match the items of all 48 held reports
+  (144 sections) in report detail, and the shared endpoint answers 200 with `sections` on every entry.
+  The seed now gives: member 21 (member of group 1, supporter in guest group 6) tagged once from group 2;
+  member 17 (co-leader of group 4) tagged from group 1; guest 8 (moved from guest group 6 to 7) tagged
+  once from a member group. Seeded observations are only the absence notes on guests, so member
+  timelines carry no `notes` (the elder-written notes are the staff app's to create).
+- **Stage 7, tried** (`TestClient`, claims and current member overridden, scratch DB, seeded; ids from
+  the seed): member 17 as an elder unlinked, an elder linked, group 4's leader (7 rows, group 1's
+  follow-up gone and not counted), group 1's leader (404, out of scope), a deacon with no member (404),
+  `user` (403), a missing member (404). `latest=3` (null `from`/`to`), `latest` 0 and 11 (422), `latest`
+  with `from`, `to` or `smallGroupId` (422), `to` in the future, `from` after `to` and 2024-01-01 (the
+  three `range` messages), `from=nope` (422), an exactly 2-year range (200), `smallGroupId` of a group
+  with no rows (200, `groups` unchanged, no rows) and of group 4. Member 21 as an elder (16 rows from
+  groups 1, 2 and 6, group 2's follow-up included) and as group 1's leader (7 rows, `groups: [1]`, the
+  follow-up gone). Guest 9 as an elder and as group 7's leader; guest 8 as an elder (rows from groups
+  4, 6 and 7) and as group 7's leader (group 6's rows hidden, group 4's praise item shown), group 6's
+  leader (404, guest moved), a member-group leader (404), a deacon with no member (404), `user` (403),
+  a missing guest (404). Row shape checked against the spec's contract (`from`/`to` keys, `attendance`
+  and `observation` null when hidden, `submittedBy`, the person's own chip viewable).
 
 ## Who can do what
 
