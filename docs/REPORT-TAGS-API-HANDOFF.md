@@ -38,7 +38,7 @@ database work stay plain `def`, and every `SmallGroupMember`-style person refere
 | Stage | Status | Commit |
 | --- | --- | --- |
 | **Part 1 (`report-tags`)** | | |
-| 1. Items and tags: migration, models, backfill | ⬜ | |
+| 1. Items and tags: migration, models, backfill | ✅ | *(this commit)* |
 | 2. Write and read `sections` (both shapes accepted and returned) | ⬜ | |
 | 3. Tag search | ⬜ | |
 | 4. Shared endpoint, section threads, seed | ⬜ | |
@@ -50,7 +50,20 @@ database work stay plain `def`, and every `SmallGroupMember`-style person refere
 
 ### Decisions and deviations
 
-- *(fill in per stage)*
+- **Stage 1.** Autogenerate emitted the checks and the named unique constraints itself (they're
+  table args in `create_table`), so only the backfill is hand-written. The backfill imports
+  `split_legacy_text` (a pure function, no models) rather than duplicating it. The section → column
+  map is spelled out in the migration, not read from `ReportSection.report_attribute`, since stage 5
+  removes that.
+- **Stage 1.** Token-like text that isn't a person segment is broken apart (`@{member:1}` →
+  `@ {member:1}`), in old texts and in text segments alike, so tags only ever come from person
+  segments and the people table always matches the tokens. `-`, `*` and `1.` / `1)` markers need a
+  space after them (`*urgent*`, `-5 °C`, `1.5` keep theirs); `–`, `•`, `·` don't.
+- **Stage 1, tried** on scratch DB `rt-scratch` (seeded, then two reports edited to
+  `"- a\n• b\n\n3) c"`, a blank praise, and `"*urgent* see @{member:1}\n1.5 million"`): items per
+  section match a Python split of the old columns (50 / 36 / 21), no items for no-meeting reports,
+  no people rows, `a`/`b`/`c` as three items, the blank gives none, the lookalike stays text.
+  `alembic check` clean; `downgrade -1` drops both tables, `upgrade head` refills identically.
 
 ## Who can do what
 

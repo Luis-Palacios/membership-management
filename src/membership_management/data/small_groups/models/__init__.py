@@ -21,6 +21,10 @@ from membership_management.data.small_groups.models.small_group_report import Sm
 from membership_management.data.small_groups.models.small_group_report_attendance import (
     SmallGroupReportAttendance,
 )
+from membership_management.data.small_groups.models.small_group_report_item import SmallGroupReportItem
+from membership_management.data.small_groups.models.small_group_report_item_person import (
+    SmallGroupReportItemPerson,
+)
 
 __all__ = [
     "ConversationSide",
@@ -36,6 +40,8 @@ __all__ = [
     "SmallGroupMember",
     "SmallGroupReport",
     "SmallGroupReportAttendance",
+    "SmallGroupReportItem",
+    "SmallGroupReportItemPerson",
     "SmallGroupRole",
     "Weekday",
 ]
