@@ -2,7 +2,13 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from membership_management.api.access import MemberScope, MemberScopeDep
+from membership_management.api.access import (
+    GuestScopeDep,
+    MemberScope,
+    MemberScopeDep,
+    OptionalSmallGroupScopeDep,
+    conversation_group_ids,
+)
 from membership_management.api.church_time import church_date, church_today
 from membership_management.api.coded_errors import CodedHTTPError
 from membership_management.api.current_member import CurrentMemberDep
@@ -14,6 +20,7 @@ from membership_management.api.jwt_auth import (
     has_permission,
     require_permission,
 )
+from membership_management.api.person_timeline import TimelineParamsDep, timeline_schema
 from membership_management.api.rate_limit import default_user_rate_limit, rate_limit
 from membership_management.api.schemas.members import (
     MemberCreateSchema,
@@ -29,6 +36,8 @@ from membership_management.api.schemas.members import (
     MemberUpdateSchema,
     MemberUserLinkSchema,
 )
+from membership_management.api.schemas.person import PersonSchema
+from membership_management.api.schemas.person_timeline import PersonTimelineSchema
 from membership_management.data.members.models import Member, MemberStatus
 from membership_management.data.members.services import (
     DuplicateMemberEmailError,
@@ -54,6 +63,7 @@ from membership_management.data.members.services import (
     unlink_member_user,
     update_member,
 )
+from membership_management.data.small_groups.timeline_services import get_person_timeline
 
 router = APIRouter(
     prefix="/members",
@@ -192,6 +202,38 @@ def get_membermember_detail(
     if not has_permission(claims, "members", "view"):
         raise HTTPException(status_code=403, detail="You don't have permission to do this.")
     return member_detail(db, _get_or_404(db, member_id, scope), claims)
+
+
+@router.get(
+    "/{member_id}/timeline",
+    name="get_member_timeline",
+    description=(
+        "The held reports a member is on the attendance list of or tagged in, with only what the caller "
+        "may see (within your members scope)"
+    ),
+    dependencies=[Depends(require_permission("members", "view"))],
+)
+def get_member_timeline_route(
+    member_id: int,
+    db: MembersSessionDep,
+    claims: CurrentClaimsDep,
+    scope: MemberScopeDep,
+    group_scope: OptionalSmallGroupScopeDep,
+    guest_scope: GuestScopeDep,
+    params: TimelineParamsDep,
+) -> PersonTimelineSchema:
+    member = _get_or_404(db, member_id, scope)
+    timeline = get_person_timeline(
+        db,
+        ("member", member.id),
+        observation_groups=conversation_group_ids(claims, group_scope),
+        from_=params.from_date,
+        to=params.to_date,
+        small_group_id=params.small_group_id,
+        latest=params.latest,
+    )
+    person = PersonSchema(type="member", id=member.id, name=member.name)
+    return timeline_schema(db, claims, person, timeline, scope, guest_scope)
 
 
 @router.post(

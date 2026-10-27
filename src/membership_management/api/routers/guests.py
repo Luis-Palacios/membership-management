@@ -6,7 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from membership_management.api.access import (
     GuestScope,
     GuestScopeDep,
+    MemberScopeDep,
     OptionalSmallGroupScopeDep,
+    conversation_group_ids,
     ensure_guest_groups_enabled,
     sees_all_observations,
 )
@@ -19,6 +21,7 @@ from membership_management.api.jwt_auth import (
     has_permission,
     require_permission,
 )
+from membership_management.api.person_timeline import TimelineParamsDep, timeline_schema
 from membership_management.api.rate_limit import default_user_rate_limit, rate_limit
 from membership_management.api.routers.small_groups import GUEST_JOIN_ERRORS, guest_join_http_error
 from membership_management.api.schemas.guests import (
@@ -36,6 +39,8 @@ from membership_management.api.schemas.guests import (
     GuestSearchLastGroupSchema,
     GuestUpdateSchema,
 )
+from membership_management.api.schemas.person import PersonSchema
+from membership_management.api.schemas.person_timeline import PersonTimelineSchema
 from membership_management.data.guests.lookup_services import (
     GuestStatus,
     get_guest,
@@ -52,6 +57,7 @@ from membership_management.data.guests.services import (
     update_guest,
 )
 from membership_management.data.small_groups.services import add_guest_to_group, get_small_group
+from membership_management.data.small_groups.timeline_services import get_person_timeline
 
 router = APIRouter(
     prefix="/guests",
@@ -229,6 +235,38 @@ def get_guest_detail_route(
     guest_id: int, db: MembersSessionDep, claims: CurrentClaimsDep, scope: GuestScopeDep
 ) -> GuestDetailSchema:
     return _detail(db, _get_or_404(db, guest_id, scope), claims, scope)
+
+
+@router.get(
+    "/{guest_id}/timeline",
+    name="get_guest_timeline",
+    description=(
+        "The held reports a guest is on the attendance list of or tagged in, with only what the caller "
+        "may see (within your guests scope)"
+    ),
+    dependencies=[Depends(require_permission("guests", "view"))],
+)
+def get_guest_timeline_route(
+    guest_id: int,
+    db: MembersSessionDep,
+    claims: CurrentClaimsDep,
+    scope: GuestScopeDep,
+    member_scope: MemberScopeDep,
+    group_scope: OptionalSmallGroupScopeDep,
+    params: TimelineParamsDep,
+) -> PersonTimelineSchema:
+    guest = _get_or_404(db, guest_id, scope)
+    timeline = get_person_timeline(
+        db,
+        ("guest", guest.id),
+        observation_groups=conversation_group_ids(claims, group_scope),
+        from_=params.from_date,
+        to=params.to_date,
+        small_group_id=params.small_group_id,
+        latest=params.latest,
+    )
+    person = PersonSchema(type="guest", id=guest.id, name=guest.name)
+    return timeline_schema(db, claims, person, timeline, member_scope, scope)
 
 
 @router.post(

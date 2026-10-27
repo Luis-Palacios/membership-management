@@ -12,6 +12,7 @@ from membership_management.data.seed.context import MANAGUA_TZ, SeedContext, See
 from membership_management.data.seed.guests import seed_guests
 from membership_management.data.seed.inactive_members import seed_inactive_members
 from membership_management.data.seed.members import seed_members
+from membership_management.data.seed.report_items import seed_guest_tags_in_member_reports
 from membership_management.data.seed.small_group_report_conversations import seed_report_conversations
 from membership_management.data.seed.small_group_reports import seed_small_group_reports
 from membership_management.data.seed.small_groups import seed_small_groups
@@ -24,6 +25,8 @@ SEEDERS: list[Seeder] = [
     seed_report_conversations,
     # Last: its groups, guests and reports are extra rows, so the seeders above keep their output.
     seed_guests,
+    # Needs the guests: some member-group reports tag them.
+    seed_guest_tags_in_member_reports,
     # After everything: new members with closed periods only, so no seeded row changes.
     seed_inactive_members,
 ]
