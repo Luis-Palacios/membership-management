@@ -539,3 +539,78 @@ class InboxPage(NamedTuple):
     items: list[InboxRow]
     counts: InboxCounts
     total: int
+
+
+class TimelineReportRow(NamedTuple):
+    """A held report the person is on the attendance list of or tagged in, before visibility."""
+
+    report_id: int
+    meeting_date: date
+    small_group_id: int
+    small_group_name: str
+    small_group_audience: GroupAudience
+    # None for all four when the person is only tagged (no attendance line).
+    attended_group: bool | None
+    attended_church: bool | None
+    observation: str | None
+    submitted_by_member_id: int
+    submitted_by_name: str
+
+
+class TimelinePeriod(NamedTuple):
+    """One of the person's membership periods; the role on a meeting date comes from the covering one."""
+
+    small_group_id: int
+    role: SmallGroupRole
+    joined_at: date
+    left_at: date | None
+    period_id: int
+
+
+class TimelineGroup(NamedTuple):
+    id: int
+    name: str
+    audience: GroupAudience
+
+
+class TimelineAttendance(NamedTuple):
+    # The person's role in the group on the meeting date; None when no period covers it.
+    role: SmallGroupRole | None
+    attended_group: bool
+    attended_church: bool
+
+
+class TimelineObservation(NamedTuple):
+    text: str
+    submitted_by_member_id: int
+    submitted_by_name: str
+
+
+class TimelineRow(NamedTuple):
+    report_id: int
+    meeting_date: date
+    small_group: TimelineGroup
+    # None when the person isn't on the list, or the caller isn't in the report's observation audience.
+    attendance: TimelineAttendance | None
+    observation: TimelineObservation | None
+    # Only items tagging the person that the caller may see, by section then position.
+    items: list[ReportItemView]
+
+
+class TimelineCounts(NamedTuple):
+    notes: int
+    prayer: int
+    praise: int
+    follow_up: int
+
+
+class PersonTimeline(NamedTuple):
+    # None with `latest`.
+    from_date: date | None
+    to_date: date | None
+    # The oldest visible row's date, any group; None when there is none.
+    earliest_date: date | None
+    # Groups with at least one visible row, any date.
+    groups: list[TimelineGroup]
+    counts: TimelineCounts
+    rows: list[TimelineRow]
