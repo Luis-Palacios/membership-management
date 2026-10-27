@@ -94,11 +94,10 @@ def text_to_segments(text: str, names: Mapping[PersonKey, str]) -> list[Segment]
     return segments
 
 
-def text_with_names(text: str, names: Mapping[PersonKey, str]) -> str:
-    """A stored text with each token replaced by the person's full name."""
+def plain_text(segments: Iterable[Segment]) -> str:
+    """Segments as plain text, each person by their full name."""
     return "".join(
-        segment.text if isinstance(segment, TextSegment) else segment.name or ""
-        for segment in text_to_segments(text, names)
+        segment.text if isinstance(segment, TextSegment) else segment.name or "" for segment in segments
     )
 
 
@@ -118,6 +117,6 @@ def split_legacy_text(text: str | None) -> list[str]:
     return items
 
 
-def legacy_section_text(texts: Sequence[str], names: Mapping[PersonKey, str]) -> str | None:
+def legacy_section_text(items: Sequence[Sequence[Segment]]) -> str | None:
     """A section's items as the old free-text column holds them: one per line, people by full name."""
-    return "\n".join(text_with_names(text, names) for text in texts) or None
+    return "\n".join(plain_text(segments) for segments in items) or None

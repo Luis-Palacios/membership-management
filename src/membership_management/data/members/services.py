@@ -25,6 +25,7 @@ from membership_management.data.members.queries import (
     member_past_small_groups_query,
     member_search_query,
     member_status_history_query,
+    members_active_in_open_groups_query,
 )
 from membership_management.data.members.results import (
     MemberLead,
@@ -109,6 +110,15 @@ def is_member_active_in_open_groups(
     if only_group_ids is not None and not only_group_ids:
         return False
     return session.scalar(member_active_in_open_groups_query(member_id, only_group_ids)) is not None
+
+
+def members_active_in_open_groups(
+    session: Session, member_ids: frozenset[int], only_group_ids: frozenset[int] | None
+) -> frozenset[int]:
+    """`is_member_active_in_open_groups` for many members in one query: the ids it holds for."""
+    if not member_ids or (only_group_ids is not None and not only_group_ids):
+        return frozenset()
+    return frozenset(session.scalars(members_active_in_open_groups_query(member_ids, only_group_ids)))
 
 
 def get_member(session: Session, member_id: int) -> Member | None:

@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from typing import Literal, NamedTuple
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
 from membership_management.data.small_groups.models import (
     ConversationSide,
@@ -8,6 +8,10 @@ from membership_management.data.small_groups.models import (
     ReportSection,
     SmallGroupRole,
 )
+
+if TYPE_CHECKING:
+    # report_items imports PersonKey from here; annotations are evaluated lazily.
+    from membership_management.data.small_groups.report_items import Segment
 
 # A member or a guest, as in an attendance row: ("member", id) or ("guest", id).
 PersonKey = tuple[Literal["member", "guest"], int]
@@ -115,6 +119,10 @@ class AttendanceInput(NamedTuple):
     observation: str | None
 
 
+# A report's items as sent: per section, each item's segments (person segments carry ids only).
+SectionsInput = dict[ReportSection, list[list["Segment"]]]
+
+
 class ReportInput(NamedTuple):
     """The body of a create or edit, already trimmed (blank text is None)."""
 
@@ -129,6 +137,31 @@ class ReportInput(NamedTuple):
     not_held_reason: str | None = None
     # Create only: delete the date's no meeting and insert this held report in one transaction.
     replaces_no_meeting: bool = False
+    # When set it wins over the three texts above, which are then ignored; when None, each text is
+    # split into items, one per line (report tags rule 2), until the old fields go away.
+    sections: SectionsInput | None = None
+
+
+class ReportItemRow(NamedTuple):
+    id: int
+    report_id: int
+    section: ReportSection
+    text: str
+
+
+class TaggedPersonRow(NamedTuple):
+    kind: Literal["member", "guest"]
+    id: int
+    name: str
+    inactive: bool
+
+
+class ReportItemView(NamedTuple):
+    """An item with its person segments named (current names)."""
+
+    id: int
+    section: ReportSection
+    segments: list["Segment"]
 
 
 class ReportAttendanceView(NamedTuple):
@@ -155,9 +188,12 @@ class ReportDetail(NamedTuple):
     small_group_closed_at: date | None
     meeting_date: date
     address: str | None
+    # Derived from the items (one per line, people by full name) until the old fields go away.
     group_prayer_request: str | None
     group_praise_report: str | None
     group_relevant_discussion: str | None
+    # By section, then position.
+    items: list[ReportItemView]
     submitted_by_member_id: int
     submitted_by_name: str
     submitted_at: datetime

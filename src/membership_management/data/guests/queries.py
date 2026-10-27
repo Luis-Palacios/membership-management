@@ -194,6 +194,19 @@ def guest_active_in_groups_query(guest_id: int, group_ids: frozenset[int]) -> Se
     )
 
 
+def guests_active_in_groups_query(guest_ids: frozenset[int], group_ids: frozenset[int]) -> Select:
+    """`guest_active_in_groups_query` for many guests at once: the ids among `guest_ids` it holds for."""
+    return (
+        select(SmallGroupMember.guest_id)
+        .distinct()
+        .where(
+            SmallGroupMember.guest_id.in_(guest_ids),
+            SmallGroupMember.left_at.is_(None),
+            SmallGroupMember.small_group_id.in_(group_ids),
+        )
+    )
+
+
 def guest_periods_query(guest_id: int) -> Select:
     """Every period of the guest, newest first."""
     return (
