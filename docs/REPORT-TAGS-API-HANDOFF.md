@@ -46,7 +46,7 @@ database work stay plain `def`, and every `SmallGroupMember`-style person refere
 | 5. Contract: drop the old text fields and columns, docs | ⬜ | |
 | **Part 2 (`person-timeline`)** | | |
 | 6. Timeline service and indexes | ✅ | `a9fa6f9` |
-| 7. Timeline routes, seed check, docs | ✅ | *(this commit)* |
+| 7. Timeline routes, seed check, docs | ✅ | `d2e2398` |
 
 ### Decisions and deviations
 
