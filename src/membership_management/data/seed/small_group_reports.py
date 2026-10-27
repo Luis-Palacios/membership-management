@@ -1,9 +1,11 @@
 from datetime import date, datetime, time, timedelta
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
 from membership_management.data.seed import fixtures
 from membership_management.data.seed.context import MANAGUA_TZ, SeedContext
+from membership_management.data.seed.report_items import add_report_items
 from membership_management.data.small_groups.models import (
     SmallGroup,
     SmallGroupMember,
@@ -11,6 +13,9 @@ from membership_management.data.small_groups.models import (
     SmallGroupReportAttendance,
     SmallGroupRole,
 )
+
+if TYPE_CHECKING:
+    from membership_management.data.small_groups.results import PersonKey
 
 WEEKS_OF_REPORTS = 8
 # Chance a given week has no report (holidays, rain, the leader travelling...). About a third of
@@ -23,9 +28,18 @@ ATTENDED_CHURCH_RATE = 0.85
 
 def seed_small_group_reports(ctx: SeedContext) -> None:
     rng, session = ctx.rng, ctx.session
+    current = list(session.scalars(select(SmallGroupMember).where(SmallGroupMember.left_at.is_(None))))
     for group in session.scalars(select(SmallGroup).order_by(SmallGroup.id)):
         rows = list(
             session.scalars(select(SmallGroupMember).where(SmallGroupMember.small_group_id == group.id))
+        )
+        # Who a report can tag from another group: members in one today.
+        others: list[PersonKey] = sorted(
+            {
+                ("member", r.member_id)
+                for r in current
+                if r.small_group_id != group.id and r.member_id is not None
+            }
         )
         for meeting_date in _meeting_dates(group, ctx.today):
             skipped = rng.random() < SKIPPED_WEEK_RATE
@@ -61,13 +75,18 @@ def seed_small_group_reports(ctx: SeedContext) -> None:
                 small_group=group,
                 meeting_date=meeting_date,
                 address=group.meeting_address,
-                group_prayer_request=rng.choice(fixtures.GROUP_PRAYER_REQUESTS),
-                group_praise_report=rng.choice(fixtures.GROUP_PRAISE_REPORTS) if rng.random() < 0.7 else None,
-                group_relevant_discussion=(
-                    rng.choice(fixtures.GROUP_DISCUSSIONS) if rng.random() < 0.4 else None
-                ),
                 submitted_by_member_id=submitter.member_id,
                 submitted_at=submitted_at,
+            )
+            add_report_items(
+                session,
+                report,
+                group.name,
+                prayer=rng.choice(fixtures.GROUP_PRAYER_REQUESTS),
+                praise=rng.choice(fixtures.GROUP_PRAISE_REPORTS) if rng.random() < 0.7 else None,
+                follow_up=rng.choice(fixtures.GROUP_DISCUSSIONS) if rng.random() < 0.4 else None,
+                roster=[("member", row.member_id) for row in active if row.member_id is not None],
+                others=others,
             )
             for row in active:
                 # The submitter was there to fill in the report.

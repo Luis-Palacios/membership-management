@@ -1,4 +1,4 @@
-from sqlalchemy import ColumnElement, Select, and_, func, select, true
+from sqlalchemy import ColumnElement, Select, and_, exists, func, select, true
 from sqlalchemy.orm import aliased, joinedload
 
 from membership_management.data.guests.models import Guest
@@ -11,6 +11,7 @@ from membership_management.data.small_groups.models import (
     SmallGroup,
     SmallGroupReport,
     SmallGroupReportAttendance,
+    SmallGroupReportItem,
 )
 from membership_management.data.small_groups.results import PersonKey
 
@@ -33,9 +34,11 @@ def conversation_query(conversation_id: int) -> Select:
     )
 
 
-def section_text_query(report_id: int, section: ReportSection) -> Select:
-    """The section's text on the report (None for a no meeting or an empty section)."""
-    return select(getattr(SmallGroupReport, section.report_attribute)).where(SmallGroupReport.id == report_id)
+def section_has_items_query(report_id: int, section: ReportSection) -> Select:
+    """True when the report's section has at least one item (a no meeting never has any)."""
+    return select(
+        exists().where(SmallGroupReportItem.report_id == report_id, SmallGroupReportItem.section == section)
+    )
 
 
 def report_anchor_conversation_query(report_id: int, anchor: PersonKey | ReportSection) -> Select:

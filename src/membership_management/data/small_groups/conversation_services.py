@@ -20,7 +20,7 @@ from membership_management.data.small_groups.conversation_queries import (
     report_anchor_conversation_query,
     report_conversation_summaries_query,
     section_conversation_summaries_query,
-    section_text_query,
+    section_has_items_query,
     thread_comments_query,
 )
 from membership_management.data.small_groups.models import (
@@ -179,10 +179,9 @@ def get_report_anchor_conversation(
 
 def _check_can_start(session: Session, report_id: int, anchor: ConversationAnchor) -> None:
     """A new thread needs the member or guest to have an attendance row (rule 1) or the section to have
-    text (prayer & follow-up rule 14)."""
+    an item (report tags rule 18)."""
     if isinstance(anchor, ReportSection):
-        text = session.scalar(section_text_query(report_id, anchor))
-        if text is None or not text.strip():
+        if not session.scalar(section_has_items_query(report_id, anchor)):
             raise SectionEmptyError
     elif session.scalar(person_on_report_query(report_id, anchor)) is None:
         raise MemberNotOnReportError

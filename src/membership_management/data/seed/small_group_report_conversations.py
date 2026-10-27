@@ -49,9 +49,10 @@ def seed_report_conversations(ctx: SeedContext) -> None:
             )
         )
         if script.section is not None:
-            # Only a section with text can get a thread.
-            attribute = script.section.report_attribute
-            report = next(r for r in reports[script.report :] if (getattr(r, attribute) or "").strip())
+            # Only a section with items can get a thread.
+            report = next(
+                r for r in reports[script.report :] if any(i.section == script.section for i in r.items)
+            )
             about_member_id = None
         else:
             report = reports[script.report]
