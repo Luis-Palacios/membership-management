@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from membership_management.data.guests.models import Guest
 from membership_management.data.guests.services import NewGuest, add_guest
 from membership_management.data.members.models import Member, MemberStatus
+from membership_management.data.members.queries import tag_search_query
 from membership_management.data.members.services import MemberInactiveError
 from membership_management.data.query_helpers import all_as
 from membership_management.data.small_groups.models import (
@@ -36,6 +37,7 @@ from membership_management.data.small_groups.queries import (
     led_small_group_ids_query,
     list_small_groups_query,
     member_active_roles_query,
+    people_current_groups_query,
     people_query,
     recent_attendance_marks_query,
     report_dates_query,
@@ -68,6 +70,8 @@ from membership_management.data.small_groups.results import (
     LeadershipPeriod,
     NotFiledMeeting,
     OtherGroup,
+    PersonGroup,
+    PersonGroupRow,
     PersonKey,
     RecentMeeting,
     ReportAttendanceView,
@@ -90,7 +94,9 @@ from membership_management.data.small_groups.results import (
     SmallGroupActiveMember,
     SmallGroupSummary,
     StillToReport,
+    TaggablePerson,
     TaggedPersonRow,
+    TagSearchRow,
     WeekGroup,
     WeekLeader,
     WeekReportRow,
@@ -104,6 +110,10 @@ MAX_ITEM_LENGTH = 1024
 MAX_TAGS_PER_ITEM = 10
 # The old text columns are VARCHAR(1024); only items written with `sections` can add up to more.
 LEGACY_TEXT_MAX_LENGTH = 1024
+
+# Tag search (report tags rule 8): church-wide from 2 characters, at most 10 rows.
+TAG_SEARCH_MIN_LENGTH = 2
+TAG_SEARCH_LIMIT = 10
 
 # Reports looked at for a "missed the last N meetings" hint (rule 11); plenty for a hint.
 MISSED_STREAK_REPORT_WINDOW = 12
@@ -682,6 +692,41 @@ def report_item_views(session: Session, report_ids: frozenset[int]) -> dict[int,
             ReportItemView(row.id, ReportSection(row.section), segments)
         )
     return views
+
+
+def search_taggable_people(session: Session, small_group: SmallGroup, text: str) -> list[TaggablePerson]:
+    """People who may be tagged in this group's reports, matching `text` by name (rules 7, 8 and 10).
+
+    Active members (any group or none) and guests, church-wide; people active in this group first.
+    A closed group's reports are read-only, so nothing is found for it.
+    """
+    text = text.strip()
+    if len(text) < TAG_SEARCH_MIN_LENGTH or small_group.closed_at is not None:
+        return []
+    rows = all_as(session, tag_search_query(text, small_group.id, limit=TAG_SEARCH_LIMIT), TagSearchRow)
+    member_ids = frozenset(r.id for r in rows if r.kind == "member")
+    guest_ids = frozenset(r.id for r in rows if r.kind == "guest")
+    groups: dict[PersonKey, list[PersonGroup]] = {}
+    if rows:
+        for g in all_as(session, people_current_groups_query(member_ids, guest_ids), PersonGroupRow):
+            groups.setdefault(person_key(g.member_id, g.guest_id), []).append(
+                PersonGroup(g.id, g.name, g.audience, g.role)
+            )
+    return [
+        TaggablePerson(
+            person=(row.kind, row.id),
+            name=row.name,
+            in_this_group=row.in_this_group,
+            groups=groups.get((row.kind, row.id), []),
+            phone_last4=_phone_last4(row.phone) if row.kind == "guest" else None,
+        )
+        for row in rows
+    ]
+
+
+def _phone_last4(phone: str | None) -> str | None:
+    digits = "".join(c for c in phone or "" if c.isdigit())
+    return digits[-4:] if len(digits) >= 4 else None
 
 
 def delete_report(session: Session, report: SmallGroupReport) -> None:

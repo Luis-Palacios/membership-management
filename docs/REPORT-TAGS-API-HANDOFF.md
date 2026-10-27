@@ -39,8 +39,8 @@ database work stay plain `def`, and every `SmallGroupMember`-style person refere
 | --- | --- | --- |
 | **Part 1 (`report-tags`)** | | |
 | 1. Items and tags: migration, models, backfill | ✅ | `40f916a` |
-| 2. Write and read `sections` (both shapes accepted and returned) | ✅ | *(this commit)* |
-| 3. Tag search | ⬜ | |
+| 2. Write and read `sections` (both shapes accepted and returned) | ✅ | `37d817c` |
+| 3. Tag search | ✅ | *(this commit)* |
 | 4. Shared endpoint, section threads, seed | ⬜ | |
 | *(staff app Part 1 deploys here)* | | |
 | 5. Contract: drop the old text fields and columns, docs | ⬜ | |
@@ -92,6 +92,22 @@ database work stay plain `def`, and every `SmallGroupMember`-style person refere
   person twice in an item → one people row. A rename shows in segments and the old field. Old fields
   of the 51 seeded reports against their columns: identical except where the stage 1 backfill
   dropped markers or blank lines (only the planted test texts in the seed).
+- **Stage 3.** One SQL query ranks and limits (a `UNION ALL` of active members and guests, with
+  `in_this_group` and `starts_with` columns), one more loads the rows' current groups. Name matching
+  is factored out of the existing searches as `member_name_match` and `guest_name_match` (the latter
+  is the guest search minus its phone part, still on `guest_search_text`). `tag_search_query` sits in
+  `members/queries.py` next to `member_search_query`: `small_groups/queries.py` can't import the
+  member queries (they import it). "Starting with" means the full name starts with `q`. The any-of
+  permission is a local dependency (`require_permission` is all-of). A missing `q` is `[]`, like a
+  short one.
+- **Stage 3, tried:** elder in group 5, `kev` → the group's Kevin first, then the other three
+  (a guest included) by name; a member-group leader finds both guests named Baldizón/Baldizon
+  (accents, other guest groups) with `phoneLast4`; a guest in no group has `groups: []`; `ALVARO`
+  finds Álvaro; the inactive seeded member never appears; 1 character, blank-padded 1 character and no
+  `q` → `[]`; 101 characters → 422; `%_` matches nothing; `ra` → 10 rows, this group's block first;
+  `ma` → names starting with it before the rest, inside and outside the group. 404 out of scope, for
+  the former leader, a deacon with no member and a missing group; 403 for `user` and `pending`. Rows
+  carry only `person`, `inThisGroup`, `groups`, `phoneLast4`.
 
 ## Who can do what
 

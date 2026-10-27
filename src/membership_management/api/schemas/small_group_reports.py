@@ -218,6 +218,23 @@ class ReportSectionsSchema(CamelModel):
     follow_up: list[ReportItemSchema]
 
 
+class TagSearchGroupSchema(CamelModel):
+    id: int
+    name: str
+    audience: GroupAudience
+    role: SmallGroupRole
+
+
+class TagSearchRowSchema(CamelModel):
+    """Only what tells people apart (report tags rule 10): no email, address, notes or attendance."""
+
+    person: PersonSchema
+    in_this_group: bool
+    groups: list[TagSearchGroupSchema]
+    # Guests only; null for members and for guests without 4 phone digits.
+    phone_last4: str | None
+
+
 class ReportPermissionsSchema(CamelModel):
     can_edit: bool
     can_delete: bool
