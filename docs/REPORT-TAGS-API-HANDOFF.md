@@ -1,0 +1,330 @@
+# Report items, person tags and the person timeline
+
+Handoff spec for the membership-management side of **report items, tags and the person timeline**.
+Read the cross-repo spec first: `../docs/specs/report-tags.md` (workspace folder
+`members-management/docs/specs/`); its rules are referred to as *rule N*. It builds on
+`docs/PRAYER-FOLLOW-UP-API-HANDOFF.md` (shared endpoint, section threads),
+`docs/GUEST-SMALL-GROUPS-API-HANDOFF.md` (guests, `PersonKey`, `guest_search_text`) and
+`docs/INACTIVE-MEMBERS-API-HANDOFF.md`.
+
+Two parts, two branches:
+
+- **Part 1, `report-tags`.** The three report texts become lists of **items** that can **tag**
+  members and guests. Stages 1–4 *expand* (new tables, new `sections` field next to the old text
+  fields, both work); stage 5 *contracts* (drops the old fields and columns) and **waits until the
+  staff app's Part 1 is deployed**.
+- **Part 2, `person-timeline`.** `GET /members/{id}/timeline` and `GET /guests/{id}/timeline`.
+  No migration beyond indexes.
+
+> **No email, no notifications** (rules 13, 24). Report conversations Part 2 stays where it is.
+> **No new permission**: auth-server doesn't change.
+
+Work through it **stage by stage**, one reviewable commit per stage. Each stage must pass
+`uv run ruff check .` and `uv run ty check` (and `uv run alembic check`, plus a `downgrade -1` /
+`upgrade head` round trip, in migration stages), and be tried against the local API (`TestClient`
+with the claims dependency overridden, as before) as each role: `admin`, `elder` (linked and
+unlinked), `smallGroupLeader` (of a member group, of a guest group, out of scope, former leader),
+`deacon` with no member, `user`. There's no test runner yet, so note in *Decisions and deviations*
+what you tried and how. Use a scratch database for migration stages, not the dev one.
+
+Keep the existing conventions: routes call `services.py` directly, `queries.py` builds `Select`s,
+`results.py` holds `NamedTuple`s mapped with `all_as`, schemas are `CamelModel`, service errors are
+domain exceptions the router maps to HTTP codes, "today" is `church_today()`, routes doing blocking
+database work stay plain `def`, and every `SmallGroupMember`-style person reference is a
+`member_id` **or** a `guest_id` with a `num_nonnulls(...) = 1` check (`PersonKey`).
+
+## Progress (handoff log)
+
+| Stage | Status | Commit |
+| --- | --- | --- |
+| **Part 1 (`report-tags`)** | | |
+| 1. Items and tags: migration, models, backfill | ⬜ | |
+| 2. Write and read `sections` (both shapes accepted and returned) | ⬜ | |
+| 3. Tag search | ⬜ | |
+| 4. Shared endpoint, section threads, seed | ⬜ | |
+| *(staff app Part 1 deploys here)* | | |
+| 5. Contract: drop the old text fields and columns, docs | ⬜ | |
+| **Part 2 (`person-timeline`)** | | |
+| 6. Timeline service and indexes | ⬜ | |
+| 7. Timeline routes, seed check, docs | ⬜ | |
+
+### Decisions and deviations
+
+- *(fill in per stage)*
+
+## Who can do what
+
+| Role | Write `sections` | `GET …/tag-search` | Timeline: attendance + observation | Timeline: prayer, praise | Timeline: follow-up |
+| --- | --- | --- | --- | --- | --- |
+| admin, elder | ✓ (any report they can edit) | ✓ | every group | every group | ✓ |
+| smallGroupLeader, deacon | their groups' reports | their groups (scope) | groups they lead | any group | groups they lead |
+| user, pending | — (403) | — (403) | — (403) | — (403) | — (403) |
+
+Timeline access itself is the person's page access: `members: view` + members scope, or `guests:
+view` + guests scope (404 outside). "Every group" for attendance and follow-up means
+`sees_all_observations(claims)` (`smallGroups: all` + `smallGroupReports: viewObservations`), the
+same check conversations use.
+
+---
+
+## Part 1: items and tags
+
+### Data model
+
+Two tables, owned by Alembic like the rest of the members DB. Models in
+`data/small_groups/models/` (`small_group_report_item.py`, `small_group_report_item_person.py`),
+exported from `models/__init__.py`.
+
+**`small_group_report_items`**
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | int identity PK | Not stable across edits (stage 2 replaces a report's items). Don't anchor anything to it yet. |
+| `report_id` | FK `small_group_reports.id`, `ON DELETE CASCADE`, indexed | |
+| `section` | VARCHAR(16) + CHECK in (`prayer`, `praise`, `followUp`) | Reuse `ReportSection`. A new section needs a hand-written migration, like `role`. |
+| `position` | SMALLINT, CHECK `>= 0` | Order inside the section, from 0. |
+| `text` | TEXT, not null | The item with person tokens (below). Trimmed, non-empty. |
+
+Unique `(report_id, section, position)`: name it explicitly
+(`uq_small_group_report_items_report_section_position`); the `uq` naming convention uses only the
+first column and would clash with a later constraint, as it did for section threads.
+
+**`small_group_report_item_people`**: one row per person tagged in an item (an index of the
+tokens, so the timeline and "who's tagged" are plain joins).
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | int identity PK | |
+| `item_id` | FK `small_group_report_items.id`, `ON DELETE CASCADE`, indexed | |
+| `member_id` | FK `members.id`, nullable, indexed | |
+| `guest_id` | FK `guests.id`, nullable, indexed | |
+
+`CHECK num_nonnulls(member_id, guest_id) = 1` (`one_person`), unique `(item_id, member_id)` and
+`(item_id, guest_id)` (the second named explicitly, as in `small_group_report_attendances`).
+
+**Person tokens in `text`:** `@{member:198}` and `@{guest:45}`. The text never stores names, so a
+rename carries through (rule 11). The people table always matches the tokens: the service writes
+both from the parsed segments, never one without the other. Text that only looks like a token but
+doesn't match `@\{(member|guest):\d+\}` is plain text.
+
+**Segments** are the API shape (contract in the spec): `text` segments and `person` segments.
+Put the conversion in one module, `data/small_groups/report_items.py`:
+
+- `segments_to_text(segments) -> (text, people)`: joins text segments and tokens, collapses runs
+  of whitespace to one space, trims; returns the person keys in order of first appearance.
+- `text_to_segments(text, names) -> list[Segment]`: splits on tokens; `names` is a
+  `PersonKey → name` map loaded once per response (no per-item queries).
+- `split_legacy_text(text) -> list[str]`: rule 2 and 5's split: one item per line, drop leading
+  `-`, `–`, `•`, `*`, `·` and `1.` / `1)` markers, trim, skip blanks. Used by the backfill, by
+  old-shape writes (stage 2) and nowhere else.
+
+### Stage 1: migration, models, backfill
+
+1. Models and one migration. Autogenerate finds the tables; the checks, the explicitly named unique
+   constraints and the backfill are hand-written.
+2. **Backfill** in the same migration, in SQL or with a light table definition (not the ORM
+   models): for each report with `held = true`, each of `group_prayer_request`,
+   `group_praise_report`, `group_relevant_discussion` → `split_legacy_text` → one item per line,
+   `section` from `ReportSection.report_attribute`'s mapping. No people rows: nothing is tagged
+   (rule 5). No-meeting reports have no texts and get no items.
+3. **Downgrade** rebuilds nothing: the old columns are still there in Part 1 (stage 5 drops them),
+   so it just drops the two tables. Note it in the migration's docstring.
+4. `data/models.py` imports the new models (otherwise autogenerate drops the tables later).
+
+Try: on a scratch DB with the seed, count items per section against a Python split of the old
+columns; a text with `"- a\n• b\n\n3) c"` gives `a`, `b`, `c`; blank and null texts give no items;
+`alembic check` clean; downgrade and upgrade round trip.
+
+### Stage 2: write and read `sections`
+
+**Writes** (`HeldReportBodySchema`, create and edit):
+
+- New optional `sections: ReportSectionsInput | None = None` with keys `prayer`, `praise`,
+  `followUp`, each a list (max 20) of `{ segments: list[SegmentInput] }`. `SegmentInput` is a
+  discriminated union on `type`: `{ type: "text", text: str }` or `{ type: "person", person: {
+  type: "member" | "guest", id: int } }`.
+- When `sections` is sent it **wins**, and the old fields in the same body are ignored. When it's
+  absent, the old three fields are split with `split_legacy_text` (one item per line, no tags), so
+  today's staff app keeps working unchanged.
+- Validation, in the service (domain exceptions → router):
+  - Item text (after `segments_to_text`) at most 1024 characters, at most 10 people per item, at
+    most 20 items per section (rule 3) → 422 `Too many items or tags in {section}.` /
+    `An item in {section} is too long: items can be up to 1024 characters.`. Empty items are dropped silently (rule 2).
+  - Every tagged person exists → 422 `Unknown person to tag.`
+  - A **newly** tagged member must be active (rule 7) → 422 `{name} is inactive and can't be
+    tagged.` "Newly" = not already tagged in the same section of this report before the edit, so
+    re-saving an older report never fails because someone left the church.
+- `create_report` / `update_report` replace the report's items (delete the old ones, insert the new
+  ones with positions 0…n) in the same transaction as the rest of the report. Keep the old columns
+  in step while they exist: write each section's items joined by `\n`, tokens replaced by full names
+  (`_legacy_text(items, names)`), so anything reading them still sees the content.
+- No-meeting bodies are unchanged (`extra="forbid"` already refuses `sections` there).
+
+**Reads:**
+
+- `ReportDetailSchema` gains `sections: ReportSectionsSchema` (`prayer`, `praise`, `followUp`:
+  lists of `{ id, segments }`), built in `build_report_detail` with **one** query for the report's
+  items and one for the names of the people they tag. Person segments carry `name` (current) and
+  `viewable` (rule 12): `True` with `members: all` / `guests: all`, otherwise whether the person is
+  in the caller's `MemberScope` / `GuestScope`. Compute it once per response for the set of people
+  on the page, not per segment.
+- The old three text fields stay in the response (now derived from the items, as written above).
+- Who sees `sections`: whoever sees the report today (the texts were never observation-gated, rule 3
+  of prayer & follow-up).
+
+Try: create with `sections` (a member and a guest tagged, a group-level item, an empty item that
+gets dropped), read it back (segments, names, `viewable` for an elder, for the group's leader on a
+member of their group and on a member of another group); create with the old fields only (one item
+per line comes back); edit an older report re-sending its untagged items; tag an inactive member
+(422) and re-save a report where an already-tagged member has since become inactive (200); 21 items,
+11 tags, a 1025-character item (422); an unknown guest id (422); a no-meeting body with `sections`
+(422 as today); rename a tagged member and read again (new name). Compare the old-field responses
+before and after for reports with no tags: identical text (line breaks may differ where the backfill
+split lines: note it).
+
+### Stage 3: tag search
+
+`GET /small-groups/{id}/tag-search?q=` in `api/routers/small_group_reports.py` (it's about writing
+that group's reports), service in `data/small_groups/services.py`, queries next to the member and
+guest searches.
+
+- Permission: `smallGroupReports: create` **or** `update` (either is enough), plus the small group
+  scope (404 outside). A closed group's reports are read-only, so its tag search returns `[]`
+  (not 409).
+- `q` trimmed; under 2 characters → `[]`. Max 100 characters.
+- Searches **active members** (any group or none) and **guests**, church-wide (rule 10), with the
+  same matching the existing searches use (`member_search_query`'s name match; for guests
+  `guest_search_text` and its trigram index, never `unaccent()` directly). Name only: no phone or
+  email matching here.
+- Ranking: people active in this group first (`inThisGroup`), then names starting with the query,
+  then the rest, then name. At most 10 rows in total.
+- Row: `person` (`{ type, id, name }`), `inThisGroup`, `groups` (the person's **current** open
+  groups: `id`, `name`, `audience`, `role`), `phoneLast4` (guests only; digits only, last 4, null
+  when none; null for members).
+- Nothing else: no email, address, observations, attendance or status (rule 10).
+
+Try: an elder in any group; a leader of a member group finds a guest of another group by name
+(new reach, rule 10: the reason is in the spec); a leader out of scope (404); `user` (403); a member
+who is inactive never appears; `Pab` with someone in this group and two elsewhere (this group's
+first); accents and case (`jose` finds José); a guest in no group (`groups: []`).
+
+### Stage 4: shared endpoint, section threads, seed
+
+- **`GET /small-group-reports/shared`:** each entry gains `sections` (same shape as report detail,
+  with `viewable`). One items query and one names query for the whole week, not per entry. The old
+  `prayer` / `praise` / `followUp` strings stay until stage 5, derived from the items. An entry is
+  listed in a section when that section has items.
+- **Section threads:** `section_text_query` becomes "does this section have an item"
+  (`section_has_items_query`); the 422 text `This section is empty.` is unchanged. Starting a
+  thread on a section that has items but whose old text column happens to be null must work.
+  `ReportSection.report_attribute` is now only used by the stage 2 legacy sync; remove it in stage
+  5.
+- **Seed** (`data/seed/`): write items through the same service helpers, with tags. For each held
+  seeded report: 1–3 prayer items, 0–2 praise, 0–1 follow-up; about half the items tag one roster
+  person of that report, some tag someone from another group, and guest groups' reports tag guests.
+  Deterministic, as now (two `--reset` runs give identical rows).
+
+Try: the shared endpoint's body against stage 3 for five weeks (only `sections` added); a section
+thread on a section with items, and 422 on one without; seed twice and compare.
+
+> **Stop here.** Stage 5 waits until the staff app's Part 1 is deployed (cross-repo spec, *Deploy
+> order*). Say so in your final message.
+
+### Stage 5: contract
+
+Only after the staff app sends `sections` and reads `sections` in production.
+
+- Drop the three fields from `HeldReportBodySchema`, `ReportDetailSchema` and the shared entry, and
+  the `_legacy_text` sync. Drop `ReportSection.report_attribute`.
+- Migration: drop `group_prayer_request`, `group_praise_report`, `group_relevant_discussion` from
+  `small_group_reports`. **Downgrade** re-creates them and fills them from the items (joined by
+  `\n`, tokens replaced by full names), so a rollback keeps the content.
+- Docs: `docs/ARCHITECTURE.md` (*Small group reports*: items and tags, the token format, the
+  tag-search row in the role × route table), `CLAUDE.md` (one line under small group reports:
+  items, tokens, `report_items.py`), and a pointer under the title of
+  `docs/SMALL-GROUP-REPORTS-API-HANDOFF.md` and `docs/PRAYER-FOLLOW-UP-API-HANDOFF.md`.
+
+Try: the round trip on a scratch DB (downgrade gives back the texts); `alembic check`; every report
+route for every role, comparing bodies with stage 4 minus the removed fields.
+
+---
+
+## Part 2: the person timeline
+
+### Contract
+
+`GET /members/{id}/timeline` and `GET /guests/{id}/timeline` (router: `members.py` and `guests.py`,
+declared before any `/{id}/…` route that could shadow them). Response shape in the cross-repo spec.
+
+Query parameters:
+
+| Param | Default | Rules |
+| --- | --- | --- |
+| `from` | `to` minus 3 months plus 1 day | ISO date. 422 if after `to`. |
+| `to` | church today | ISO date. 422 if in the future. 422 if `to - from` is more than 731 days. |
+| `smallGroupId` | none | Only rows of that group. A group with no visible row just gives no rows (not 404). |
+| `latest` | none | 1–10. Newest N visible rows, any date and group; `from` and `to` are null in the response. 422 together with `from`, `to` or `smallGroupId`. |
+
+### Stage 6: timeline service and indexes
+
+Service `get_person_timeline(session, person: PersonKey, *, claims, member_scope_or_guest_scope,
+from_, to, small_group_id, latest)` in a new `data/small_groups/timeline_services.py`, queries in
+`timeline_queries.py`. Rows are **held** reports where the person:
+
+- has an attendance row (`small_group_report_attendances`), **or**
+- is tagged in an item (`small_group_report_item_people` → items → report).
+
+Visibility per row (rule 23), decided in SQL where it's cheap and in the service otherwise:
+
+- **Attendance and observation** are visible when the caller is in that report's observation
+  audience: `observations_visible_to(sees_all_observations=…, leads_group=…)`, where "leads group" is
+  the caller's led groups (`get_led_small_group_ids` plus led guest groups). `role` comes from the
+  person's group period covering the meeting date (as the report detail does); null when none.
+  `observation` is omitted when empty, with the report's submitter as `submittedBy`.
+- **Prayer and praise items** that tag the person: visible to anyone who passed the endpoint's scope.
+- **Follow-up items**: the same audience as attendance and observations: every group with
+  `sees_all_observations(claims)`, otherwise only reports of groups the caller leads or co-leads
+  (rule 23). Follow-up items from other groups' reports never appear, and never count.
+- Only items that tag **this** person, ordered by section (`prayer`, `praise`, `followUp`) then
+  position. Segments as in Part 1 (one names query for the whole response; the person themselves
+  gets `viewable: true` only if the caller can open their page, which they can, since they're here).
+- A row with no visible attendance and no visible item is dropped.
+- Order: `meeting_date` desc, then report id desc.
+
+`counts` cover the range and group, after visibility: `notes` (rows with a visible observation),
+`prayer`, `praise`, `followUp` (items). `groups`: every group with at least one visible row, **any
+date** (it fills the group filter), by name. `earliestDate`: the oldest visible row's date, any
+group, null when none.
+
+Indexes: `small_group_report_item_people.member_id` / `guest_id` exist from stage 1;
+`small_group_report_attendances` already indexes `member_id` and `guest_id`. Add a migration only if
+`EXPLAIN` on the seeded DB shows a sequential scan on reports for one person (it shouldn't); note
+the plan in *Decisions*.
+
+### Stage 7: routes, seed check, docs
+
+- `GET /members/{id}/timeline`: `members: view` + `MemberScopeDep` (404 outside, same message as
+  the member route). An inactive member's timeline is readable by whoever can read the member.
+- `GET /guests/{id}/timeline`: `guests: view` + `GuestScopeDep`.
+- Range errors → 422 with `range` in the message: `The range can't end in the future.`, `The range
+  must start on or before its end.`, `The range can't be longer than 2 years.`
+- Seed: check the seeded data gives a useful timeline (a member in two groups, tagged once from a
+  third; a guest moved between guest groups and tagged from a member group). Adjust the tag seeding
+  from stage 4 if it doesn't.
+- Docs: `docs/ARCHITECTURE.md` (role × route rows, a *Person timeline* entry with the visibility
+  rules), `CLAUDE.md` one line.
+
+Try: Lucía-like member (co-leader in one group, leader in another, tagged from a third) as an
+elder (everything, follow-up included), as the leader of one of her groups (attendance and notes
+and follow-up only from that group, prayer and praise from all three; a follow-up item tagging her
+from a group the leader doesn't lead is missing and not counted), as a
+leader out of scope (404), as `user` (403); a guest as an elder and as their guest group's leader
+(rows from their previous guest group hidden); `latest=3`; each range error; a 2-year range;
+`smallGroupId` of a group with no rows (empty, 200); a no-meeting report never appears; a report
+where she's both on the list and tagged is **one** row.
+
+## Not in this handoff
+
+- Notifications of any kind, export, printing, LLM suggestions (spec rule 25).
+- Stable item ids across edits, item-level threads or "answered" flags: later, and they'll need
+  `update_report` to diff items instead of replacing them.
