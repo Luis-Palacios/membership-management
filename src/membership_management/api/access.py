@@ -1,3 +1,4 @@
+from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Annotated
 
@@ -8,10 +9,18 @@ from membership_management.api.config import api_settings
 from membership_management.api.current_member import CurrentMemberDep
 from membership_management.api.dependencies import MembersSessionDep
 from membership_management.api.jwt_auth import AuthClaims, CurrentClaimsDep, has_permission
-from membership_management.data.guests.lookup_services import get_led_open_guest_group_ids, is_guest_in_groups
+from membership_management.data.guests.lookup_services import (
+    get_led_open_guest_group_ids,
+    guests_in_groups,
+    is_guest_in_groups,
+)
 from membership_management.data.members.models import Member
-from membership_management.data.members.services import is_member_active_in_open_groups
+from membership_management.data.members.services import (
+    is_member_active_in_open_groups,
+    members_active_in_open_groups,
+)
 from membership_management.data.small_groups.models import ConversationSide, SmallGroupReport, SmallGroupRole
+from membership_management.data.small_groups.results import PersonKey
 from membership_management.data.small_groups.services import (
     get_active_membership,
     get_led_small_group_ids,
@@ -127,6 +136,33 @@ def get_guest_scope(claims: CurrentClaimsDep, member: CurrentMemberDep, db: Memb
 
 
 GuestScopeDep = Annotated[GuestScope, Depends(get_guest_scope)]
+
+
+def viewable_people(
+    db: Session,
+    claims: AuthClaims,
+    people: Collection[PersonKey],
+    member_scope: MemberScope,
+    guest_scope: GuestScope,
+) -> frozenset[PersonKey]:
+    """Report tags rule 12: those of `people` whose page the caller may open, in two queries at most.
+
+    The member page is `members: view` plus the members scope; the guest page `guests: view` plus the
+    guests scope. Computed once per response for everyone on it, not per segment.
+    """
+    member_ids = frozenset(person_id for kind, person_id in people if kind == "member")
+    guest_ids = frozenset(person_id for kind, person_id in people if kind == "guest")
+    members: frozenset[int] = frozenset()
+    if member_ids and has_permission(claims, "members", "view"):
+        members = (
+            member_ids
+            if member_scope.full
+            else members_active_in_open_groups(db, member_ids, member_scope.group_ids)
+        )
+    guests: frozenset[int] = frozenset()
+    if guest_ids and has_permission(claims, "guests", "view"):
+        guests = guest_ids if guest_scope.full else guests_in_groups(db, guest_ids, guest_scope.group_ids)
+    return frozenset({("member", i) for i in members} | {("guest", i) for i in guests})
 
 
 _OWN_ROW = "Ask an admin or elder to change your own role in this group."

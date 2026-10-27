@@ -83,15 +83,51 @@ class ReportAttendanceInputSchema(CamelModel):
         return self
 
 
+class TextSegmentInputSchema(CamelModel):
+    type: Literal["text"]
+    # Loose caps against oversized bodies; the item limits (report tags rule 3) are the service's.
+    text: Annotated[str, StringConstraints(max_length=4096)]
+
+
+class TaggedPersonInputSchema(CamelModel):
+    type: Literal["member", "guest"]
+    id: int
+
+
+class PersonSegmentInputSchema(CamelModel):
+    type: Literal["person"]
+    person: TaggedPersonInputSchema
+
+
+SegmentInputSchema = Annotated[TextSegmentInputSchema | PersonSegmentInputSchema, Field(discriminator="type")]
+
+
+class ReportItemInputSchema(CamelModel):
+    segments: Annotated[list[SegmentInputSchema], Field(max_length=200)]
+
+
+SectionItemsInput = Annotated[list[ReportItemInputSchema], Field(max_length=100)]
+
+
+class ReportSectionsInputSchema(CamelModel):
+    """A held report's items by section; a missing key is an empty section."""
+
+    prayer: SectionItemsInput = Field(default_factory=list)
+    praise: SectionItemsInput = Field(default_factory=list)
+    follow_up: SectionItemsInput = Field(default_factory=list)
+
+
 class HeldReportBodySchema(CamelModel):
     """Create and edit body of a meeting that happened; an edit replaces the whole report."""
 
     held: Literal[True] = True
     meeting_date: date
     address: Address = None
+    # Ignored when `sections` is sent; otherwise each line becomes an item (report tags rule 2).
     group_prayer_request: ReportText = None
     group_praise_report: ReportText = None
     group_relevant_discussion: ReportText = None
+    sections: ReportSectionsInputSchema | None = None
     attendances: list[ReportAttendanceInputSchema]
     # Create only; true on an edit is a 422.
     replaces_no_meeting: bool = False
@@ -153,6 +189,35 @@ class ReportTotalsSchema(CamelModel):
     observations: int | None = None
 
 
+class TaggedPersonSchema(PersonSchema):
+    # Whether the caller may open the person's page (report tags rule 12).
+    viewable: bool
+
+
+class TextSegmentSchema(CamelModel):
+    type: Literal["text"]
+    text: str
+
+
+class PersonSegmentSchema(CamelModel):
+    type: Literal["person"]
+    person: TaggedPersonSchema
+
+
+SegmentSchema = Annotated[TextSegmentSchema | PersonSegmentSchema, Field(discriminator="type")]
+
+
+class ReportItemSchema(CamelModel):
+    id: int
+    segments: list[SegmentSchema]
+
+
+class ReportSectionsSchema(CamelModel):
+    prayer: list[ReportItemSchema]
+    praise: list[ReportItemSchema]
+    follow_up: list[ReportItemSchema]
+
+
 class ReportPermissionsSchema(CamelModel):
     can_edit: bool
     can_delete: bool
@@ -168,9 +233,11 @@ class ReportDetailSchema(CamelModel):
     held: bool
     not_held_reason: str | None
     address: str | None
+    # Derived from `sections` (one item per line, people by full name) until the old fields go away.
     group_prayer_request: str | None
     group_praise_report: str | None
     group_relevant_discussion: str | None
+    sections: ReportSectionsSchema
     submitted_by: ReportPersonSchema
     submitted_at: datetime
     observations_visible: bool

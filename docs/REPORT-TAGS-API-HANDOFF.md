@@ -38,8 +38,8 @@ database work stay plain `def`, and every `SmallGroupMember`-style person refere
 | Stage | Status | Commit |
 | --- | --- | --- |
 | **Part 1 (`report-tags`)** | | |
-| 1. Items and tags: migration, models, backfill | ✅ | *(this commit)* |
-| 2. Write and read `sections` (both shapes accepted and returned) | ⬜ | |
+| 1. Items and tags: migration, models, backfill | ✅ | `40f916a` |
+| 2. Write and read `sections` (both shapes accepted and returned) | ✅ | *(this commit)* |
 | 3. Tag search | ⬜ | |
 | 4. Shared endpoint, section threads, seed | ⬜ | |
 | *(staff app Part 1 deploys here)* | | |
@@ -64,6 +64,34 @@ database work stay plain `def`, and every `SmallGroupMember`-style person refere
   section match a Python split of the old columns (50 / 36 / 21), no items for no-meeting reports,
   no people rows, `a`/`b`/`c` as three items, the blank gives none, the lookalike stays text.
   `alembic check` clean; `downgrade -1` drops both tables, `upgrade head` refills identically.
+- **Stage 2.** Old-shape writes (no `sections`) aren't held to the 20-items limit: today's client
+  can't know about it, and its texts are already capped at 1024 characters. Item length, tag count
+  and the 20 items apply to `sections`. The schema only has loose caps (100 items, 200 segments,
+  4096-character text segments) so the 422 texts come from the service, after empty items are dropped.
+- **Stage 2.** The old columns are written from the items, people by full name, cut at 1024
+  characters (their width; only tagged `sections` writes can get there). Reads derive the old fields
+  from the items too, so a rename shows in them as well.
+- **Stage 2.** `update_report` flushes the deleted items before inserting the new ones (the unit of
+  work would insert first and trip the position constraint), and does it before touching the report's
+  date, so a date clash still surfaces at commit as the existing 409.
+- **Stage 2.** "Newly tagged" is per section, so moving an inactive member's tag to another section
+  is a 422. `viewable` also needs `members: view` / `guests: view`, like the pages. Batched helpers
+  `members_active_in_open_groups` and `guests_in_groups` decide it in at most two queries
+  (`access.viewable_people`); the segment mapping lives in `api/report_items.py`, reused by stage 4.
+- **Stage 2, tried** (`TestClient`, claims and current member overridden, scratch DB; a former
+  co-leader of group 2 added): create with `sections` (member of the group, a guest of a guest group,
+  a member of another group, a group-level item, a blank item dropped, whitespace collapsed); the old
+  field in the same body ignored. `viewable`: admin, elder linked and unlinked all true; group 1's
+  leader true for their member, false for the guest and the other group's member. 404 for a leader
+  out of scope, the former leader, a guest-group leader and a deacon with no member; 403 for `user`.
+  Old fields only: `"- uno\n• dos\n\n3) tres"` → three items, `"uno\ndos\ntres"` back. Re-sending an
+  older report's items: identical items and old fields. Inactive member newly tagged → 422; already
+  tagged then made inactive → 200; moved to another section → 422. 21 items, 11 tags, 1025 characters,
+  an unknown guest → 422 with the contract texts; 20 items plus a blank one, 10 tags, 1024 characters
+  → 200; a no-meeting body with `sections` → 422; `@{member:1}` typed as text stays text; the same
+  person twice in an item → one people row. A rename shows in segments and the old field. Old fields
+  of the 51 seeded reports against their columns: identical except where the stage 1 backfill
+  dropped markers or blank lines (only the planted test texts in the seed).
 
 ## Who can do what
 

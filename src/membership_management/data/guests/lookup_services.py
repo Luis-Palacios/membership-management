@@ -11,6 +11,7 @@ from membership_management.data.guests.queries import (
     guest_periods_query,
     guest_recent_attendance_query,
     guest_rows_query,
+    guests_active_in_groups_query,
     led_open_guest_group_ids_query,
 )
 from membership_management.data.guests.results import (
@@ -40,6 +41,15 @@ def is_guest_in_groups(session: Session, guest_id: int, group_ids: frozenset[int
     if not group_ids:
         return False
     return session.scalar(guest_active_in_groups_query(guest_id, group_ids)) is not None
+
+
+def guests_in_groups(
+    session: Session, guest_ids: frozenset[int], group_ids: frozenset[int]
+) -> frozenset[int]:
+    """`is_guest_in_groups` for many guests in one query: the ids it holds for."""
+    if not guest_ids or not group_ids:
+        return frozenset()
+    return frozenset(session.scalars(guests_active_in_groups_query(guest_ids, group_ids)))
 
 
 def get_guest(session: Session, guest_id: int) -> Guest | None:

@@ -4,6 +4,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from membership_management.api.access import (
+    GuestScope,
+    GuestScopeDep,
+    MemberScope,
+    MemberScopeDep,
     SmallGroupScope,
     SmallGroupScopeDep,
     comment_side,
@@ -21,6 +25,7 @@ from membership_management.api.jwt_auth import (
     require_permission,
 )
 from membership_management.api.rate_limit import default_user_rate_limit, rate_limit
+from membership_management.api.report_items import sections_input, sections_schema, viewable_tagged
 from membership_management.api.schemas.person import PersonSchema
 from membership_management.api.schemas.small_group_reports import (
     FiledReportItemSchema,
@@ -60,6 +65,7 @@ from membership_management.data.small_groups.models import SmallGroup
 from membership_management.data.small_groups.results import (
     AttendanceInput,
     NotFiledMeeting,
+    PersonKey,
     ReportDetail,
     ReportInput,
 )
@@ -67,12 +73,16 @@ from membership_management.data.small_groups.services import (
     AttendanceMismatchError,
     FutureMeetingDateError,
     FutureWeekError,
+    InactiveTagError,
     MemberRequiredToSubmitError,
     NotGroupLeaderOnDateError,
     ReportAlreadyExistsError,
+    ReportItemsLimitError,
+    ReportItemTooLongError,
     ReportKindChangeError,
     ReportStatus,
     SmallGroupClosedError,
+    UnknownTagError,
     build_report_detail,
     church_sunday,
     create_report,
@@ -140,7 +150,22 @@ def _http_error(exc: Exception) -> HTTPException:
             status_code=422,
             detail="A report can't change between a meeting and a no meeting. Delete it and add the other.",
         )
+    if isinstance(exc, ReportItemsLimitError):
+        return HTTPException(status_code=422, detail=f"Too many items or tags in {exc.section}.")
+    if isinstance(exc, ReportItemTooLongError):
+        return HTTPException(
+            status_code=422,
+            detail=f"An item in {exc.section} is too long: items can be up to 1024 characters.",
+        )
+    if isinstance(exc, UnknownTagError):
+        return HTTPException(status_code=422, detail="Unknown person to tag.")
+    if isinstance(exc, InactiveTagError):
+        return HTTPException(status_code=422, detail=f"{exc.name} is inactive and can't be tagged.")
     raise exc
+
+
+# The item errors a create or edit can raise (report tags rules 3 and 7).
+_ITEM_ERRORS = (ReportItemsLimitError, ReportItemTooLongError, UnknownTagError, InactiveTagError)
 
 
 @router.get(
@@ -217,10 +242,11 @@ def _to_input(body: HeldReportBodySchema | NotHeldReportBodySchema) -> ReportInp
             for a in body.attendances
         ],
         replaces_no_meeting=body.replaces_no_meeting,
+        sections=sections_input(body.sections) if body.sections is not None else None,
     )
 
 
-def _detail_schema(detail: ReportDetail) -> ReportDetailSchema:
+def _detail_schema(detail: ReportDetail, viewable: frozenset[PersonKey]) -> ReportDetailSchema:
     """Map the service's detail. Observation keys are only passed when visible, so they stay unset
     (and are dropped by `response_model_exclude_unset`) when they aren't."""
     visible = detail.observations_visible
@@ -262,6 +288,7 @@ def _detail_schema(detail: ReportDetail) -> ReportDetailSchema:
         group_prayer_request=detail.group_prayer_request,
         group_praise_report=detail.group_praise_report,
         group_relevant_discussion=detail.group_relevant_discussion,
+        sections=sections_schema(detail.items, viewable),
         submitted_by=ReportPersonSchema(
             member_id=detail.submitted_by_member_id, name=detail.submitted_by_name
         ),
@@ -275,20 +302,24 @@ def _detail_schema(detail: ReportDetail) -> ReportDetailSchema:
 
 
 def _report_detail_or_404(
-    db: MembersSessionDep, report_id: int, scope: SmallGroupScope, claims: AuthClaims
+    db: MembersSessionDep,
+    report_id: int,
+    scope: SmallGroupScope,
+    claims: AuthClaims,
+    member_scope: MemberScope,
+    guest_scope: GuestScope,
 ) -> ReportDetailSchema:
     """The report's detail as this caller may see it; 404 when missing or outside the scope."""
     report = get_report(db, report_id, None if scope.full else scope.group_ids)
     if report is None:
         raise HTTPException(status_code=404, detail=f"Small group report with ID {report_id} not found.")
-    return _detail_schema(
-        build_report_detail(
-            db,
-            report,
-            sees_all_observations=sees_all_observations(claims),
-            leads_group=leads_group(scope, report.small_group_id),
-        )
+    detail = build_report_detail(
+        db,
+        report,
+        sees_all_observations=sees_all_observations(claims),
+        leads_group=leads_group(scope, report.small_group_id),
     )
+    return _detail_schema(detail, viewable_tagged(db, claims, detail.items, member_scope, guest_scope))
 
 
 # Declared before `/small-group-reports/{report_id}` so "summary" is never read as a report id.
@@ -563,6 +594,8 @@ def post_small_group_report(
     claims: CurrentClaimsDep,
     scope: SmallGroupScopeDep,
     member: CurrentMemberDep,
+    member_scope: MemberScopeDep,
+    guest_scope: GuestScopeDep,
 ) -> ReportDetailSchema:
     small_group = _small_group_or_404(db, small_group_id, scope)
     try:
@@ -583,9 +616,10 @@ def post_small_group_report(
         ReportAlreadyExistsError,
         AttendanceMismatchError,
         NotGroupLeaderOnDateError,
+        *_ITEM_ERRORS,
     ) as exc:
         raise _http_error(exc) from exc
-    return _report_detail_or_404(db, report.id, scope, claims)
+    return _report_detail_or_404(db, report.id, scope, claims, member_scope, guest_scope)
 
 
 @router.get(
@@ -596,9 +630,14 @@ def post_small_group_report(
     dependencies=[Depends(require_permission("smallGroupReports", "view"))],
 )
 def get_small_group_report(
-    report_id: int, db: MembersSessionDep, claims: CurrentClaimsDep, scope: SmallGroupScopeDep
+    report_id: int,
+    db: MembersSessionDep,
+    claims: CurrentClaimsDep,
+    scope: SmallGroupScopeDep,
+    member_scope: MemberScopeDep,
+    guest_scope: GuestScopeDep,
 ) -> ReportDetailSchema:
-    return _report_detail_or_404(db, report_id, scope, claims)
+    return _report_detail_or_404(db, report_id, scope, claims, member_scope, guest_scope)
 
 
 @router.patch(
@@ -617,6 +656,8 @@ def patch_small_group_report(
     db: MembersSessionDep,
     claims: CurrentClaimsDep,
     scope: SmallGroupScopeDep,
+    member_scope: MemberScopeDep,
+    guest_scope: GuestScopeDep,
 ) -> ReportDetailSchema:
     report = get_report(db, report_id, None if scope.full else scope.group_ids)
     if report is None:
@@ -636,9 +677,10 @@ def patch_small_group_report(
         ReportAlreadyExistsError,
         AttendanceMismatchError,
         ReportKindChangeError,
+        *_ITEM_ERRORS,
     ) as exc:
         raise _http_error(exc) from exc
-    return _report_detail_or_404(db, report_id, scope, claims)
+    return _report_detail_or_404(db, report_id, scope, claims, member_scope, guest_scope)
 
 
 @router.delete(

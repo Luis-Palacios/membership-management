@@ -1,7 +1,7 @@
 import unicodedata
-from collections.abc import Sequence
+from collections.abc import Collection, Mapping, Sequence
 from datetime import date, timedelta
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
@@ -16,10 +16,13 @@ from membership_management.data.small_groups.models import (
     GroupAudience,
     LeftReason,
     ReportConversation,
+    ReportSection,
     SmallGroup,
     SmallGroupMember,
     SmallGroupReport,
     SmallGroupReportAttendance,
+    SmallGroupReportItem,
+    SmallGroupReportItemPerson,
     SmallGroupRole,
 )
 from membership_management.data.small_groups.queries import (
@@ -33,16 +36,27 @@ from membership_management.data.small_groups.queries import (
     led_small_group_ids_query,
     list_small_groups_query,
     member_active_roles_query,
+    people_query,
     recent_attendance_marks_query,
     report_dates_query,
     report_groups_query,
     report_in_scope_query,
+    report_items_query,
     report_on_date_query,
+    report_tagged_people_query,
     roster_periods_on_date_query,
     shared_reports_query,
     small_group_active_guests_query,
     small_group_active_members_query,
     week_reports_query,
+)
+from membership_management.data.small_groups.report_items import (
+    Segment,
+    legacy_section_text,
+    segments_to_text,
+    split_legacy_text,
+    tagged_people,
+    text_to_segments,
 )
 from membership_management.data.small_groups.results import (
     ActiveLeaderRow,
@@ -62,6 +76,8 @@ from membership_management.data.small_groups.results import (
     ReportDetail,
     ReportGroupRow,
     ReportInput,
+    ReportItemRow,
+    ReportItemView,
     ReportPage,
     ReportRoster,
     ReportShared,
@@ -74,12 +90,20 @@ from membership_management.data.small_groups.results import (
     SmallGroupActiveMember,
     SmallGroupSummary,
     StillToReport,
+    TaggedPersonRow,
     WeekGroup,
     WeekLeader,
     WeekReportRow,
     WeekStatus,
     person_key,
 )
+
+# Report tags rule 3.
+MAX_ITEMS_PER_SECTION = 20
+MAX_ITEM_LENGTH = 1024
+MAX_TAGS_PER_ITEM = 10
+# The old text columns are VARCHAR(1024); only items written with `sections` can add up to more.
+LEGACY_TEXT_MAX_LENGTH = 1024
 
 # Reports looked at for a "missed the last N meetings" hint (rule 11); plenty for a hint.
 MISSED_STREAK_REPORT_WINDOW = 12
@@ -180,6 +204,34 @@ class AttendanceMismatchError(Exception):
 
 class NotGroupLeaderOnDateError(Exception):
     """A scoped caller didn't hold leader or co-leader in the group on the meeting date (rule 5)."""
+
+
+class ReportItemsLimitError(Exception):
+    """More than 20 items in a section, or more than 10 people tagged in one item (report tags rule 3)."""
+
+    def __init__(self, section: ReportSection) -> None:
+        super().__init__(section)
+        self.section = section
+
+
+class ReportItemTooLongError(Exception):
+    """An item longer than 1024 characters, tokens included (report tags rule 3)."""
+
+    def __init__(self, section: ReportSection) -> None:
+        super().__init__(section)
+        self.section = section
+
+
+class UnknownTagError(Exception):
+    """A tagged member or guest that doesn't exist."""
+
+
+class InactiveTagError(Exception):
+    """A member newly tagged while inactive (report tags rule 7)."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name)
+        self.name = name
 
 
 class FutureWeekError(Exception):
@@ -369,6 +421,11 @@ def build_report_detail(
         for a, key in zip(report.attendances, keys, strict=True)
     ]
     views.sort(key=_roster_order)
+    items = report_item_views(session, frozenset({report.id})).get(report.id, [])
+    legacy = {
+        section: legacy_section_text([i.segments for i in items if i.section == section])
+        for section in ReportSection
+    }
     return ReportDetail(
         id=report.id,
         small_group_id=report.small_group_id,
@@ -378,9 +435,10 @@ def build_report_detail(
         small_group_closed_at=report.small_group.closed_at,
         meeting_date=report.meeting_date,
         address=report.address,
-        group_prayer_request=report.group_prayer_request,
-        group_praise_report=report.group_praise_report,
-        group_relevant_discussion=report.group_relevant_discussion,
+        group_prayer_request=legacy[ReportSection.PRAYER],
+        group_praise_report=legacy[ReportSection.PRAISE],
+        group_relevant_discussion=legacy[ReportSection.FOLLOW_UP],
+        items=items,
         submitted_by_member_id=report.submitted_by_member_id,
         submitted_by_name=report.submitted_by.name,
         submitted_at=report.submitted_at,
@@ -419,16 +477,15 @@ def create_report(
         p.member_id == submitter_member_id and p.role != SmallGroupRole.MEMBER for p in roster
     ):
         raise NotGroupLeaderOnDateError
+    items, names = _new_items(session, body, previously_tagged={}) if body.held else ([], {})
     report = SmallGroupReport(
         small_group_id=small_group.id,
         meeting_date=body.meeting_date,
         held=body.held,
         not_held_reason=body.not_held_reason,
         address=body.address,
-        group_prayer_request=body.group_prayer_request,
-        group_praise_report=body.group_praise_report,
-        group_relevant_discussion=body.group_relevant_discussion,
         submitted_by_member_id=submitter_member_id,
+        items=_item_models(items),
         attendances=[
             SmallGroupReportAttendance(
                 member_id=a.member_id,
@@ -440,6 +497,7 @@ def create_report(
             for a in body.attendances
         ],
     )
+    _set_legacy_texts(report, items, names)
     if replaced is not None:
         # Flush the delete first: the unit of work would otherwise insert before deleting and
         # trip the (group, meeting date) unique constraint.
@@ -481,14 +539,18 @@ def update_report(
         _commit_report_or_raise_conflict(session, report.small_group_id, body.meeting_date)
         return report
     _validated_roster(session, report.small_group, body)
+    items, names = _new_items(session, body, previously_tagged=_tagged_by_section(session, report.id))
     may_edit_observations = observations_visible_to(
         sees_all_observations=sees_all_observations, leads_group=leads_group
     )
+    # Items are replaced, not diffed. Flush the deletes first: the unit of work would otherwise insert
+    # before deleting and trip the (report, section, position) unique constraint.
+    report.items.clear()
+    session.flush()
+    report.items.extend(_item_models(items))
+    _set_legacy_texts(report, items, names)
     report.meeting_date = body.meeting_date
     report.address = body.address
-    report.group_prayer_request = body.group_prayer_request
-    report.group_praise_report = body.group_praise_report
-    report.group_relevant_discussion = body.group_relevant_discussion
     sent = {person_key(a.member_id, a.guest_id): a for a in body.attendances}
     existing = {person_key(row.member_id, row.guest_id): row for row in report.attendances}
     for key, row in existing.items():
@@ -513,6 +575,113 @@ def update_report(
             row.observation = attendance.observation
     _commit_report_or_raise_conflict(session, report.small_group_id, body.meeting_date)
     return report
+
+
+class _NewItem(NamedTuple):
+    section: ReportSection
+    text: str
+    people: list[PersonKey]
+
+
+def _new_items(
+    session: Session, body: ReportInput, *, previously_tagged: Mapping[ReportSection, Collection[PersonKey]]
+) -> tuple[list[_NewItem], dict[PersonKey, str]]:
+    """A held report's items from its body (report tags rules 2, 3 and 7), and the tagged people's names.
+
+    `sections` wins when sent. Otherwise each old text becomes one item per line, untagged; the
+    item count isn't limited there, since today's client can't know about it. A member already
+    tagged in the same section before the edit (`previously_tagged`) may stay tagged while inactive.
+    """
+    items: list[_NewItem] = []
+    for section in ReportSection:
+        if body.sections is None:
+            texts = [(text, []) for text in split_legacy_text(getattr(body, section.report_attribute))]
+        else:
+            texts = [segments_to_text(segments) for segments in body.sections.get(section, [])]
+            texts = [(text, people) for text, people in texts if text]  # empty items aren't saved
+            if len(texts) > MAX_ITEMS_PER_SECTION:
+                raise ReportItemsLimitError(section)
+        for text, people in texts:
+            if len(people) > MAX_TAGS_PER_ITEM:
+                raise ReportItemsLimitError(section)
+            if len(text) > MAX_ITEM_LENGTH:
+                raise ReportItemTooLongError(section)
+            items.append(_NewItem(section, text, people))
+    tagged = {person for item in items for person in item.people}
+    found = _tagged_people(session, tagged)
+    if len(found) != len(tagged):
+        raise UnknownTagError
+    for item in items:
+        for person in item.people:
+            if found[person].inactive and person not in previously_tagged.get(item.section, ()):
+                raise InactiveTagError(found[person].name)
+    return items, {person: row.name for person, row in found.items()}
+
+
+def _tagged_people(session: Session, people: Collection[PersonKey]) -> dict[PersonKey, TaggedPersonRow]:
+    """Those of `people` who exist, with their current name and whether inactive."""
+    member_ids = frozenset(person_id for kind, person_id in people if kind == "member")
+    guest_ids = frozenset(person_id for kind, person_id in people if kind == "guest")
+    if not member_ids and not guest_ids:
+        return {}
+    rows = all_as(session, people_query(member_ids, guest_ids), TaggedPersonRow)
+    return {(row.kind, row.id): row for row in rows}
+
+
+def _tagged_by_section(session: Session, report_id: int) -> dict[ReportSection, set[PersonKey]]:
+    tagged: dict[ReportSection, set[PersonKey]] = {}
+    for row in session.execute(report_tagged_people_query(report_id)):
+        tagged.setdefault(ReportSection(row.section), set()).add(person_key(row.member_id, row.guest_id))
+    return tagged
+
+
+def _item_models(items: Sequence[_NewItem]) -> list[SmallGroupReportItem]:
+    """Rows for `items`, positioned from 0 inside each section in the order given."""
+    next_position: dict[ReportSection, int] = {}
+    models: list[SmallGroupReportItem] = []
+    for item in items:
+        position = next_position.get(item.section, 0)
+        next_position[item.section] = position + 1
+        models.append(
+            SmallGroupReportItem(
+                section=item.section,
+                position=position,
+                text=item.text,
+                people=[
+                    SmallGroupReportItemPerson(
+                        member_id=person_id if kind == "member" else None,
+                        guest_id=person_id if kind == "guest" else None,
+                    )
+                    for kind, person_id in item.people
+                ],
+            )
+        )
+    return models
+
+
+def _set_legacy_texts(
+    report: SmallGroupReport, items: Sequence[_NewItem], names: Mapping[PersonKey, str]
+) -> None:
+    """Keep the old text columns in step with the items while they exist (people by full name)."""
+    for section in ReportSection:
+        text = legacy_section_text([text_to_segments(i.text, names) for i in items if i.section == section])
+        setattr(report, section.report_attribute, text[:LEGACY_TEXT_MAX_LENGTH] if text else None)
+
+
+def report_item_views(session: Session, report_ids: frozenset[int]) -> dict[int, list[ReportItemView]]:
+    """The reports' items by report id, each section in order, with current names: two queries in all."""
+    if not report_ids:
+        return {}
+    rows = all_as(session, report_items_query(report_ids), ReportItemRow)
+    tagged = {person for row in rows for person in tagged_people(row.text)}
+    names = {person: found.name for person, found in _tagged_people(session, tagged).items()}
+    views: dict[int, list[ReportItemView]] = {}
+    for row in rows:
+        segments: list[Segment] = text_to_segments(row.text, names)
+        views.setdefault(row.report_id, []).append(
+            ReportItemView(row.id, ReportSection(row.section), segments)
+        )
+    return views
 
 
 def delete_report(session: Session, report: SmallGroupReport) -> None:

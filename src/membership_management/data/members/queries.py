@@ -100,6 +100,25 @@ def member_active_in_open_groups_query(member_id: int, only_group_ids: frozenset
     return query
 
 
+def members_active_in_open_groups_query(
+    member_ids: frozenset[int], only_group_ids: frozenset[int] | None
+) -> Select:
+    """`member_active_in_open_groups_query` for many members at once: the ids it holds for."""
+    query = (
+        select(SmallGroupMember.member_id)
+        .distinct()
+        .join(SmallGroup, SmallGroup.id == SmallGroupMember.small_group_id)
+        .where(
+            SmallGroupMember.member_id.in_(member_ids),
+            SmallGroupMember.left_at.is_(None),
+            SmallGroup.closed_at.is_(None),
+        )
+    )
+    if only_group_ids is not None:
+        query = query.where(SmallGroup.id.in_(only_group_ids))
+    return query
+
+
 def member_active_small_groups_query(member_id: int) -> Select:
     """The groups the member currently belongs to (open membership periods only)."""
     return (

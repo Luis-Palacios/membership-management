@@ -1,16 +1,32 @@
 from collections.abc import Sequence
 from datetime import date
 
-from sqlalchemy import ColumnElement, Integer, Select, and_, cast, func, null, or_, select, union_all
+from sqlalchemy import (
+    ColumnElement,
+    Integer,
+    Select,
+    and_,
+    case,
+    cast,
+    false,
+    func,
+    literal,
+    null,
+    or_,
+    select,
+    union_all,
+)
 from sqlalchemy.orm import aliased, joinedload, selectinload
 
 from membership_management.data.guests.models import Guest
-from membership_management.data.members.models import Member
+from membership_management.data.members.models import Member, MemberStatus
 from membership_management.data.small_groups.models import (
     SmallGroup,
     SmallGroupMember,
     SmallGroupReport,
     SmallGroupReportAttendance,
+    SmallGroupReportItem,
+    SmallGroupReportItemPerson,
     SmallGroupRole,
 )
 
@@ -436,3 +452,50 @@ def shared_reports_query(group_ids: frozenset[int], from_date: date, to_date: da
         )
         .order_by(SmallGroupReport.meeting_date, SmallGroup.name, SmallGroupReport.id)
     )
+
+
+def report_items_query(report_ids: frozenset[int]) -> Select:
+    """The reports' items, by report, then section order (prayer, praise, follow-up), then position."""
+    section_order = case(
+        {"prayer": 0, "praise": 1, "followUp": 2}, value=SmallGroupReportItem.section, else_=3
+    )
+    return (
+        select(
+            SmallGroupReportItem.id.label("id"),
+            SmallGroupReportItem.report_id.label("report_id"),
+            SmallGroupReportItem.section.label("section"),
+            SmallGroupReportItem.text.label("text"),
+        )
+        .where(SmallGroupReportItem.report_id.in_(report_ids))
+        .order_by(SmallGroupReportItem.report_id, section_order, SmallGroupReportItem.position)
+    )
+
+
+def report_tagged_people_query(report_id: int) -> Select:
+    """Who the report's items tag, by section (one row per item and person)."""
+    return (
+        select(
+            SmallGroupReportItem.section.label("section"),
+            SmallGroupReportItemPerson.member_id.label("member_id"),
+            SmallGroupReportItemPerson.guest_id.label("guest_id"),
+        )
+        .join(SmallGroupReportItem, SmallGroupReportItem.id == SmallGroupReportItemPerson.item_id)
+        .where(SmallGroupReportItem.report_id == report_id)
+    )
+
+
+def people_query(member_ids: frozenset[int], guest_ids: frozenset[int]) -> Select:
+    """Name and inactive flag of each of these members and guests that exists (guests never inactive)."""
+    members = select(
+        literal("member").label("kind"),
+        Member.id.label("id"),
+        Member.name.label("name"),
+        (Member.status == MemberStatus.INACTIVE).label("inactive"),
+    ).where(Member.id.in_(member_ids))
+    guests = select(
+        literal("guest").label("kind"),
+        Guest.id.label("id"),
+        Guest.name.label("name"),
+        false().label("inactive"),
+    ).where(Guest.id.in_(guest_ids))
+    return select(union_all(members, guests).subquery())
