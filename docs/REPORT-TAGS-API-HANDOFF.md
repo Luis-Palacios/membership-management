@@ -45,7 +45,7 @@ database work stay plain `def`, and every `SmallGroupMember`-style person refere
 | *(staff app Part 1 deploys here)* | | |
 | 5. Contract: drop the old text fields and columns, docs | ⬜ | |
 | **Part 2 (`person-timeline`)** | | |
-| 6. Timeline service and indexes | ⬜ | |
+| 6. Timeline service and indexes | ✅ | *(this commit)* |
 | 7. Timeline routes, seed check, docs | ⬜ | |
 
 ### Decisions and deviations
@@ -129,6 +129,32 @@ database work stay plain `def`, and every `SmallGroupMember`-style person refere
   `user`: 403). A section thread on a section with items whose old column was nulled starts; one with
   no items is 422 `This section is empty.`. `seed --reset` twice: identical dumps. Stages 2 and 3
   re-run on the new seed: all pass.
+- **Stage 6.** The service takes the caller's observation audience as `observation_groups`
+  (`None` = every group, else those ids) instead of claims, like `build_report_detail` takes booleans:
+  the API layer computes it (stage 7) and `data/` imports nothing from `api/`. Range resolution and its
+  three 422 messages (`TimelineRangeError`) live in the service too (`resolve_range`); the `latest`
+  conflicts are a router check. Everything the person has is loaded for all dates in three queries
+  (reports, periods, items), then visibility, the range and the group filter are applied in Python:
+  `groups` and `earliestDate` look past the range anyway, and a person's reports are in the hundreds at
+  most. One names query covers the items shown. `viewable` is left to the router, as in report detail.
+  `counts` follow the rows returned, so with `latest` they cover just those rows.
+- **Stage 6, indexes.** None added. The reports query finds the report ids as a `UNION` of two lookups
+  (attendance by person, tagged by person) rather than an `OR`, so each uses its own index; `EXPLAIN` on
+  the seeded scratch DB (`enable_seqscan = off`, the tables are too small to prefer an index) shows
+  `ix_small_group_report_attendances_member_id` and `ix_small_group_report_item_people_member_id`, and
+  the attendance join by `(report_id, member_id)` uses its unique index. The items query is the same
+  `item_people` index.
+- **Stage 6, tried** (service called directly on scratch DB `pt-scratch`, seeded; no routes yet): member
+  17 (co-leads group 4, tagged from groups 1 and 4, two follow-ups): as an elder (`None`) all 8 rows and
+  2 follow-ups; with audience `{4}` the group 1 follow-up row is gone and not counted (7 rows, 1
+  follow-up) and `groups` is `[4]`; with `{1}` only group 1's follow-up and group 4's prayer and praise
+  (3 rows, attendance null); with `{}` prayer and praise only. A report where they are on the list and
+  tagged is one row. `latest=3` gives the newest three rows with null `from`/`to`; `smallGroupId` of a
+  group with no rows gives no rows and unchanged `groups`; no-meeting reports are excluded by `held` in
+  the queries (they have no attendance or items, so nothing seeded to see). Guest 9
+  as an elder (observation and attendance rows, `role` member) and with an unrelated audience (items
+  only). Range: future `to`, `from` after `to` and 732 days give the three messages, exactly 731 days
+  passes, `to` 2026-10-15 defaults `from` to 2026-07-16 and 31 May to 1 March (month clamp).
 
 ## Who can do what
 
