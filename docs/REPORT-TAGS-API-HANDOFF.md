@@ -41,7 +41,7 @@ database work stay plain `def`, and every `SmallGroupMember`-style person refere
 | 1. Items and tags: migration, models, backfill | ✅ | `40f916a` |
 | 2. Write and read `sections` (both shapes accepted and returned) | ✅ | `37d817c` |
 | 3. Tag search | ✅ | `5e8a35d` |
-| 4. Shared endpoint, section threads, seed | ✅ | *(this commit)* |
+| 4. Shared endpoint, section threads, seed | ✅ | `861ed6d` |
 | *(staff app Part 1 deploys here)* | | |
 | 5. Contract: drop the old text fields and columns, docs | ⬜ | |
 | **Part 2 (`person-timeline`)** | | |
