@@ -156,6 +156,43 @@ class TaggedPersonRow(NamedTuple):
     inactive: bool
 
 
+class TagSearchRow(NamedTuple):
+    kind: Literal["member", "guest"]
+    id: int
+    name: str
+    phone: str | None
+    in_this_group: bool
+
+
+class PersonGroupRow(NamedTuple):
+    # Exactly one of the two ids.
+    member_id: int | None
+    guest_id: int | None
+    id: int
+    name: str
+    audience: GroupAudience
+    role: SmallGroupRole
+
+
+class PersonGroup(NamedTuple):
+    id: int
+    name: str
+    audience: GroupAudience
+    role: SmallGroupRole
+
+
+class TaggablePerson(NamedTuple):
+    """A tag search row: only what tells people apart (report tags rules 8 and 10)."""
+
+    person: PersonKey
+    name: str
+    in_this_group: bool
+    # Open groups the person is active in today, by name.
+    groups: list[PersonGroup]
+    # Guests only: the last 4 digits of their phone, None when it has fewer.
+    phone_last4: str | None
+
+
 class ReportItemView(NamedTuple):
     """An item with its person segments named (current names)."""
 

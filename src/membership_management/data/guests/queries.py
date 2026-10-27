@@ -35,10 +35,16 @@ def _escape_like(text: str) -> str:
     return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+def guest_name_match(text: str, *, prefix: bool = False) -> ColumnElement[bool]:
+    """Guests whose name contains `text` (starts with it, with `prefix`), ignoring case and accents."""
+    pattern = f"{_escape_like(text)}%" if prefix else f"%{_escape_like(text)}%"
+    return func.guest_search_text(Guest.name).like(search_text(pattern), escape="\\")
+
+
 def guest_match_condition(text: str) -> ColumnElement[bool]:
     """Guests whose name contains `text` (ignoring case and accents), or whose phone contains its digits
     when it has at least PHONE_SEARCH_MIN_DIGITS."""
-    by_name = func.guest_search_text(Guest.name).like(search_text(f"%{_escape_like(text)}%"), escape="\\")
+    by_name = guest_name_match(text)
     digits = _NON_DIGITS.sub("", text)
     if len(digits) < PHONE_SEARCH_MIN_DIGITS:
         return by_name

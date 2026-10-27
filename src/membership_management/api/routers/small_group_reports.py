@@ -22,6 +22,7 @@ from membership_management.api.jwt_auth import (
     AuthClaims,
     CurrentClaimsDep,
     get_current_claims,
+    has_permission,
     require_permission,
 )
 from membership_management.api.rate_limit import default_user_rate_limit, rate_limit
@@ -55,6 +56,8 @@ from membership_management.api.schemas.small_group_reports import (
     SharedSmallGroupSchema,
     SummaryGroupSchema,
     SummaryLastReportSchema,
+    TagSearchGroupSchema,
+    TagSearchRowSchema,
     WeekGroupSchema,
     WeekLeaderSchema,
     WeekReportSchema,
@@ -94,6 +97,7 @@ from membership_management.data.small_groups.services import (
     get_report_week,
     get_small_group,
     list_reports,
+    search_taggable_people,
     update_report,
 )
 
@@ -164,6 +168,15 @@ def _http_error(exc: Exception) -> HTTPException:
     raise exc
 
 
+def _can_write_reports(claims: CurrentClaimsDep) -> None:
+    """`smallGroupReports: create` or `update`: either is enough to tag (report tags rule 6)."""
+    if not (
+        has_permission(claims, "smallGroupReports", "create")
+        or has_permission(claims, "smallGroupReports", "update")
+    ):
+        raise HTTPException(status_code=403, detail="You don't have permission to do this.")
+
+
 # The item errors a create or edit can raise (report tags rules 3 and 7).
 _ITEM_ERRORS = (ReportItemsLimitError, ReportItemTooLongError, UnknownTagError, InactiveTagError)
 
@@ -209,6 +222,33 @@ def get_report_roster_for_date(
             for p in roster.people
         ],
     )
+
+
+@router.get(
+    "/small-groups/{small_group_id}/tag-search",
+    name="search_small_group_taggable_people",
+    description="Active members and guests church-wide to tag in this group's reports, this group's first",
+    dependencies=[Depends(_can_write_reports)],
+)
+def get_tag_search(
+    small_group_id: int,
+    db: MembersSessionDep,
+    scope: SmallGroupScopeDep,
+    q: Annotated[str, Query(max_length=100)] = "",
+) -> list[TagSearchRowSchema]:
+    small_group = _small_group_or_404(db, small_group_id, scope)
+    return [
+        TagSearchRowSchema(
+            person=PersonSchema(type=row.person[0], id=row.person[1], name=row.name),
+            in_this_group=row.in_this_group,
+            groups=[
+                TagSearchGroupSchema(id=g.id, name=g.name, audience=g.audience, role=g.role)
+                for g in row.groups
+            ],
+            phone_last4=row.phone_last4,
+        )
+        for row in search_taggable_people(db, small_group, q)
+    ]
 
 
 def _person(member_id: int | None, guest_id: int | None, name: str) -> PersonSchema:

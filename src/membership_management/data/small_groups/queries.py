@@ -484,6 +484,27 @@ def report_tagged_people_query(report_id: int) -> Select:
     )
 
 
+def people_current_groups_query(member_ids: frozenset[int], guest_ids: frozenset[int]) -> Select:
+    """The open groups these members and guests are active in today, with their role, by group name."""
+    return (
+        select(
+            SmallGroupMember.member_id.label("member_id"),
+            SmallGroupMember.guest_id.label("guest_id"),
+            SmallGroup.id.label("id"),
+            SmallGroup.name.label("name"),
+            SmallGroup.audience.label("audience"),
+            SmallGroupMember.role.label("role"),
+        )
+        .join(SmallGroup, SmallGroup.id == SmallGroupMember.small_group_id)
+        .where(
+            or_(SmallGroupMember.member_id.in_(member_ids), SmallGroupMember.guest_id.in_(guest_ids)),
+            SmallGroupMember.left_at.is_(None),
+            SmallGroup.closed_at.is_(None),
+        )
+        .order_by(SmallGroup.name, SmallGroup.id)
+    )
+
+
 def people_query(member_ids: frozenset[int], guest_ids: frozenset[int]) -> Select:
     """Name and inactive flag of each of these members and guests that exists (guests never inactive)."""
     members = select(

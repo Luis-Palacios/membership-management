@@ -1,8 +1,10 @@
 from datetime import date
 
-from sqlalchemy import ScalarSelect, Select, case, func, select
+from sqlalchemy import ColumnElement, ScalarSelect, Select, case, exists, func, literal, null, select
 from sqlalchemy.orm import InstrumentedAttribute, aliased
 
+from membership_management.data.guests.models import Guest
+from membership_management.data.guests.queries import guest_name_match
 from membership_management.data.members.models import Member, MemberStatus, MemberStatusChange
 from membership_management.data.small_groups.models import (
     LeftReason,
@@ -61,10 +63,9 @@ def member_search_query(
     open group among `only_group_ids` (`None`: any open group), the same scope as
     `member_active_in_open_groups_query`.
     """
-    escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     query = (
         select(Member.id.label("id"), Member.name.label("name"), Member.status.label("status"))
-        .where(func.unaccent(Member.name).ilike(func.unaccent(f"%{escaped}%"), escape="\\"))
+        .where(member_name_match(text))
         .order_by(Member.name, Member.id)
         .limit(limit)
     )
@@ -78,6 +79,59 @@ def member_search_query(
     if only_group_ids is not None:
         in_scope = in_scope.where(SmallGroup.id.in_(only_group_ids))
     return query.where(Member.id.in_(in_scope))
+
+
+def member_name_match(text: str, *, prefix: bool = False) -> ColumnElement[bool]:
+    """Members whose name contains `text` (starts with it, with `prefix`), ignoring case and accents."""
+    escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    pattern = f"{escaped}%" if prefix else f"%{escaped}%"
+    return func.unaccent(Member.name).ilike(func.unaccent(pattern), escape="\\")
+
+
+def tag_search_query(text: str, small_group_id: int, *, limit: int) -> Select:
+    """Active members and guests church-wide whose name contains `text` (report tags rule 10).
+
+    Columns: `kind`, `id`, `name`, `phone` (guests only), `in_this_group` (active in `small_group_id`
+    today). Ranked: in this group, then names starting with `text`, then the rest, then by name.
+    """
+
+    def in_group(
+        person_column: InstrumentedAttribute[int | None], person_id: InstrumentedAttribute[int]
+    ) -> ColumnElement[bool]:
+        return exists().where(
+            SmallGroupMember.small_group_id == small_group_id,
+            SmallGroupMember.left_at.is_(None),
+            person_column == person_id,
+        )
+
+    members = select(
+        literal("member").label("kind"),
+        Member.id.label("id"),
+        Member.name.label("name"),
+        null().label("phone"),
+        in_group(SmallGroupMember.member_id, Member.id).label("in_this_group"),
+        member_name_match(text, prefix=True).label("starts_with"),
+    ).where(Member.status == MemberStatus.ACTIVE, member_name_match(text))
+    guests = select(
+        literal("guest").label("kind"),
+        Guest.id.label("id"),
+        Guest.name.label("name"),
+        Guest.phone.label("phone"),
+        in_group(SmallGroupMember.guest_id, Guest.id).label("in_this_group"),
+        guest_name_match(text, prefix=True).label("starts_with"),
+    ).where(guest_name_match(text))
+    people = members.union_all(guests).subquery()
+    return (
+        select(people.c.kind, people.c.id, people.c.name, people.c.phone, people.c.in_this_group)
+        .order_by(
+            people.c.in_this_group.desc(),
+            people.c.starts_with.desc(),
+            people.c.name,
+            people.c.kind,
+            people.c.id,
+        )
+        .limit(limit)
+    )
 
 
 def member_active_in_open_groups_query(member_id: int, only_group_ids: frozenset[int] | None) -> Select:
