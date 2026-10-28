@@ -43,7 +43,7 @@ database work stay plain `def`, and every `SmallGroupMember`-style person refere
 | 3. Tag search | ✅ | `5e8a35d` |
 | 4. Shared endpoint, section threads, seed | ✅ | `861ed6d` |
 | *(staff app Part 1 deploys here: deployed 2026-10-27, staff-app `73d1127`, ECS task definition `ekklesiaio-staff-app:10`)* | | |
-| 5. Contract: drop the old text fields and columns, docs | ✅ | (this commit) |
+| 5. Contract: drop the old text fields and columns, docs | ✅ | `cb3eece` |
 | **Part 2 (`person-timeline`)** | | |
 | 6. Timeline service and indexes | ✅ | `a9fa6f9` |
 | 7. Timeline routes, seed check, docs | ✅ | `d2e2398` |
