@@ -219,6 +219,12 @@ database work stay plain `def`, and every `SmallGroupMember`-style person refere
   segment, edit 200, create or edit without `sections` 422 (`Field required`), old field plus empty
   `sections` 201 with the old field ignored, no meeting 201, no meeting with `sections` 422.
 
+- **Stage 5, PR review.** The downgrade skips the refill with `--sql` (`op.get_context().as_sql`;
+  the offline preview now completes), updates each report once for all its restored columns, and
+  `ARCHITECTURE.md` / `PRAYER-FOLLOW-UP-API-HANDOFF.md` no longer name `report_attribute`. Tried again
+  on a scratch DB: `downgrade --sql` prints the DDL, a live `downgrade -1` refills 48 / 45 / 20, then
+  `upgrade head` and `alembic check` are clean.
+
 ## Who can do what
 
 | Role | Write `sections` | `GET …/tag-search` | Timeline: attendance + observation | Timeline: prayer, praise | Timeline: follow-up |

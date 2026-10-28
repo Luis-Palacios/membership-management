@@ -74,7 +74,7 @@ Keep the existing conventions: routes call `services.py` / `conversation_service
   column, so it would have clashed with the existing `uq_report_conversations_report_id` (which is
   also why autogenerate didn't see it). The downgrade fails if section threads exist (they can't
   be expressed without `section`); delete them first. `ReportSection` (`StrEnum`) lives next to the
-  model with `report_attribute` mapping each key to its `SmallGroupReport` attribute; the column is
+  model (it had a `report_attribute` mapping each key to the report's text column until report tags stage 5); the column is
   VARCHAR + CHECK like `role` and `sex`, so a new section needs a hand-written migration. Beyond the
   handoff: the thread response's `member` is nullable too (a section thread has none), inbox rows
   already carry `anchor` (the contract says they do; harmless before stage 3), and the shared

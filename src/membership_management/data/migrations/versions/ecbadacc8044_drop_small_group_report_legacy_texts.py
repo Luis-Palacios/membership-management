@@ -60,6 +60,8 @@ def downgrade() -> None:
 
 def _restore_texts() -> None:
     """Each report's items back into the old columns: one per line, tokens replaced by full names."""
+    if op.get_context().as_sql:
+        return  # `--sql` can't read the items; the refill needs a live database
     items = sa.table(
         "small_group_report_items",
         sa.column("report_id", sa.Integer),
@@ -73,7 +75,7 @@ def _restore_texts() -> None:
     names = {
         ("member", row.id): row.name for row in bind.execute(sa.select(members.c.id, members.c.name))
     } | {("guest", row.id): row.name for row in bind.execute(sa.select(guests.c.id, guests.c.name))}
-    lines: dict[tuple[int, str], list[str]] = {}
+    lines: dict[int, dict[str, list[str]]] = {}
     rows = bind.execute(
         sa.select(items.c.report_id, items.c.section, items.c.text).order_by(
             items.c.report_id, items.c.section, items.c.position
@@ -81,12 +83,8 @@ def _restore_texts() -> None:
     )
     for row in rows:
         text = _TOKEN.sub(lambda m: names.get((m.group(1), int(m.group(2))), ""), row.text)
-        lines.setdefault((row.report_id, row.section), []).append(text)
+        lines.setdefault(row.report_id, {}).setdefault(_COLUMNS[row.section], []).append(text)
     reports = sa.table("small_group_reports", sa.column("id", sa.Integer), *map(sa.column, _COLUMNS.values()))
-    for (report_id, section), texts in lines.items():
-        column = _COLUMNS[section]
-        bind.execute(
-            sa.update(reports)
-            .where(reports.c.id == report_id)
-            .values({column: "\n".join(texts)[:_OLD_WIDTH]})
-        )
+    for report_id, columns in lines.items():
+        values = {column: "\n".join(texts)[:_OLD_WIDTH] for column, texts in columns.items()}
+        bind.execute(sa.update(reports).where(reports.c.id == report_id).values(values))
