@@ -32,10 +32,9 @@ def _blank_to_none(value: object) -> object:
 
 # Limits match the small_group_reports columns; observation is capped at 1024 by the contract.
 Address = Annotated[Annotated[str, StringConstraints(max_length=255)] | None, BeforeValidator(_blank_to_none)]
-ReportText = Annotated[
+Observation = Annotated[
     Annotated[str, StringConstraints(max_length=1024)] | None, BeforeValidator(_blank_to_none)
 ]
-Observation = ReportText
 ReportReason = Annotated[
     Annotated[str, StringConstraints(max_length=255)] | None, BeforeValidator(_blank_to_none)
 ]
@@ -123,11 +122,7 @@ class HeldReportBodySchema(CamelModel):
     held: Literal[True] = True
     meeting_date: date
     address: Address = None
-    # Ignored when `sections` is sent; otherwise each line becomes an item (report tags rule 2).
-    group_prayer_request: ReportText = None
-    group_praise_report: ReportText = None
-    group_relevant_discussion: ReportText = None
-    sections: ReportSectionsInputSchema | None = None
+    sections: ReportSectionsInputSchema
     attendances: list[ReportAttendanceInputSchema]
     # Create only; true on an edit is a 422.
     replaces_no_meeting: bool = False
@@ -250,10 +245,6 @@ class ReportDetailSchema(CamelModel):
     held: bool
     not_held_reason: str | None
     address: str | None
-    # Derived from `sections` (one item per line, people by full name) until the old fields go away.
-    group_prayer_request: str | None
-    group_praise_report: str | None
-    group_relevant_discussion: str | None
     sections: ReportSectionsSchema
     submitted_by: ReportPersonSchema
     submitted_at: datetime
@@ -400,10 +391,6 @@ class ReportSharedEntrySchema(CamelModel):
     meeting_date: date
     small_group: SharedSmallGroupSchema
     leaders: list[WeekLeaderSchema]
-    # Derived from `sections` (one item per line, people by full name); null when the section is empty.
-    prayer: str | None
-    praise: str | None
-    follow_up: str | None
     sections: ReportSectionsSchema
     # Section threads only, keyed by section; a key is absent when that section has no thread.
     conversations: dict[ReportSection, SharedConversationSchema]

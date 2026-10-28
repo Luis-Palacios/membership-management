@@ -32,11 +32,7 @@ class SmallGroupReport(MemberManagementBase):
     __table_args__ = (
         UniqueConstraint("small_group_id", "meeting_date"),
         CheckConstraint("NOT held OR not_held_reason IS NULL", name="not_held_reason_only_when_not_held"),
-        CheckConstraint(
-            "held OR (address IS NULL AND group_prayer_request IS NULL"
-            " AND group_praise_report IS NULL AND group_relevant_discussion IS NULL)",
-            name="not_held_has_no_texts",
-        ),
+        CheckConstraint("held OR address IS NULL", name="not_held_has_no_texts"),
     )
 
     id: Mapped[int] = mapped_column(Identity(always=True), primary_key=True)
@@ -48,12 +44,6 @@ class SmallGroupReport(MemberManagementBase):
     not_held_reason: Mapped[str | None] = mapped_column(String(255))
     # Normally the same address from the small group but could vary for this particular meeting.
     address: Mapped[str | None] = mapped_column(String(255))
-    group_prayer_request: Mapped[str | None] = mapped_column(String(1024))
-    group_praise_report: Mapped[str | None] = mapped_column(String(1024))
-
-    # Discussion points relevant to the group that were raised during the meeting.
-    # Elders may follow up on these in subsequent meetings.
-    group_relevant_discussion: Mapped[str | None] = mapped_column(String(1024))
 
     # The leader or co-leader who filled in this report, including every attendance row.
     # The service layer checks they held one of those roles on meeting_date; the DB can't.

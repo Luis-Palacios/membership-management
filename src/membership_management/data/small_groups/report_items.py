@@ -7,7 +7,7 @@ writes those rows from the same segments.
 """
 
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping
 from typing import NamedTuple
 
 from membership_management.data.small_groups.results import PersonKey
@@ -94,15 +94,8 @@ def text_to_segments(text: str, names: Mapping[PersonKey, str]) -> list[Segment]
     return segments
 
 
-def plain_text(segments: Iterable[Segment]) -> str:
-    """Segments as plain text, each person by their full name."""
-    return "".join(
-        segment.text if isinstance(segment, TextSegment) else segment.name or "" for segment in segments
-    )
-
-
 def split_legacy_text(text: str | None) -> list[str]:
-    """One item per line of an old free-text section (rules 2 and 5), for the backfill and old-shape writes.
+    """One item per line of an old free-text section (rules 2 and 5), for the stage 1 backfill migration.
 
     Leading list markers are dropped, whitespace is collapsed, blank lines are skipped, and token-like
     text is broken apart (nothing is tagged from old text).
@@ -115,8 +108,3 @@ def split_legacy_text(text: str | None) -> list[str]:
         if item:
             items.append(item)
     return items
-
-
-def legacy_section_text(items: Sequence[Sequence[Segment]]) -> str | None:
-    """A section's items as the old free-text column holds them: one per line, people by full name."""
-    return "\n".join(plain_text(segments) for segments in items) or None
