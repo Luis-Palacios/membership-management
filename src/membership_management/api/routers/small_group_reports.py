@@ -264,9 +264,6 @@ def _to_input(body: HeldReportBodySchema | NotHeldReportBodySchema) -> ReportInp
         return ReportInput(
             meeting_date=body.meeting_date,
             address=None,
-            group_prayer_request=None,
-            group_praise_report=None,
-            group_relevant_discussion=None,
             attendances=[],
             held=False,
             not_held_reason=body.not_held_reason,
@@ -274,15 +271,12 @@ def _to_input(body: HeldReportBodySchema | NotHeldReportBodySchema) -> ReportInp
     return ReportInput(
         meeting_date=body.meeting_date,
         address=body.address,
-        group_prayer_request=body.group_prayer_request,
-        group_praise_report=body.group_praise_report,
-        group_relevant_discussion=body.group_relevant_discussion,
         attendances=[
             AttendanceInput(a.member_id, a.guest_id, a.attended_group, a.attended_church, a.observation)
             for a in body.attendances
         ],
         replaces_no_meeting=body.replaces_no_meeting,
-        sections=sections_input(body.sections) if body.sections is not None else None,
+        sections=sections_input(body.sections),
     )
 
 
@@ -325,9 +319,6 @@ def _detail_schema(detail: ReportDetail, viewable: frozenset[PersonKey]) -> Repo
         held=detail.held,
         not_held_reason=detail.not_held_reason,
         address=detail.address,
-        group_prayer_request=detail.group_prayer_request,
-        group_praise_report=detail.group_praise_report,
-        group_relevant_discussion=detail.group_relevant_discussion,
         sections=sections_schema(detail.items, viewable),
         submitted_by=ReportPersonSchema(
             member_id=detail.submitted_by_member_id, name=detail.submitted_by_name
@@ -544,7 +535,7 @@ def get_small_group_reports_week(
 @router.get(
     "/small-group-reports/shared",
     name="get_small_group_reports_shared",
-    description="The week's prayer, praise and follow-up texts of groups in scope, and who's still to report",
+    description="The week's prayer, praise and follow-up items of groups in scope, and who's still to report",
     dependencies=[Depends(require_permission("smallGroupReports", "view"))],
 )
 def get_small_group_reports_shared(
@@ -593,9 +584,6 @@ def get_small_group_reports_shared(
                 leaders=[
                     WeekLeaderSchema(member_id=l.member_id, name=l.name, role=l.role) for l in e.leaders
                 ],
-                prayer=e.prayer,
-                praise=e.praise,
-                follow_up=e.follow_up,
                 sections=sections_schema(e.items, viewable),
                 conversations={
                     section: SharedConversationSchema(

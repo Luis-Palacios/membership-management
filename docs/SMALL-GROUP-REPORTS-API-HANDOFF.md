@@ -1,5 +1,7 @@
 # Small group reports: report endpoints, roster, not-filed meetings
 
+> **Report tags:** the report's `groupPrayerRequest`, `groupPraiseReport` and `groupRelevantDiscussion` text fields below no longer exist. They became items (`sections`), see `docs/REPORT-TAGS-API-HANDOFF.md`. Everything else here still holds.
+
 Handoff spec for the membership-management side of **small group reports**. Read the cross-repo
 spec first: `../docs/specs/small-group-reports.md` (workspace folder `members-management/docs/specs/`);
 its rules are referred to as *rule N*. It builds on small group leader access

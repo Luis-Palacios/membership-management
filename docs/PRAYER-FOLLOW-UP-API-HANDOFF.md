@@ -1,5 +1,7 @@
 # Prayer & follow-up: the week's shared texts and section threads
 
+> **Report tags:** the report's `groupPrayerRequest`, `groupPraiseReport` and `groupRelevantDiscussion` text fields below no longer exist. They became items (`sections`), see `docs/REPORT-TAGS-API-HANDOFF.md`. Everything else here still holds.
+
 Handoff spec for the membership-management side of **Prayer & follow-up**. Read the cross-repo
 spec first: `../docs/specs/prayer-follow-up.md` (workspace folder `members-management/docs/specs/`);
 its rules are referred to as *rule N*. It builds on `docs/GROUPS-DASHBOARD-API-HANDOFF.md` (the week

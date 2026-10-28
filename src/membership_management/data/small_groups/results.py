@@ -128,17 +128,13 @@ class ReportInput(NamedTuple):
 
     meeting_date: date
     address: str | None
-    group_prayer_request: str | None
-    group_praise_report: str | None
-    group_relevant_discussion: str | None
     attendances: list[AttendanceInput]
-    # A no meeting (held False) carries no texts or attendances, only the optional reason.
+    # A no meeting (held False) carries no items or attendances, only the optional reason.
     held: bool = True
     not_held_reason: str | None = None
     # Create only: delete the date's no meeting and insert this held report in one transaction.
     replaces_no_meeting: bool = False
-    # When set it wins over the three texts above, which are then ignored; when None, each text is
-    # split into items, one per line (report tags rule 2), until the old fields go away.
+    # The items of a held report; None for a no meeting.
     sections: SectionsInput | None = None
 
 
@@ -225,10 +221,6 @@ class ReportDetail(NamedTuple):
     small_group_closed_at: date | None
     meeting_date: date
     address: str | None
-    # Derived from the items (one per line, people by full name) until the old fields go away.
-    group_prayer_request: str | None
-    group_praise_report: str | None
-    group_relevant_discussion: str | None
     # By section, then position.
     items: list[ReportItemView]
     submitted_by_member_id: int
@@ -385,7 +377,7 @@ class SharedReportRow(NamedTuple):
 
 
 class SharedEntry(NamedTuple):
-    """A held report's items (and the old three texts derived from them), with the group's leaders today."""
+    """A held report's items, with the group's leaders today."""
 
     report_id: int
     meeting_date: date
@@ -393,10 +385,6 @@ class SharedEntry(NamedTuple):
     small_group_name: str
     small_group_audience: GroupAudience
     leaders: list[WeekLeader]
-    # Derived from `items` (one per line, people by full name); None when the section has no items.
-    prayer: str | None
-    praise: str | None
-    follow_up: str | None
     # By section, then position.
     items: list[ReportItemView]
 

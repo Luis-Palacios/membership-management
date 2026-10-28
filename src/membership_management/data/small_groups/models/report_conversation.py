@@ -28,18 +28,6 @@ class ReportSection(StrEnum):
     PRAISE = "praise"
     FOLLOW_UP = "followUp"
 
-    @property
-    def report_attribute(self) -> str:
-        """The `SmallGroupReport` attribute holding this section's text."""
-        return _SECTION_REPORT_ATTRIBUTES[self]
-
-
-_SECTION_REPORT_ATTRIBUTES = {
-    ReportSection.PRAYER: "group_prayer_request",
-    ReportSection.PRAISE: "group_praise_report",
-    ReportSection.FOLLOW_UP: "group_relevant_discussion",
-}
-
 
 class ReportConversation(MemberManagementBase):
     """A thread about one person's attendance row in a small group report (one per report and member or
