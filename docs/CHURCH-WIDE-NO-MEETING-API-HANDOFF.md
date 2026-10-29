@@ -40,7 +40,7 @@ Work through it **stage by stage**, one reviewable commit per stage, on the
 | --- | --- | --- |
 | 1. Migration and model | ✅ | `a82e1f0` |
 | 2. Next week: week endpoint and future no meetings | ✅ | `b8c773f` |
-| 3. Mark a week (`POST /no-meeting-weeks`) | ✅ | (this commit) |
+| 3. Mark a week (`POST /no-meeting-weeks`) | ✅ | `351b553` |
 | 4. Edit reason, undo, unlink on leader edit, reads | ⬜ | |
 | 5. Seed and docs | ⬜ | |
 
