@@ -23,6 +23,7 @@ from membership_management.data.members.models import Member, MemberStatus
 from membership_management.data.small_groups.models import (
     SmallGroup,
     SmallGroupMember,
+    SmallGroupNoMeetingWeek,
     SmallGroupReport,
     SmallGroupReportAttendance,
     SmallGroupReportItem,
@@ -403,6 +404,44 @@ def week_reports_query(group_ids: frozenset[int], from_date: date, to_date: date
         .group_by(SmallGroupReport.id, Member.id)
         .order_by(SmallGroupReport.meeting_date.desc(), SmallGroupReport.id.desc())
     )
+
+
+def reported_group_ids_in_week_query(group_ids: frozenset[int], from_date: date, to_date: date) -> Select:
+    """The groups with any report dated in [from_date, to_date], held or not."""
+    return (
+        select(SmallGroupReport.small_group_id)
+        .where(
+            SmallGroupReport.small_group_id.in_(group_ids),
+            SmallGroupReport.meeting_date >= from_date,
+            SmallGroupReport.meeting_date <= to_date,
+        )
+        .distinct()
+    )
+
+
+def no_meeting_week_query(*, week_id: int | None = None, week_start: date | None = None) -> Select:
+    """A church-wide no meeting week, by id or by week start, with its creator's name and how many
+    reports are still linked to it."""
+    linked_count = (
+        select(func.count())
+        .where(SmallGroupReport.no_meeting_week_id == SmallGroupNoMeetingWeek.id)
+        .scalar_subquery()
+    )
+    query = select(
+        SmallGroupNoMeetingWeek.id.label("id"),
+        SmallGroupNoMeetingWeek.week_start.label("week_start"),
+        SmallGroupNoMeetingWeek.reason.label("reason"),
+        Member.id.label("created_by_member_id"),
+        Member.name.label("created_by_name"),
+        SmallGroupNoMeetingWeek.created_at.label("created_at"),
+        SmallGroupNoMeetingWeek.updated_at.label("updated_at"),
+        linked_count.label("linked_count"),
+    ).join(Member, Member.id == SmallGroupNoMeetingWeek.created_by_member_id)
+    if week_id is not None:
+        query = query.where(SmallGroupNoMeetingWeek.id == week_id)
+    if week_start is not None:
+        query = query.where(SmallGroupNoMeetingWeek.week_start == week_start)
+    return query
 
 
 def active_leaders_query(group_ids: frozenset[int]) -> Select:

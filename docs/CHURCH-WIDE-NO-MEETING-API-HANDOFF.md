@@ -40,13 +40,15 @@ Work through it **stage by stage**, one reviewable commit per stage, on the
 | --- | --- | --- |
 | 1. Migration and model | ✅ | `a82e1f0` |
 | 2. Next week: week endpoint and future no meetings | ✅ | `b8c773f` |
-| 3. Mark a week (`POST /no-meeting-weeks`) | ⬜ | |
+| 3. Mark a week (`POST /no-meeting-weeks`) | ✅ | (this commit) |
 | 4. Edit reason, undo, unlink on leader edit, reads | ⬜ | |
 | 5. Seed and docs | ⬜ | |
 
 ### Decisions and deviations
 
-- (none yet)
+- Stage 3: `skipped.reported` counts every group with a report dated in the week, as written, so on
+  a re-run it includes the groups this week already marked (first run 3, re-run 3 + `linkedCount`).
+  The staff app shows `marked` and `linkedCount`, so nothing there depends on it.
 
 ## Data model
 

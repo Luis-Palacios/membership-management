@@ -370,6 +370,39 @@ class ReportWeekSchema(CamelModel):
     groups: list[WeekGroupSchema]
 
 
+class NoMeetingWeekBodySchema(CamelModel):
+    """Mark the church week containing `date` (any day of it) as no meeting for every open group."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    date: date
+    # Ignored when the week is already marked: a re-run keeps the week's reason.
+    reason: ReportReason = None
+
+
+class NoMeetingWeekSchema(CamelModel):
+    id: int
+    week_start: date
+    reason: str | None
+    created_by: ReportPersonSchema
+    created_at: datetime
+    updated_at: datetime
+    # Reports still linked to the week (a leader's edit or a held report unlinks or replaces one).
+    linked_count: int
+
+
+class NoMeetingWeekSkippedSchema(CamelModel):
+    # Groups with any report dated in the week, held or not.
+    reported: int
+    no_meeting_day: int
+
+
+class NoMeetingWeekMarkSchema(NoMeetingWeekSchema):
+    # Created by this call.
+    marked: int
+    skipped: NoMeetingWeekSkippedSchema
+
+
 class SharedSmallGroupSchema(CamelModel):
     id: int
     name: str

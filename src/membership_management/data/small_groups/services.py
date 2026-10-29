@@ -12,7 +12,7 @@ from membership_management.data.guests.services import NewGuest, add_guest
 from membership_management.data.members.models import Member, MemberStatus
 from membership_management.data.members.queries import tag_search_query
 from membership_management.data.members.services import MemberInactiveError
-from membership_management.data.query_helpers import all_as
+from membership_management.data.query_helpers import all_as, first_as
 from membership_management.data.small_groups.models import (
     GroupAudience,
     LeftReason,
@@ -20,6 +20,7 @@ from membership_management.data.small_groups.models import (
     ReportSection,
     SmallGroup,
     SmallGroupMember,
+    SmallGroupNoMeetingWeek,
     SmallGroupReport,
     SmallGroupReportAttendance,
     SmallGroupReportItem,
@@ -37,6 +38,7 @@ from membership_management.data.small_groups.queries import (
     led_small_group_ids_query,
     list_small_groups_query,
     member_active_roles_query,
+    no_meeting_week_query,
     people_current_groups_query,
     people_query,
     recent_attendance_marks_query,
@@ -46,6 +48,7 @@ from membership_management.data.small_groups.queries import (
     report_items_query,
     report_on_date_query,
     report_tagged_people_query,
+    reported_group_ids_in_week_query,
     roster_periods_on_date_query,
     shared_reports_query,
     small_group_active_guests_query,
@@ -66,6 +69,8 @@ from membership_management.data.small_groups.results import (
     GroupRole,
     GuestStanding,
     LeadershipPeriod,
+    NoMeetingWeekMark,
+    NoMeetingWeekRow,
     NotFiledMeeting,
     OtherGroup,
     PersonGroup,
@@ -243,7 +248,8 @@ class InactiveTagError(Exception):
 
 
 class FutureWeekError(Exception):
-    """The requested week starts after the current church week (groups dashboard rule 4)."""
+    """The requested week starts after the latest week the caller may see (groups dashboard rule 4;
+    next week for the week endpoint and church-wide no meeting)."""
 
 
 def church_sunday(d: date) -> date:
@@ -971,6 +977,78 @@ def get_report_shared(
     return ReportShared(week_start, week_end, today, is_current_week, entries, still_to_report)
 
 
+def mark_no_meeting_week(
+    session: Session, *, day: date, reason: str | None, member_id: int, today: date
+) -> NoMeetingWeekMark:
+    """Mark the church week containing `day` as no meeting for every open group (church-wide no
+    meeting rules 4-6): the current week, next week or a past one.
+
+    Each open group with a meeting day and no report dated in the week gets a no meeting on its
+    meeting day, linked to the week's row. Marking a week again marks the groups still empty and keeps
+    the row's reason. A lost race (a leader filing the same date, another caller creating the week) is
+    retried once from the start.
+    """
+    week_start, week_end, _ = _week_bounds(day, today, weeks_ahead=1)
+    try:
+        return _mark_no_meeting_week(session, week_start, week_end, reason=reason, member_id=member_id)
+    except IntegrityError:
+        session.rollback()
+    return _mark_no_meeting_week(session, week_start, week_end, reason=reason, member_id=member_id)
+
+
+def _mark_no_meeting_week(
+    session: Session, week_start: date, week_end: date, *, reason: str | None, member_id: int
+) -> NoMeetingWeekMark:
+    week = session.scalars(
+        select(SmallGroupNoMeetingWeek).where(SmallGroupNoMeetingWeek.week_start == week_start)
+    ).one_or_none()
+    created = week is None
+    if week is None:
+        week = SmallGroupNoMeetingWeek(week_start=week_start, reason=reason, created_by_member_id=member_id)
+        session.add(week)
+        session.flush()
+    groups = _open_report_groups(session, None)
+    with_day = [g for g in groups if g.meeting_day is not None]
+    reported = (
+        set(
+            session.scalars(
+                reported_group_ids_in_week_query(frozenset(g.id for g in with_day), week_start, week_end)
+            )
+        )
+        if with_day
+        else set()
+    )
+    to_mark = [g for g in with_day if g.id not in reported]
+    session.add_all(
+        SmallGroupReport(
+            small_group_id=g.id,
+            meeting_date=_meeting_date_in_week(week_start, g.meeting_day),
+            held=False,
+            not_held_reason=week.reason,
+            submitted_by_member_id=member_id,
+            no_meeting_week_id=week.id,
+        )
+        for g in to_mark
+    )
+    session.commit()
+    row = first_as(session, no_meeting_week_query(week_id=week.id), NoMeetingWeekRow)
+    if row is None:
+        raise ValueError("the no meeting week was just committed")
+    return NoMeetingWeekMark(
+        week=row,
+        created=created,
+        marked=len(to_mark),
+        skipped_reported=len(reported),
+        skipped_no_meeting_day=len(groups) - len(with_day),
+    )
+
+
+def _meeting_date_in_week(week_start: date, meeting_day: int | None) -> date | None:
+    """The week's date on `meeting_day`, or None without one. The week starts on Sunday and
+    `meeting_day` is ISO (Mon 1 .. Sun 7): Sunday (7) is day 0."""
+    return week_start + timedelta(days=meeting_day % 7) if meeting_day is not None else None
+
+
 def _week_bounds(day: date, today: date, *, weeks_ahead: int = 0) -> tuple[date, date, bool]:
     """Start, end and "is the current week" of the church week containing `day`; a week more than
     `weeks_ahead` weeks after the current one raises `FutureWeekError`."""
@@ -1031,10 +1109,7 @@ def _week_group(
     leaders: list[WeekLeader],
     leadership: list[LeadershipPeriod],
 ) -> WeekGroup:
-    # The week starts on Sunday and `meeting_day` is ISO (Mon 1 .. Sun 7): Sunday (7) is day 0.
-    meeting_date = (
-        week_start + timedelta(days=group.meeting_day % 7) if group.meeting_day is not None else None
-    )
+    meeting_date = _meeting_date_in_week(week_start, group.meeting_day)
     status: WeekStatus
     if any(r.held for r in reports):
         status = "submitted"
