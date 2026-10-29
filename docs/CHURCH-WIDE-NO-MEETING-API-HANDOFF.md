@@ -42,7 +42,7 @@ Work through it **stage by stage**, one reviewable commit per stage, on the
 | 2. Next week: week endpoint and future no meetings | ✅ | `b8c773f` |
 | 3. Mark a week (`POST /no-meeting-weeks`) | ✅ | `351b553` |
 | 4. Edit reason, undo, unlink on leader edit, reads | ✅ | `98fc56b` |
-| 5. Seed and docs | ✅ | (this commit) |
+| 5. Seed and docs | ✅ | `26e2412` |
 
 ### Decisions and deviations
 
