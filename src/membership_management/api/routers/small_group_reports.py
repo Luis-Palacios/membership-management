@@ -33,6 +33,7 @@ from membership_management.api.schemas.small_group_reports import (
     HeldReportBodySchema,
     NoMeetingWeekBodySchema,
     NoMeetingWeekMarkSchema,
+    NoMeetingWeekReasonBodySchema,
     NoMeetingWeekSchema,
     NoMeetingWeekSkippedSchema,
     NotFiledItemSchema,
@@ -83,6 +84,7 @@ from membership_management.data.small_groups.services import (
     FutureWeekError,
     InactiveTagError,
     MemberRequiredToSubmitError,
+    NoMeetingWeekNotFoundError,
     NotGroupLeaderOnDateError,
     ReportAlreadyExistsError,
     ReportItemsLimitError,
@@ -94,6 +96,7 @@ from membership_management.data.small_groups.services import (
     build_report_detail,
     church_sunday,
     create_report,
+    delete_no_meeting_week,
     delete_report,
     get_report,
     get_report_roster,
@@ -104,6 +107,7 @@ from membership_management.data.small_groups.services import (
     list_reports,
     mark_no_meeting_week,
     search_taggable_people,
+    update_no_meeting_week_reason,
     update_report,
 )
 
@@ -171,6 +175,8 @@ def _http_error(exc: Exception) -> HTTPException:
         return HTTPException(status_code=422, detail="Unknown person to tag.")
     if isinstance(exc, InactiveTagError):
         return HTTPException(status_code=422, detail=f"{exc.name} is inactive and can't be tagged.")
+    if isinstance(exc, NoMeetingWeekNotFoundError):
+        return HTTPException(status_code=404, detail=f"No meeting week with ID {exc.week_id} not found.")
     raise exc
 
 
@@ -336,6 +342,7 @@ def _detail_schema(detail: ReportDetail, viewable: frozenset[PersonKey]) -> Repo
         church_sunday=church_sunday(detail.meeting_date),
         held=detail.held,
         not_held_reason=detail.not_held_reason,
+        no_meeting_week_id=detail.no_meeting_week_id,
         address=detail.address,
         sections=sections_schema(detail.items, viewable),
         submitted_by=ReportPersonSchema(
@@ -427,6 +434,7 @@ def get_small_group_reports(
                     attended_church_count=item.attended_church_count,
                     held=item.held,
                     not_held_reason=item.not_held_reason,
+                    no_meeting_week_id=item.no_meeting_week_id,
                 )
             )
     return ReportListSchema(
@@ -515,6 +523,9 @@ def get_small_group_reports_week(
         week_end=week.week_end,
         today=week.today,
         is_current_week=week.is_current_week,
+        no_meeting_week=(
+            _no_meeting_week_schema(week.no_meeting_week) if week.no_meeting_week is not None else None
+        ),
         groups=[
             WeekGroupSchema(
                 small_group=WeekSmallGroupSchema(
@@ -538,6 +549,7 @@ def get_small_group_reports_week(
                         observation_count=r.observation_count,
                         held=r.held,
                         not_held_reason=r.not_held_reason,
+                        no_meeting_week_id=r.no_meeting_week_id,
                         submitted_by=ReportPersonSchema(
                             member_id=r.submitted_by_member_id, name=r.submitted_by_name
                         ),
@@ -789,3 +801,42 @@ def post_no_meeting_week(
             reported=mark.skipped_reported, no_meeting_day=mark.skipped_no_meeting_day
         ),
     )
+
+
+@router.patch(
+    "/no-meeting-weeks/{week_id}",
+    name="update_no_meeting_week",
+    description="Change a church-wide no meeting's reason, on the week and every report still linked to it",
+    dependencies=[
+        Depends(require_permission("smallGroups", "all")),
+        Depends(require_permission("smallGroupReports", "update")),
+        Depends(rate_limit("20/minute", scope="update_no_meeting_week")),
+    ],
+)
+def patch_no_meeting_week(
+    week_id: int, body: NoMeetingWeekReasonBodySchema, db: MembersSessionDep
+) -> NoMeetingWeekSchema:
+    try:
+        week = update_no_meeting_week_reason(db, week_id, body.reason)
+    except NoMeetingWeekNotFoundError as exc:
+        raise _http_error(exc) from exc
+    return _no_meeting_week_schema(week)
+
+
+@router.delete(
+    "/no-meeting-weeks/{week_id}",
+    name="delete_no_meeting_week",
+    description="Undo a church-wide no meeting: delete the reports still linked to it, then the week",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[
+        Depends(require_permission("smallGroups", "all")),
+        Depends(require_permission("smallGroupReports", "delete")),
+        Depends(rate_limit("10/minute", scope="delete_no_meeting_week")),
+    ],
+)
+def undo_no_meeting_week(week_id: int, db: MembersSessionDep) -> Response:
+    try:
+        delete_no_meeting_week(db, week_id)
+    except NoMeetingWeekNotFoundError as exc:
+        raise _http_error(exc) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

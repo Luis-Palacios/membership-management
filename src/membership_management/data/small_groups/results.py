@@ -228,11 +228,12 @@ class ReportDetail(NamedTuple):
     submitted_at: datetime
     observations_visible: bool
     attendances: list[ReportAttendanceView]
-    held: bool = True
-    not_held_reason: str | None = None
+    held: bool
+    not_held_reason: str | None
     # Threads on the report; the delete dialog says they go with it. Not an observation: always set.
-    conversation_count: int = 0
-    no_meeting_week_id: int | None = None
+    conversation_count: int
+    # The church-wide no meeting week the report belongs to, if any.
+    no_meeting_week_id: int | None
 
 
 class ReportGroupRow(NamedTuple):
@@ -256,9 +257,9 @@ class FiledReportRow(NamedTuple):
     roster_count: int
     attended_group_count: int
     attended_church_count: int
-    held: bool = True
-    not_held_reason: str | None = None
-    no_meeting_week_id: int | None = None
+    held: bool
+    not_held_reason: str | None
+    no_meeting_week_id: int | None
 
 
 class NotFiledMeeting(NamedTuple):
@@ -336,9 +337,9 @@ class WeekReportRow(NamedTuple):
     observation_count: int
     submitted_by_member_id: int
     submitted_by_name: str
-    held: bool = True
-    not_held_reason: str | None = None
-    no_meeting_week_id: int | None = None
+    held: bool
+    not_held_reason: str | None
+    no_meeting_week_id: int | None
 
 
 class ActiveLeaderRow(NamedTuple):
@@ -363,14 +364,6 @@ class WeekGroup(NamedTuple):
     reports: list[WeekReportRow]
 
 
-class ReportWeek(NamedTuple):
-    week_start: date
-    week_end: date
-    today: date
-    is_current_week: bool
-    groups: list[WeekGroup]
-
-
 class NoMeetingWeekRow(NamedTuple):
     """A church-wide no meeting week; `linked_count` is the reports still linked to it."""
 
@@ -393,6 +386,16 @@ class NoMeetingWeekMark(NamedTuple):
     marked: int
     skipped_reported: int
     skipped_no_meeting_day: int
+
+
+class ReportWeek(NamedTuple):
+    week_start: date
+    week_end: date
+    today: date
+    is_current_week: bool
+    groups: list[WeekGroup]
+    # Set when the week is marked church-wide.
+    no_meeting_week: NoMeetingWeekRow | None
 
 
 class SharedReportRow(NamedTuple):
