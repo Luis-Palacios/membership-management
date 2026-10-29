@@ -232,6 +232,7 @@ class ReportDetail(NamedTuple):
     not_held_reason: str | None = None
     # Threads on the report; the delete dialog says they go with it. Not an observation: always set.
     conversation_count: int = 0
+    no_meeting_week_id: int | None = None
 
 
 class ReportGroupRow(NamedTuple):
@@ -257,6 +258,7 @@ class FiledReportRow(NamedTuple):
     attended_church_count: int
     held: bool = True
     not_held_reason: str | None = None
+    no_meeting_week_id: int | None = None
 
 
 class NotFiledMeeting(NamedTuple):
@@ -336,6 +338,7 @@ class WeekReportRow(NamedTuple):
     submitted_by_name: str
     held: bool = True
     not_held_reason: str | None = None
+    no_meeting_week_id: int | None = None
 
 
 class ActiveLeaderRow(NamedTuple):
