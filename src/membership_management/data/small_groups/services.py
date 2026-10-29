@@ -3,7 +3,7 @@ from collections.abc import Collection, Mapping, Sequence
 from datetime import date, timedelta
 from typing import Literal, NamedTuple
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -247,6 +247,12 @@ class InactiveTagError(Exception):
         self.name = name
 
 
+class NoMeetingWeekNotFoundError(Exception):
+    def __init__(self, week_id: int) -> None:
+        super().__init__(week_id)
+        self.week_id = week_id
+
+
 class FutureWeekError(Exception):
     """The requested week starts after the latest week the caller may see (groups dashboard rule 4;
     next week for the week endpoint and church-wide no meeting)."""
@@ -459,6 +465,7 @@ def build_report_detail(
             .where(ReportConversation.report_id == report.id)
         )
         or 0,
+        no_meeting_week_id=report.no_meeting_week_id,
     )
 
 
@@ -542,6 +549,10 @@ def update_report(
         replaces_no_meeting=False,
     )
     if not report.held:
+        # A leader's own reason or date takes the report out of the church-wide week (church-wide no
+        # meeting rule 9). The same values (the dialog re-sends the date) keep it linked.
+        if body.not_held_reason != report.not_held_reason or body.meeting_date != report.meeting_date:
+            report.no_meeting_week_id = None
         report.meeting_date = body.meeting_date
         report.not_held_reason = body.not_held_reason
         _commit_report_or_raise_conflict(session, report.small_group_id, body.meeting_date)
@@ -924,9 +935,10 @@ def get_report_week(session: Session, *, day: date, today: date) -> ReportWeek:
     refused. Only counts of observations are read (rule 9), so the caller must be a full role.
     """
     week_start, week_end, is_current_week = _week_bounds(day, today, weeks_ahead=1)
+    no_meeting_week = first_as(session, no_meeting_week_query(week_start=week_start), NoMeetingWeekRow)
     groups = _open_report_groups(session, None)
     if not groups:
-        return ReportWeek(week_start, week_end, today, is_current_week, [])
+        return ReportWeek(week_start, week_end, today, is_current_week, [], no_meeting_week)
     leaders = _active_leaders_by_group(session, frozenset(g.id for g in groups))
     return ReportWeek(
         week_start=week_start,
@@ -934,6 +946,7 @@ def get_report_week(session: Session, *, day: date, today: date) -> ReportWeek:
         today=today,
         is_current_week=is_current_week,
         groups=_week_groups(session, groups, week_start, today, leaders),
+        no_meeting_week=no_meeting_week,
     )
 
 
@@ -994,6 +1007,40 @@ def mark_no_meeting_week(
     except IntegrityError:
         session.rollback()
     return _mark_no_meeting_week(session, week_start, week_end, reason=reason, member_id=member_id)
+
+
+def update_no_meeting_week_reason(session: Session, week_id: int, reason: str | None) -> NoMeetingWeekRow:
+    """Set the week's reason and the reason of every report still linked to it (church-wide no
+    meeting rule 8). A report a leader edited is no longer linked and keeps its own."""
+    week = session.get(SmallGroupNoMeetingWeek, week_id)
+    if week is None:
+        raise NoMeetingWeekNotFoundError(week_id)
+    week.reason = reason
+    week.updated_at = func.now()
+    session.execute(
+        update(SmallGroupReport)
+        .where(SmallGroupReport.no_meeting_week_id == week_id)
+        .values(not_held_reason=reason)
+    )
+    session.commit()
+    row = first_as(session, no_meeting_week_query(week_id=week_id), NoMeetingWeekRow)
+    if row is None:
+        raise NoMeetingWeekNotFoundError(week_id)
+    return row
+
+
+def delete_no_meeting_week(session: Session, week_id: int) -> None:
+    """Undo (church-wide no meeting rule 10): delete the reports still linked, then the week.
+
+    Not through `delete_report`: groups closed since lose their mark too. A no meeting has no
+    attendance or items, and its conversations go with it (ON DELETE CASCADE).
+    """
+    week = session.get(SmallGroupNoMeetingWeek, week_id)
+    if week is None:
+        raise NoMeetingWeekNotFoundError(week_id)
+    session.execute(delete(SmallGroupReport).where(SmallGroupReport.no_meeting_week_id == week_id))
+    session.delete(week)
+    session.commit()
 
 
 def _mark_no_meeting_week(

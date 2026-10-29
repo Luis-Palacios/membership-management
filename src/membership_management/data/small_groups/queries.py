@@ -289,6 +289,7 @@ def filed_reports_query(
             SmallGroupReport.submitted_at.label("submitted_at"),
             SmallGroupReport.held.label("held"),
             SmallGroupReport.not_held_reason.label("not_held_reason"),
+            SmallGroupReport.no_meeting_week_id.label("no_meeting_week_id"),
             func.count(attendance.id).label("roster_count"),
             func.count(attendance.id)
             .filter(attendance.attended_group.is_(True))
@@ -393,6 +394,7 @@ def week_reports_query(group_ids: frozenset[int], from_date: date, to_date: date
             Member.name.label("submitted_by_name"),
             SmallGroupReport.held.label("held"),
             SmallGroupReport.not_held_reason.label("not_held_reason"),
+            SmallGroupReport.no_meeting_week_id.label("no_meeting_week_id"),
         )
         .join(Member, Member.id == SmallGroupReport.submitted_by_member_id)
         .outerjoin(attendance, attendance.report_id == SmallGroupReport.id)

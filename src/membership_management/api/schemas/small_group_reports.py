@@ -244,6 +244,8 @@ class ReportDetailSchema(CamelModel):
     church_sunday: date
     held: bool
     not_held_reason: str | None
+    # The church-wide no meeting week the report belongs to; a leader's edit of the reason or date unlinks it.
+    no_meeting_week_id: int | None
     address: str | None
     sections: ReportSectionsSchema
     submitted_by: ReportPersonSchema
@@ -275,6 +277,7 @@ class FiledReportItemSchema(CamelModel):
     attended_church_count: int
     held: bool
     not_held_reason: str | None
+    no_meeting_week_id: int | None
 
 
 class NotFiledItemSchema(CamelModel):
@@ -329,47 +332,6 @@ class ReportSummaryItemSchema(CamelModel):
     recent_meetings: list[RecentMeetingSchema]
 
 
-class WeekSmallGroupSchema(CamelModel):
-    id: int
-    name: str
-    audience: GroupAudience
-    meeting_day: Weekday | None
-
-
-class WeekLeaderSchema(CamelModel):
-    member_id: int
-    name: str
-    role: SmallGroupRole
-
-
-class WeekReportSchema(CamelModel):
-    id: int
-    meeting_date: date
-    roster_count: int
-    attended_group_count: int
-    attended_church_count: int
-    observation_count: int
-    held: bool
-    not_held_reason: str | None
-    submitted_by: ReportPersonSchema
-
-
-class WeekGroupSchema(CamelModel):
-    small_group: WeekSmallGroupSchema
-    leaders: list[WeekLeaderSchema]
-    status: Literal["submitted", "notHeld", "notFiled", "today", "upcoming", "noLeader", "noMeetingDay"]
-    meeting_date: date | None
-    reports: list[WeekReportSchema]
-
-
-class ReportWeekSchema(CamelModel):
-    week_start: date
-    week_end: date
-    today: date
-    is_current_week: bool
-    groups: list[WeekGroupSchema]
-
-
 class NoMeetingWeekBodySchema(CamelModel):
     """Mark the church week containing `date` (any day of it) as no meeting for every open group."""
 
@@ -378,6 +340,13 @@ class NoMeetingWeekBodySchema(CamelModel):
     date: date
     # Ignored when the week is already marked: a re-run keeps the week's reason.
     reason: ReportReason = None
+
+
+class NoMeetingWeekReasonBodySchema(CamelModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Required: null clears the reason.
+    reason: ReportReason
 
 
 class NoMeetingWeekSchema(CamelModel):
@@ -401,6 +370,50 @@ class NoMeetingWeekMarkSchema(NoMeetingWeekSchema):
     # Created by this call.
     marked: int
     skipped: NoMeetingWeekSkippedSchema
+
+
+class WeekSmallGroupSchema(CamelModel):
+    id: int
+    name: str
+    audience: GroupAudience
+    meeting_day: Weekday | None
+
+
+class WeekLeaderSchema(CamelModel):
+    member_id: int
+    name: str
+    role: SmallGroupRole
+
+
+class WeekReportSchema(CamelModel):
+    id: int
+    meeting_date: date
+    roster_count: int
+    attended_group_count: int
+    attended_church_count: int
+    observation_count: int
+    held: bool
+    not_held_reason: str | None
+    no_meeting_week_id: int | None
+    submitted_by: ReportPersonSchema
+
+
+class WeekGroupSchema(CamelModel):
+    small_group: WeekSmallGroupSchema
+    leaders: list[WeekLeaderSchema]
+    status: Literal["submitted", "notHeld", "notFiled", "today", "upcoming", "noLeader", "noMeetingDay"]
+    meeting_date: date | None
+    reports: list[WeekReportSchema]
+
+
+class ReportWeekSchema(CamelModel):
+    week_start: date
+    week_end: date
+    today: date
+    is_current_week: bool
+    # Set when the week is marked church-wide.
+    no_meeting_week: NoMeetingWeekSchema | None
+    groups: list[WeekGroupSchema]
 
 
 class SharedSmallGroupSchema(CamelModel):
