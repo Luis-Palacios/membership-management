@@ -469,6 +469,7 @@ def create_report(
         session,
         small_group,
         body.meeting_date,
+        held=body.held,
         today=today,
         ignore_report_id=None,
         replaces_no_meeting=body.replaces_no_meeting and body.held,
@@ -529,6 +530,7 @@ def update_report(
         session,
         report.small_group,
         body.meeting_date,
+        held=body.held,
         today=today,
         ignore_report_id=report.id,
         replaces_no_meeting=False,
@@ -912,10 +914,10 @@ def get_report_summary(
 def get_report_week(session: Session, *, day: date, today: date) -> ReportWeek:
     """Every open group's status for the Sunday-to-Saturday week containing `day` (dashboard rule 6).
 
-    A week after the current one is refused; any later day of the current week is the same week. Only
-    counts of observations are read (rule 9), so the caller must be a full role.
+    Next week is the latest one (church-wide no meeting rule 11), so it can be marked; a later week is
+    refused. Only counts of observations are read (rule 9), so the caller must be a full role.
     """
-    week_start, week_end, is_current_week = _week_bounds(day, today)
+    week_start, week_end, is_current_week = _week_bounds(day, today, weeks_ahead=1)
     groups = _open_report_groups(session, None)
     if not groups:
         return ReportWeek(week_start, week_end, today, is_current_week, [])
@@ -969,12 +971,12 @@ def get_report_shared(
     return ReportShared(week_start, week_end, today, is_current_week, entries, still_to_report)
 
 
-def _week_bounds(day: date, today: date) -> tuple[date, date, bool]:
-    """Start, end and "is the current week" of the church week containing `day`; a later week than
-    the current one raises `FutureWeekError`."""
+def _week_bounds(day: date, today: date, *, weeks_ahead: int = 0) -> tuple[date, date, bool]:
+    """Start, end and "is the current week" of the church week containing `day`; a week more than
+    `weeks_ahead` weeks after the current one raises `FutureWeekError`."""
     week_start = church_sunday(day)
     current_week_start = church_sunday(today)
-    if week_start > current_week_start:
+    if week_start > current_week_start + timedelta(weeks=weeks_ahead):
         raise FutureWeekError
     return week_start, week_start + timedelta(days=6), week_start == current_week_start
 
@@ -1056,22 +1058,29 @@ def _week_group(
     return WeekGroup(group=group, leaders=leaders, status=status, meeting_date=meeting_date, reports=reports)
 
 
+def _last_no_meeting_date(today: date) -> date:
+    """The latest date a no meeting may have: the Saturday of next week (church-wide no meeting rule 7)."""
+    return church_sunday(today) + timedelta(days=13)
+
+
 def _validate_date(
     session: Session,
     small_group: SmallGroup,
     meeting_date: date,
     *,
+    held: bool,
     today: date,
     ignore_report_id: int | None,
     replaces_no_meeting: bool,
 ) -> SmallGroupReport | None:
     """Rules 1, 2 and 8 for a create or edit (closed, future, duplicate, in that order).
 
-    Returns the no meeting the new report replaces (rule 13.5), or None. A held report is never replaced.
+    A held report is dated today or earlier, a no meeting up to the end of next week. Returns the no
+    meeting the new report replaces (rule 13.5), or None. A held report is never replaced.
     """
     if small_group.closed_at is not None:
         raise SmallGroupClosedError
-    if meeting_date > today:
+    if meeting_date > (today if held else _last_no_meeting_date(today)):
         raise FutureMeetingDateError
     existing = session.execute(report_on_date_query(small_group.id, meeting_date)).one_or_none()
     if existing is None or existing.id == ignore_report_id:
