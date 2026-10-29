@@ -31,6 +31,10 @@ from membership_management.api.schemas.person import PersonSchema
 from membership_management.api.schemas.small_group_reports import (
     FiledReportItemSchema,
     HeldReportBodySchema,
+    NoMeetingWeekBodySchema,
+    NoMeetingWeekMarkSchema,
+    NoMeetingWeekSchema,
+    NoMeetingWeekSkippedSchema,
     NotFiledItemSchema,
     NotHeldReportBodySchema,
     RecentMeetingSchema,
@@ -67,6 +71,7 @@ from membership_management.data.small_groups.conversation_services import get_se
 from membership_management.data.small_groups.models import SmallGroup
 from membership_management.data.small_groups.results import (
     AttendanceInput,
+    NoMeetingWeekRow,
     NotFiledMeeting,
     PersonKey,
     ReportDetail,
@@ -97,6 +102,7 @@ from membership_management.data.small_groups.services import (
     get_report_week,
     get_small_group,
     list_reports,
+    mark_no_meeting_week,
     search_taggable_people,
     update_report,
 )
@@ -277,6 +283,18 @@ def _to_input(body: HeldReportBodySchema | NotHeldReportBodySchema) -> ReportInp
         ],
         replaces_no_meeting=body.replaces_no_meeting,
         sections=sections_input(body.sections),
+    )
+
+
+def _no_meeting_week_schema(week: NoMeetingWeekRow) -> NoMeetingWeekSchema:
+    return NoMeetingWeekSchema(
+        id=week.id,
+        week_start=week.week_start,
+        reason=week.reason,
+        created_by=ReportPersonSchema(member_id=week.created_by_member_id, name=week.created_by_name),
+        created_at=week.created_at,
+        updated_at=week.updated_at,
+        linked_count=week.linked_count,
     )
 
 
@@ -737,3 +755,37 @@ def delete_small_group_report(report_id: int, db: MembersSessionDep, scope: Smal
     except SmallGroupClosedError as exc:
         raise _http_error(exc) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/no-meeting-weeks",
+    name="mark_no_meeting_week",
+    description="Mark a whole week as no meeting for every open group; a re-run marks the groups still empty",
+    status_code=status.HTTP_201_CREATED,
+    responses={200: {"description": "The week was already marked; its reason is kept"}},
+    dependencies=[
+        Depends(require_permission("smallGroups", "all")),
+        Depends(require_permission("smallGroupReports", "create")),
+        Depends(rate_limit("10/minute", scope="mark_no_meeting_week")),
+    ],
+)
+def post_no_meeting_week(
+    body: NoMeetingWeekBodySchema, db: MembersSessionDep, member: CurrentMemberDep, response: Response
+) -> NoMeetingWeekMarkSchema:
+    try:
+        if member is None:
+            raise MemberRequiredToSubmitError
+        mark = mark_no_meeting_week(
+            db, day=body.date, reason=body.reason, member_id=member.id, today=church_today()
+        )
+    except (MemberRequiredToSubmitError, FutureWeekError) as exc:
+        raise _http_error(exc) from exc
+    if not mark.created:
+        response.status_code = status.HTTP_200_OK
+    return NoMeetingWeekMarkSchema(
+        **_no_meeting_week_schema(mark.week).model_dump(),
+        marked=mark.marked,
+        skipped=NoMeetingWeekSkippedSchema(
+            reported=mark.skipped_reported, no_meeting_day=mark.skipped_no_meeting_day
+        ),
+    )

@@ -371,6 +371,30 @@ class ReportWeek(NamedTuple):
     groups: list[WeekGroup]
 
 
+class NoMeetingWeekRow(NamedTuple):
+    """A church-wide no meeting week; `linked_count` is the reports still linked to it."""
+
+    id: int
+    week_start: date
+    reason: str | None
+    created_by_member_id: int
+    created_by_name: str
+    created_at: datetime
+    updated_at: datetime
+    linked_count: int
+
+
+class NoMeetingWeekMark(NamedTuple):
+    """What one mark of a church-wide no meeting week did."""
+
+    week: NoMeetingWeekRow
+    # False when the week was already marked (a re-run): its reason was kept.
+    created: bool
+    marked: int
+    skipped_reported: int
+    skipped_no_meeting_day: int
+
+
 class SharedReportRow(NamedTuple):
     report_id: int
     meeting_date: date
