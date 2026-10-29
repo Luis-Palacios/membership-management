@@ -954,8 +954,8 @@ def get_report_shared(
     session: Session, *, day: date, today: date, only_group_ids: frozenset[int] | None
 ) -> ReportShared:
     """The items of every held report in the week containing `day`, for the open groups
-    in scope, and the groups still to report (prayer & follow-up rules 5-11). Same week rules as
-    `get_report_week`."""
+    in scope, and the groups still to report (prayer & follow-up rules 5-11). Unlike
+    `get_report_week`, the current week is the latest (church-wide no meeting rule 11)."""
     week_start, week_end, is_current_week = _week_bounds(day, today)
     groups = _open_report_groups(session, only_group_ids)
     if not groups:
