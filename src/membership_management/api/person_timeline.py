@@ -98,10 +98,11 @@ def timeline_schema(
 ) -> PersonTimelineSchema:
     """Chips follow rule 12 for the caller; the person's own is viewable (the caller is on their page)."""
     own: PersonKey = (person.type, person.id)
+    reports = [entry.row for entry in timeline.entries if isinstance(entry, TimelineReportEntry)]
     viewable = viewable_people(
         db,
         claims,
-        tagged_in(item for row in timeline.rows for item in row.items),
+        tagged_in(item for row in reports for item in row.items),
         member_scope,
         guest_scope,
     ) | {own}
@@ -147,7 +148,6 @@ def timeline_schema(
             praise=timeline.counts.praise,
             follow_up=timeline.counts.follow_up,
         ),
-        rows=[row_schema(row) for row in timeline.rows],
         entries=[
             TimelineReportEntrySchema(date=entry.entry_date, report=row_schema(entry.row))
             if isinstance(entry, TimelineReportEntry)
