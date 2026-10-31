@@ -53,16 +53,64 @@ Keep the existing conventions:
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. Migration, models, seed | ⬜ | |
-| 2. Deactivate, reactivate, status on guests | ⬜ | |
-| 3. Reactivate and add | ⬜ | |
-| 4. Timeline entries (expand) | ⬜ | |
-| 5. Timeline entries (contract): drop `rows` | ⬜ | |
-| 6. Docs | ⬜ | |
+| 1. Migration, models, seed | ✅ | `cea573d` |
+| 2. Deactivate, reactivate, status on guests | ✅ | `6e67779` |
+| 3. Reactivate and add | ✅ | `efd6509` |
+| 4. Timeline entries (expand) | ✅ | `079aaaf` |
+| 5. Timeline entries (contract): drop `rows` | ⬜ waits for staff-app stage 5 to be deployed | |
+| 6. Docs | ✅ | see `git log` |
 
 ### Decisions and deviations
 
-- (none yet)
+All stages were tried on the scratch database `ig-scratch` (never the dev one), with a `TestClient` and
+`get_current_claims` overridden per role, `GUEST_GROUPS_ENABLED` on. The permission sets copy
+`auth-server/src/permissions/statements.ts` on its `inactive-guests` branch (`ddd736c`, not on its `main`
+yet); no real JWT was used.
+
+**Stage 1.** `upgrade`, `alembic check`, `downgrade -1` and `upgrade` round-trip. Existing guests became
+`active` with no history. Reseeding and diffing every table: all 885 earlier rows unchanged, 13 added.
+Downgrade refuses once `guest_inactive` periods exist. No member change in the seed: Ernesto Ordóñez
+already has both kinds of status entry.
+
+**Stage 2.** Scripted as every role on the list: everything under *Try*, plus blank notes, the remove body
+refusing `guest_inactive`, and tag rules on `PATCH /small-group-reports/{id}`. One case the *Try* list
+doesn't name: an inactive guest already tagged in one section can't be newly tagged in another, as for
+members.
+
+**Stage 3.** Scripted, including the rollback when the join date overlaps or is in the future (still
+inactive, no history row). A role with `manageMembers` but no `guests: reactivate` doesn't exist today, so
+that 403 used a made-up permission set.
+
+**Stage 4.** Dumped the timeline before and after for all 8 role variants × every seeded member and guest ×
+6 parameter sets (3,504 responses): status codes, `rows`, `counts`, `groups`, `person`, `from`, `to`
+byte-identical; `earliestDate` moved older in 96, all people whose oldest entry is a status change. The
+rest of *Try* scripted, including ties and the OpenAPI discriminator.
+
+Not tried: the row locks under real concurrency.
+
+Decisions:
+
+- **`effectiveDate`, not `leftOn`.** The cross-repo spec's *Contracts* says `{ reason, leftOn?, note? }`; this
+  handoff and staff-app's say a required `effectiveDate`, as members have. Built to the handoffs.
+- **`rows` under `latest`.** This handoff asks both for `rows` built from the report entries and for `rows`
+  byte-identical to before. They clash only with `latest` when a status entry is among the newest N: I kept
+  `rows` (and `counts`) as they were, so during the expand `rows` can hold reports `entries` cut. Same
+  content otherwise. When stage 5 drops `rows`, `counts` should be taken from the report entries kept.
+- **Period closing helper.** `remove_guest_from_group` had no helper to reuse and `data/guests/services.py`
+  can't import `data/small_groups/services.py` (that one imports it). `end_guest_period` lives in the
+  guests module and both use it.
+- **Row lock on add.** Beyond the handoff, `add_guest_to_group` locks an existing guest's row, so a
+  deactivation can't run between its checks and the insert and leave an inactive guest in a group.
+- **Status check before the group checks, `reactivate` permission before the service.** A `reactivate: true`
+  without `guests: reactivate` is 403 even for an active guest or with `newGuest`, like the `guests: create`
+  check.
+- **Same-day re-add is 409.** Deactivating and reactivating-and-adding on the same day gets the existing
+  "join date overlaps" 409 and rolls back, since the closed period ends today (guest periods already
+  behave this way after a remove). Reactivating from Guest detail still works that day; adding works
+  from the next day.
+- **Sources stay in `data/small_groups/`** (`timeline_services.py`, `timeline_queries.py`), not a new
+  `data/timeline/`: two sources don't justify a package yet.
+- **Status filter name.** The list's `Literal` became `GuestStatusFilter`, since `GuestStatus` is now the enum.
 
 ## Stage 1: migration, models, seed
 
