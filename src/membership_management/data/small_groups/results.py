@@ -1,6 +1,8 @@
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
+from membership_management.data.guests.models import GuestInactiveReason, GuestStatus
+from membership_management.data.members.models import MemberInactiveReason, MemberStatus
 from membership_management.data.small_groups.models import (
     ConversationSide,
     ConversationStatus,
@@ -615,6 +617,37 @@ class TimelineRow(NamedTuple):
     items: list[ReportItemView]
 
 
+class TimelineReportEntry(NamedTuple):
+    entry_date: date
+    row: TimelineRow
+
+
+class TimelineGroupRow(NamedTuple):
+    id: int
+    name: str
+    audience: GroupAudience
+    earliest_date: date
+
+
+class TimelineStatusRow(NamedTuple):
+    effective_date: date
+    status: MemberStatus | GuestStatus
+    reason: MemberInactiveReason | GuestInactiveReason | None
+    note: str | None
+    # The member linked to whoever made the change; None when there is none.
+    changed_by_member_id: int | None
+    changed_by_name: str | None
+
+
+class TimelineStatusEntry(NamedTuple):
+    entry_date: date
+    change: TimelineStatusRow
+
+
+# What a timeline lists: one kind per source (`timeline_services.py`).
+TimelineEntry = TimelineReportEntry | TimelineStatusEntry
+
+
 class TimelineCounts(NamedTuple):
     notes: int
     prayer: int
@@ -626,9 +659,12 @@ class PersonTimeline(NamedTuple):
     # None with `latest`.
     from_date: date | None
     to_date: date | None
-    # The oldest visible row's date, any group; None when there is none.
+    # The oldest visible entry's date, any kind and group; None when there is none.
     earliest_date: date | None
-    # Groups with at least one visible row, any date.
+    # Groups with at least one visible report, any date.
     groups: list[TimelineGroup]
+    # Reports only: status entries aren't counted.
     counts: TimelineCounts
     rows: list[TimelineRow]
+    # Newest first, every kind; with `latest`, the newest N of them.
+    entries: list[TimelineEntry]

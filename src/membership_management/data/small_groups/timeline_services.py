@@ -1,7 +1,9 @@
 import calendar
 from collections import defaultdict
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import date, timedelta
+from typing import NamedTuple
 
 from sqlalchemy.orm import Session
 
@@ -17,16 +19,24 @@ from membership_management.data.small_groups.results import (
     TaggedPersonRow,
     TimelineAttendance,
     TimelineCounts,
+    TimelineEntry,
     TimelineGroup,
+    TimelineGroupRow,
     TimelineObservation,
     TimelinePeriod,
+    TimelineReportEntry,
     TimelineReportRow,
     TimelineRow,
+    TimelineStatusEntry,
+    TimelineStatusRow,
 )
 from membership_management.data.small_groups.timeline_queries import (
+    person_timeline_earliest_status_change_query,
+    person_timeline_groups_query,
     person_timeline_items_query,
     person_timeline_periods_query,
     person_timeline_reports_query,
+    person_timeline_status_changes_query,
 )
 
 # Report tags, person timeline: the default window and the longest one.
@@ -71,16 +81,13 @@ def _role_on(periods: Iterable[TimelinePeriod], small_group_id: int, d: date) ->
     return best.role
 
 
-def _visible_row(
+def _visible_parts(
     report: TimelineReportRow,
     items: list[ReportItemRow],
     periods: list[TimelinePeriod],
     *,
     in_audience: bool,
-) -> (
-    tuple[TimelineReportRow, list[ReportItemRow], TimelineAttendance | None, TimelineObservation | None]
-    | None
-):
+) -> tuple[list[ReportItemRow], TimelineAttendance | None, TimelineObservation | None]:
     """Rule 23 for one report: attendance, observation and follow-up items need the observation audience."""
     shown = [i for i in items if in_audience or i.section != ReportSection.FOLLOW_UP]
     attendance = None
@@ -94,9 +101,106 @@ def _visible_row(
         text = (report.observation or "").strip()
         if text:
             observation = TimelineObservation(text, report.submitted_by_member_id, report.submitted_by_name)
-    if attendance is None and not shown:
-        return None
-    return report, shown, attendance, observation
+    return shown, attendance, observation
+
+
+@dataclass(frozen=True)
+class _TimelineRequest:
+    """What every source is given: the person, the caller's access, and `latest` or the range."""
+
+    person: PersonKey
+    # The caller's observation audience: every group (None) or just these.
+    observation_groups: frozenset[int] | None
+    from_: date | None
+    to: date | None
+    small_group_id: int | None
+    latest: int | None
+
+
+class _SourceResult(NamedTuple):
+    # Already filtered for the caller and by the request, newest first, at most `latest`.
+    entries: list[TimelineEntry]
+    # The source's oldest entry and its groups, for this caller but whatever the range and group.
+    earliest_date: date | None
+    groups: list[TimelineGroup]
+
+
+def _report_source(session: Session, request: _TimelineRequest) -> _SourceResult:
+    """The held reports the person has an attendance line in or is tagged in (report tags rules 21 to 23)."""
+    person, observation_groups = request.person, request.observation_groups
+    group_rows = all_as(session, person_timeline_groups_query(person, observation_groups), TimelineGroupRow)
+    reports = all_as(
+        session,
+        person_timeline_reports_query(
+            person,
+            observation_groups,
+            from_=request.from_,
+            to=request.to,
+            small_group_id=request.small_group_id,
+            latest=request.latest,
+        ),
+        TimelineReportRow,
+    )
+    periods = list(all_as(session, person_timeline_periods_query(person), TimelinePeriod))
+    items_by_report: dict[int, list[ReportItemRow]] = defaultdict(list)
+    report_ids = [report.report_id for report in reports]
+    for item in all_as(session, person_timeline_items_query(person, report_ids), ReportItemRow):
+        items_by_report[item.report_id].append(item)
+
+    visible = [
+        (
+            report,
+            *_visible_parts(
+                report,
+                items_by_report[report.report_id],
+                periods,
+                in_audience=observation_groups is None or report.small_group_id in observation_groups,
+            ),
+        )
+        for report in reports
+    ]
+    names = _names(session, [item for _, items, _, _ in visible for item in items])
+    entries: list[TimelineEntry] = [
+        TimelineReportEntry(
+            report.meeting_date,
+            TimelineRow(
+                report.report_id,
+                report.meeting_date,
+                TimelineGroup(report.small_group_id, report.small_group_name, report.small_group_audience),
+                attendance,
+                observation,
+                [_item_view(i, names) for i in items],
+            ),
+        )
+        for report, items, attendance, observation in visible
+    ]
+    return _SourceResult(
+        entries,
+        min((g.earliest_date for g in group_rows), default=None),
+        [TimelineGroup(g.id, g.name, g.audience) for g in group_rows],
+    )
+
+
+def _status_source(session: Session, request: _TimelineRequest) -> _SourceResult:
+    """The person's status changes, on their effective date. Whoever can open the timeline sees them,
+    reason and note included (inactive-guests rule 13). They have no group, so picking one hides them."""
+    entries: list[TimelineEntry] = []
+    if request.small_group_id is None:
+        changes = all_as(
+            session,
+            person_timeline_status_changes_query(
+                request.person, from_=request.from_, to=request.to, latest=request.latest
+            ),
+            TimelineStatusRow,
+        )
+        entries = [TimelineStatusEntry(change.effective_date, change) for change in changes]
+    earliest = session.scalar(person_timeline_earliest_status_change_query(request.person))
+    return _SourceResult(entries, earliest, [])
+
+
+# A new kind of entry is one more source here and in `TimelineEntry`. No source knows about the others.
+# The order breaks ties on a date: an earlier source's entries go above a later one's (rule 15).
+_SOURCES = (_status_source, _report_source)
 
 
 def get_person_timeline(
@@ -109,66 +213,26 @@ def get_person_timeline(
     small_group_id: int | None,
     latest: int | None,
 ) -> PersonTimeline:
-    """A member's or guest's timeline as the caller may see it (report tags rules 21 to 23).
+    """A member's or guest's timeline as the caller may see it, merged from every source.
 
-    `observation_groups` is the caller's observation audience: every group (None) or just these.
-    Attendance, observations and follow-up items of other groups' reports are left out; prayer and
-    praise items tagging the person are shown for any group. With `latest`, the newest N visible rows
-    of any date and group; otherwise `from_` and `to` (already resolved) and optionally one group.
-    Everything is loaded for all dates, since `groups` and `earliest_date` look past the range; a
-    person's reports are few.
+    `observation_groups` is the caller's observation audience: every group (None) or just these. With
+    `latest`, the newest N visible entries of any date, kind and group; otherwise `from_` and `to`
+    (already resolved) and optionally one group.
     """
-    reports = all_as(session, person_timeline_reports_query(person), TimelineReportRow)
-    periods = list(all_as(session, person_timeline_periods_query(person), TimelinePeriod))
-    items_by_report: dict[int, list[ReportItemRow]] = defaultdict(list)
-    for item in all_as(session, person_timeline_items_query(person), ReportItemRow):
-        items_by_report[item.report_id].append(item)
+    if latest is None and (from_ is None or to is None):
+        raise ValueError("a timeline needs `latest` or both dates; use resolve_range")
+    request = _TimelineRequest(person, observation_groups, from_, to, small_group_id, latest)
+    results = [source(session, request) for source in _SOURCES]
 
-    visible = []
-    for report in reports:
-        in_audience = observation_groups is None or report.small_group_id in observation_groups
-        row = _visible_row(
-            report, items_by_report.get(report.report_id, []), periods, in_audience=in_audience
-        )
-        if row is not None:
-            visible.append(row)
-    visible.sort(key=lambda r: (r[0].meeting_date, r[0].report_id), reverse=True)
-
-    groups = {
-        r[0].small_group_id: TimelineGroup(
-            r[0].small_group_id, r[0].small_group_name, r[0].small_group_audience
-        )
-        for r in visible
-    }
-    earliest = min((r[0].meeting_date for r in visible), default=None)
-
+    all_entries = [entry for result in results for entry in result.entries]
+    # A stable sort, so within a date the entries stay in source order, each source's newest first.
+    entries = sorted(all_entries, key=lambda entry: entry.entry_date, reverse=True)
     if latest is not None:
-        chosen = visible[:latest]
-        start = end = None
-    else:
-        if from_ is None or to is None:
-            raise ValueError("a timeline needs `latest` or both dates; use resolve_range")
-        start, end = from_, to
-        chosen = [
-            r
-            for r in visible
-            if from_ <= r[0].meeting_date <= to
-            and (small_group_id is None or r[0].small_group_id == small_group_id)
-        ]
-
-    shown_items = [i for _, items, _, _ in chosen for i in items]
-    names = _names(session, shown_items)
-    rows = [
-        TimelineRow(
-            report.report_id,
-            report.meeting_date,
-            groups[report.small_group_id],
-            attendance,
-            observation,
-            [_item_view(i, names) for i in items],
-        )
-        for report, items, attendance, observation in chosen
-    ]
+        entries = entries[:latest]
+    # `rows` stays what it was before entries existed (a report isn't cut for a newer status entry) until
+    # staff-app reads `entries` and it goes: the expand of rule 15.
+    rows = [entry.row for entry in all_entries if isinstance(entry, TimelineReportEntry)]
+    shown_items = [item for row in rows for item in row.items]
     counts = TimelineCounts(
         notes=sum(1 for row in rows if row.observation is not None),
         prayer=sum(1 for i in shown_items if i.section == ReportSection.PRAYER),
@@ -176,12 +240,13 @@ def get_person_timeline(
         follow_up=sum(1 for i in shown_items if i.section == ReportSection.FOLLOW_UP),
     )
     return PersonTimeline(
-        start,
-        end,
-        earliest,
-        sorted(groups.values(), key=lambda g: (g.name, g.id)),
+        from_,
+        to,
+        min((r.earliest_date for r in results if r.earliest_date is not None), default=None),
+        sorted((g for r in results for g in r.groups), key=lambda g: (g.name, g.id)),
         counts,
         rows,
+        entries,
     )
 
 
