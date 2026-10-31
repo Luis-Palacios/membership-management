@@ -7,8 +7,15 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from membership_management.data.guests.models import Guest
-from membership_management.data.guests.services import NewGuest, add_guest, end_guest_period
+from membership_management.data.guests.models import Guest, GuestStatus
+from membership_management.data.guests.services import (
+    GuestInactiveError,
+    GuestReactivation,
+    NewGuest,
+    add_guest,
+    apply_reactivation,
+    end_guest_period,
+)
 from membership_management.data.members.models import Member, MemberStatus
 from membership_management.data.members.queries import tag_search_query
 from membership_management.data.members.services import MemberInactiveError
@@ -1376,6 +1383,7 @@ def add_guest_to_group(
     move_from_other_group: bool,
     created_by_member_id: int | None,
     today: date,
+    reactivation: GuestReactivation | None = None,
 ) -> int:
     """Add an existing guest (`guest_id`) or a new one (`new_guest`; exactly one) from `joined_at`
     (default today, never later; a past date lets the report form pass the meeting date). Returns the
@@ -1387,6 +1395,10 @@ def add_guest_to_group(
     date as a day in the group); if it started on `joined_at` itself it ends that same day, since a
     period never ends before it starts. One that started *after* `joined_at` is an overlap, not a
     move. A new guest is created in the same transaction.
+
+    An inactive guest is refused with `GuestInactiveError` unless `reactivation` is given; then they are
+    reactivated and join in one transaction, the status change dated today whatever `joined_at` is
+    (inactive-guests rule 6). `reactivation` is ignored for an active guest, so a stale page doesn't fail.
     """
     joined_at = joined_at or today
     if joined_at > today:
@@ -1397,11 +1409,19 @@ def add_guest_to_group(
         raise NotGuestGroupError
 
     if guest_id is not None:
-        if session.get(Guest, guest_id) is None:
+        guest = session.get(Guest, guest_id)
+        if guest is None:
             raise GuestNotFoundError
+        # Lock the row, so a deactivation can't slip in and leave an inactive guest in a group.
+        session.refresh(guest, with_for_update=True)
+        inactive = guest.status == GuestStatus.INACTIVE
+        if inactive and reactivation is None:
+            raise GuestInactiveError
         _check_guest_can_join(
             session, small_group, guest_id, joined_at, move_from_other_group=move_from_other_group
         )
+        if inactive and reactivation is not None:
+            apply_reactivation(session, guest, reactivation, today=today)
     elif new_guest is not None:
         guest_id = add_guest(
             session, new_guest, created_by_member_id=created_by_member_id, default_first_visit=joined_at

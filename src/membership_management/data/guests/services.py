@@ -30,6 +30,10 @@ class GuestEffectiveDateInFutureError(Exception):
     """The date the guest left is after today."""
 
 
+class GuestInactiveError(Exception):
+    """The guest is inactive, so they can't join a group without being reactivated (rule 6)."""
+
+
 @dataclass(frozen=True)
 class NewGuest:
     """The fields a caller may set when creating a guest (already trimmed by the schema)."""
@@ -41,6 +45,14 @@ class NewGuest:
     address: str | None = None
     first_visit_date: date | None = None
     invited_by_member_id: int | None = None
+
+
+@dataclass(frozen=True)
+class GuestReactivation:
+    """Reactivate an inactive guest as part of another change (adding them to a group, rule 6)."""
+
+    note: str | None
+    changed_by_user_id: str
 
 
 def add_guest(
@@ -143,17 +155,24 @@ def reactivate_guest(
     if guest.status == GuestStatus.ACTIVE:
         session.rollback()
         raise GuestAlreadyActiveError
+    apply_reactivation(session, guest, GuestReactivation(note, changed_by_user_id), today=today)
+    session.commit()
+    return guest
+
+
+def apply_reactivation(
+    session: Session, guest: Guest, reactivation: GuestReactivation, *, today: date
+) -> None:
+    """Record the guest as active from today; the caller holds the row lock and commits."""
     _record_status_change(
         session,
         guest,
         GuestStatus.ACTIVE,
         reason=None,
         effective_date=today,
-        note=note,
-        changed_by_user_id=changed_by_user_id,
+        note=reactivation.note,
+        changed_by_user_id=reactivation.changed_by_user_id,
     )
-    session.commit()
-    return guest
 
 
 def _record_status_change(

@@ -5,6 +5,7 @@ from pydantic import StringConstraints, model_validator
 
 from membership_management.api.schemas.base import CamelModel
 from membership_management.api.schemas.guests import NewGuestSchema
+from membership_management.api.schemas.members import Note
 from membership_management.api.schemas.person import PersonSchema
 from membership_management.data.small_groups.models import GroupAudience, LeftReason, SmallGroupRole, Weekday
 
@@ -100,6 +101,10 @@ class SmallGroupGuestAddSchema(CamelModel):
     joined_at: date | None = None
     # Confirm moving a guest who is active in another guest group (rule 7).
     move_from_other_group: bool = False
+    # Confirm reactivating an inactive guest as they join (inactive-guests rule 6). Ignored for an
+    # active guest; needs `guests: reactivate`.
+    reactivate: bool = False
+    reactivate_note: Note = None
 
     @model_validator(mode="after")
     def exactly_one_guest(self) -> Self:
