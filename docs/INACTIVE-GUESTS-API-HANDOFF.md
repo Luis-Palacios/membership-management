@@ -57,7 +57,7 @@ Keep the existing conventions:
 | 2. Deactivate, reactivate, status on guests | ✅ | `6e67779` |
 | 3. Reactivate and add | ✅ | `efd6509` |
 | 4. Timeline entries (expand) | ✅ | `079aaaf` |
-| 5. Timeline entries (contract): drop `rows` | ⬜ waits for staff-app stage 5 to be deployed | |
+| 5. Timeline entries (contract): drop `rows` | ✅ | see `git log` |
 | 6. Docs | ✅ | see `git log` |
 
 ### Decisions and deviations
@@ -87,6 +87,14 @@ byte-identical; `earliestDate` moved older in 96, all people whose oldest entry 
 rest of *Try* scripted, including ties and the OpenAPI discriminator.
 
 Not tried: the row locks under real concurrency.
+
+**Stage 5.** staff-app reads `entries` since `a9e8fbc`, deployed in `e3fdcd6` (2026-10-31), and its type has
+no `rows`. Dumped the timeline before and after for 7 role variants × every seeded member and guest × 6
+parameter sets (3,444 responses, 1,602 of them 200s): status codes and everything but `rows` and `counts`
+byte-identical, `rows` gone from the responses and from OpenAPI. As decided below, `counts` now covers the
+report entries kept, and equals what `entries` lists in all 1,602. It changed in 16 responses, all with
+`latest`, where a newer status entry cut a report. Only Recent activity sends `latest`, and it doesn't read
+`counts`. `viewable` now looks up only the people tagged in the entries kept; the flags didn't change.
 
 Decisions:
 

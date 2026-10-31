@@ -230,9 +230,7 @@ def get_person_timeline(
     entries = sorted(all_entries, key=lambda entry: entry.entry_date, reverse=True)
     if latest is not None:
         entries = entries[:latest]
-    # `rows` stays what it was before entries existed (a report isn't cut for a newer status entry) until
-    # staff-app reads `entries` and it goes: the expand of rule 15.
-    rows = [entry.row for entry in all_entries if isinstance(entry, TimelineReportEntry)]
+    rows = [entry.row for entry in entries if isinstance(entry, TimelineReportEntry)]
     shown_items = [item for row in rows for item in row.items]
     counts = TimelineCounts(
         notes=sum(1 for row in rows if row.observation is not None),
@@ -246,7 +244,6 @@ def get_person_timeline(
         min((r.earliest_date for r in results if r.earliest_date is not None), default=None),
         sorted((g for r in results for g in r.groups), key=lambda g: (g.name, g.id)),
         counts,
-        rows,
         entries,
     )
 

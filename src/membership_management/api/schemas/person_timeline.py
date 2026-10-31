@@ -96,8 +96,7 @@ class PersonTimelineSchema(CamelModel):
     earliest_date: date | None
     # Groups with at least one visible report, any date (the group filter).
     groups: list[TimelineGroupSchema]
-    # Reports only: status entries aren't counted.
+    # The report entries below: status entries aren't counted.
     counts: TimelineCountsSchema
-    rows: list[TimelineRowSchema]
     # Newest first, every kind; on a date, status entries go above reports.
     entries: list[TimelineEntrySchema]

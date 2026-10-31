@@ -663,8 +663,7 @@ class PersonTimeline(NamedTuple):
     earliest_date: date | None
     # Groups with at least one visible report, any date.
     groups: list[TimelineGroup]
-    # Reports only: status entries aren't counted.
+    # The report entries below: status entries aren't counted.
     counts: TimelineCounts
-    rows: list[TimelineRow]
     # Newest first, every kind; with `latest`, the newest N of them.
     entries: list[TimelineEntry]
