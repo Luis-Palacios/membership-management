@@ -10,6 +10,7 @@ from membership_management.data.config import settings
 from membership_management.data.database import MemberManagementBase
 from membership_management.data.seed.context import MANAGUA_TZ, SeedContext, Seeder
 from membership_management.data.seed.guests import seed_guests
+from membership_management.data.seed.inactive_guests import seed_inactive_guests
 from membership_management.data.seed.inactive_members import seed_inactive_members
 from membership_management.data.seed.members import seed_members
 from membership_management.data.seed.no_meeting_weeks import seed_no_meeting_week
@@ -32,6 +33,8 @@ SEEDERS: list[Seeder] = [
     seed_inactive_members,
     # Marks a past week church-wide: needs every group's reports in it, guest groups' included.
     seed_no_meeting_week,
+    # Last: extra guests, periods and attendance lines only, so no seeded row changes.
+    seed_inactive_guests,
 ]
 
 DEFAULT_RNG_SEED = 2026
