@@ -99,6 +99,14 @@ Decisions:
 - **Period closing helper.** `remove_guest_from_group` had no helper to reuse and `data/guests/services.py`
   can't import `data/small_groups/services.py` (that one imports it). `end_guest_period` lives in the
   guests module and both use it.
+- **Rejoining the day of a deactivation.** Found by staff-app: `left_at` is always the day of the deactivation
+  (rule 5), and a join needed earlier periods to end before it, so a guest marked inactive by mistake couldn't
+  rejoin any group until the next day (409 overlap). `_check_guest_can_join` now ignores a period that
+  deactivation ended on the join date, whichever way they were reactivated. `left_at` doesn't move, so a report
+  filed that day keeps the guest. They can be on two groups' rosters for that one date; within one group the
+  roster already picks one period per person. A period ended any other way, or an earlier join date, is still an
+  overlap. Tried on `ig-scratch`: same group, twice in a day, Guest detail then another group, earlier date
+  refused, *stopped coming* today refused.
 - **Row lock on add.** Beyond the handoff, `add_guest_to_group` locks an existing guest's row, so a
   deactivation can't run between its checks and the insert and leave an inactive guest in a group.
 - **Status check before the group checks, `reactivate` permission before the service.** A `reactivate: true`

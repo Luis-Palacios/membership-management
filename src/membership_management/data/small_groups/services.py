@@ -3,7 +3,7 @@ from collections.abc import Collection, Mapping, Sequence
 from datetime import date, timedelta
 from typing import Literal, NamedTuple
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -1394,7 +1394,8 @@ def add_guest_to_group(
     transaction (rule 7). The old period ends the day before `joined_at` (the roster counts the end
     date as a day in the group); if it started on `joined_at` itself it ends that same day, since a
     period never ends before it starts. One that started *after* `joined_at` is an overlap, not a
-    move. A new guest is created in the same transaction.
+    move. A period that deactivation ended on `joined_at` doesn't count as an overlap, so a guest marked
+    inactive today can rejoin today. A new guest is created in the same transaction.
 
     An inactive guest is refused with `GuestInactiveError` unless `reactivation` is given; then they are
     reactivated and join in one transaction, the status change dated today whatever `joined_at` is
@@ -1459,12 +1460,19 @@ def _check_guest_can_join(
         if period.joined_at > joined_at:
             raise GuestPeriodOverlapError
         moving = period
-    # Earlier closed periods (this group or any other) must be over before the join date.
+    # Earlier closed periods (this group or any other) must be over before the join date. The one
+    # exception is a period that deactivation ended on that date: `left_at` is always the day of the
+    # deactivation, so without it a guest marked inactive by mistake couldn't rejoin until tomorrow.
+    # The roster picks one period per person, so two on one date are safe (`roster_on_date`).
     earlier_end = session.scalars(
         select(func.max(SmallGroupMember.left_at)).where(
             SmallGroupMember.guest_id == guest_id,
             SmallGroupMember.left_at.is_not(None),
             SmallGroupMember.id != (moving.id if moving is not None else None),
+            or_(
+                SmallGroupMember.left_at != joined_at,
+                SmallGroupMember.left_reason.is_distinct_from(LeftReason.GUEST_INACTIVE),
+            ),
         )
     ).one()
     if earlier_end is not None and earlier_end >= joined_at:
