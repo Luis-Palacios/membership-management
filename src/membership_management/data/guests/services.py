@@ -1,14 +1,33 @@
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from membership_management.data.guests.models import Guest
+from membership_management.data.guests.models import (
+    Guest,
+    GuestInactiveReason,
+    GuestStatus,
+    GuestStatusChange,
+)
 from membership_management.data.members.models import Member, MemberSex
+from membership_management.data.small_groups.models import LeftReason, SmallGroupMember
 
 
 class InvitedByNotFoundError(Exception):
     """`invited_by_member_id` names no member."""
+
+
+class GuestAlreadyInactiveError(Exception):
+    """The guest is already inactive."""
+
+
+class GuestAlreadyActiveError(Exception):
+    """The guest is already active."""
+
+
+class GuestEffectiveDateInFutureError(Exception):
+    """The date the guest left is after today."""
 
 
 @dataclass(frozen=True)
@@ -65,3 +84,100 @@ def update_guest(session: Session, guest: Guest, changes: dict[str, object]) -> 
         setattr(guest, field, value)
     session.commit()
     return guest
+
+
+def end_guest_period(period: SmallGroupMember, *, left_at: date, left_reason: LeftReason | None) -> None:
+    """Close a guest's group period; the row stays as history. The caller commits."""
+    period.left_at = left_at
+    period.left_reason = left_reason
+
+
+def deactivate_guest(
+    session: Session,
+    guest: Guest,
+    *,
+    reason: GuestInactiveReason,
+    effective_date: date,
+    note: str | None,
+    changed_by_user_id: str,
+    today: date,
+) -> Guest:
+    """Mark the guest inactive and end their open group period today (rule 5), in one transaction.
+
+    `effective_date` (the date they left) is only recorded; it never moves the period's `left_at`.
+    """
+    # Lock the row, so two deactivations (or a deactivation and a reactivation) queue up.
+    session.refresh(guest, with_for_update=True)
+    if guest.status == GuestStatus.INACTIVE:
+        session.rollback()
+        raise GuestAlreadyInactiveError
+    if effective_date > today:
+        session.rollback()
+        raise GuestEffectiveDateInFutureError
+    # At most one: the partial unique index on active guest periods.
+    period = session.scalar(
+        select(SmallGroupMember).where(
+            SmallGroupMember.guest_id == guest.id, SmallGroupMember.left_at.is_(None)
+        )
+    )
+    if period is not None:
+        end_guest_period(period, left_at=today, left_reason=LeftReason.GUEST_INACTIVE)
+    _record_status_change(
+        session,
+        guest,
+        GuestStatus.INACTIVE,
+        reason=reason,
+        effective_date=effective_date,
+        note=note,
+        changed_by_user_id=changed_by_user_id,
+    )
+    session.commit()
+    return guest
+
+
+def reactivate_guest(
+    session: Session, guest: Guest, *, note: str | None, changed_by_user_id: str, today: date
+) -> Guest:
+    """Mark the guest active from today. Their group is not restored (rule 6)."""
+    session.refresh(guest, with_for_update=True)
+    if guest.status == GuestStatus.ACTIVE:
+        session.rollback()
+        raise GuestAlreadyActiveError
+    _record_status_change(
+        session,
+        guest,
+        GuestStatus.ACTIVE,
+        reason=None,
+        effective_date=today,
+        note=note,
+        changed_by_user_id=changed_by_user_id,
+    )
+    session.commit()
+    return guest
+
+
+def _record_status_change(
+    session: Session,
+    guest: Guest,
+    status: GuestStatus,
+    *,
+    reason: GuestInactiveReason | None,
+    effective_date: date,
+    note: str | None,
+    changed_by_user_id: str,
+) -> None:
+    """Append the history row and copy it onto the guest (rule 2); the caller commits."""
+    now = datetime.now(UTC)
+    session.add(
+        GuestStatusChange(
+            guest_id=guest.id,
+            status=status,
+            reason=reason,
+            effective_date=effective_date,
+            note=note,
+            changed_by_user_id=changed_by_user_id,
+            created_at=now,
+        )
+    )
+    guest.status = status
+    guest.status_changed_at = now

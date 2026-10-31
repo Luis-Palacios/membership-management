@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from membership_management.data.guests.models import Guest
-from membership_management.data.guests.services import NewGuest, add_guest
+from membership_management.data.guests.services import NewGuest, add_guest, end_guest_period
 from membership_management.data.members.models import Member, MemberStatus
 from membership_management.data.members.queries import tag_search_query
 from membership_management.data.members.services import MemberInactiveError
@@ -240,7 +240,7 @@ class UnknownTagError(Exception):
 
 
 class InactiveTagError(Exception):
-    """A member newly tagged while inactive (report tags rule 7)."""
+    """A member or guest newly tagged while inactive (report tags rule 7)."""
 
     def __init__(self, name: str) -> None:
         super().__init__(name)
@@ -614,7 +614,7 @@ def _new_items(
 ) -> list[_NewItem]:
     """A held report's items (report tags rules 2, 3 and 7).
 
-    A member already tagged in the same section before the edit (`previously_tagged`) may stay
+    A person already tagged in the same section before the edit (`previously_tagged`) may stay
     tagged while inactive.
     """
     items: list[_NewItem] = []
@@ -1489,8 +1489,7 @@ def remove_guest_from_group(
     last_report_date = session.scalar(latest_guest_report_date_query(small_group.id, guest_id))
     if left_at < membership.joined_at or (last_report_date is not None and left_at < last_report_date):
         raise LeftTooEarlyError
-    membership.left_at = left_at
-    membership.left_reason = left_reason
+    end_guest_period(membership, left_at=left_at, left_reason=left_reason)
     session.commit()
 
 

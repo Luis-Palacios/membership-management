@@ -13,6 +13,7 @@ from membership_management.api.access import (
     sees_all_observations,
 )
 from membership_management.api.church_time import church_today
+from membership_management.api.coded_errors import CodedHTTPError
 from membership_management.api.current_member import CurrentMemberDep
 from membership_management.api.dependencies import MembersSessionDep
 from membership_management.api.jwt_auth import (
@@ -28,21 +29,24 @@ from membership_management.api.schemas.guests import (
     GuestAttendanceSchema,
     GuestCreateSchema,
     GuestCurrentGroupSchema,
+    GuestDeactivateSchema,
     GuestDetailSchema,
     GuestLastGroupSchema,
     GuestListCountsSchema,
     GuestListItemSchema,
     GuestListSchema,
     GuestPeriodSchema,
+    GuestReactivateSchema,
     GuestRefSchema,
     GuestSearchItemSchema,
     GuestSearchLastGroupSchema,
+    GuestStatusChangeSchema,
     GuestUpdateSchema,
 )
 from membership_management.api.schemas.person import PersonSchema
 from membership_management.api.schemas.person_timeline import PersonTimelineSchema
 from membership_management.data.guests.lookup_services import (
-    GuestStatus,
+    GuestStatusFilter,
     get_guest,
     get_guest_detail,
     list_guests,
@@ -51,9 +55,14 @@ from membership_management.data.guests.lookup_services import (
 from membership_management.data.guests.models import Guest
 from membership_management.data.guests.results import GuestRow
 from membership_management.data.guests.services import (
+    GuestAlreadyActiveError,
+    GuestAlreadyInactiveError,
+    GuestEffectiveDateInFutureError,
     InvitedByNotFoundError,
     NewGuest,
     create_guest,
+    deactivate_guest,
+    reactivate_guest,
     update_guest,
 )
 from membership_management.data.small_groups.services import add_guest_to_group, get_small_group
@@ -102,13 +111,16 @@ def _get_or_404(db: MembersSessionDep, guest_id: int, scope: GuestScope | None =
 def _detail(
     db: MembersSessionDep, guest: Guest, claims: CurrentClaimsDep, scope: GuestScope
 ) -> GuestDetailSchema:
+    private = has_permission(claims, "guests", "deactivate")
     detail = get_guest_detail(
         db,
         guest,
         only_group_ids=None if scope.full else scope.group_ids,
         sees_all_observations=sees_all_observations(claims),
         led_group_ids=scope.group_ids,
+        sees_status_details=private,
     )
+    history = detail.status_history
     return GuestDetailSchema(
         id=guest.id,
         name=guest.name,
@@ -124,6 +136,13 @@ def _detail(
         if detail.created_by
         else None,
         created_at=detail.created_at,
+        status=detail.row.status,
+        inactive_since=detail.row.inactive_since,
+        inactive_reason=detail.row.inactive_reason if private else None,
+        inactive_note=history[0].note if history and detail.row.inactive_since is not None else None,
+        status_history=[GuestStatusChangeSchema(**change._asdict()) for change in history]
+        if history is not None
+        else None,
         current_group=_current_group(detail.row),
         last_attended_date=detail.row.last_attended_date,
         group_history=[
@@ -154,12 +173,13 @@ def _detail(
 @router.get(
     "",
     name="list_guests",
-    description="List guests (all of them): in a guest group or not, with search, paged, with tab counts",
+    description="List guests, all or by status, with search, paged, with tab counts",
     dependencies=[Depends(require_permission("guests", "view", "all"))],
 )
 def get_guests(
     db: MembersSessionDep,
-    status_filter: Annotated[GuestStatus, Query(alias="status")] = "all",
+    claims: CurrentClaimsDep,
+    status_filter: Annotated[GuestStatusFilter, Query(alias="status")] = "all",
     q: Annotated[str | None, Query(max_length=100)] = None,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(alias="pageSize", ge=1, le=100)] = 25,
@@ -168,6 +188,7 @@ def get_guests(
     result = list_guests(
         db, status=status_filter, q=text or None, page=page, page_size=page_size, today=church_today()
     )
+    private = has_permission(claims, "guests", "deactivate")
     return GuestListSchema(
         items=[
             GuestListItemSchema(
@@ -175,6 +196,9 @@ def get_guests(
                 name=row.name,
                 phone=row.phone,
                 first_visit_date=row.first_visit_date,
+                status=row.status,
+                inactive_since=row.inactive_since,
+                inactive_reason=row.inactive_reason if private else None,
                 current_group=_current_group(row),
                 last_group=_last_group(row),
                 last_attended_date=row.last_attended_date,
@@ -215,6 +239,8 @@ def get_guest_search(
                 id=row.id,
                 name=row.name,
                 phone_last4=digits[-4:] or None,
+                status=row.status,
+                inactive_since=row.inactive_since,
                 current_group=_current_group(row),
                 last_group=GuestSearchLastGroupSchema(id=last.id, name=last.name, left_at=last.left_at)
                 if last is not None
@@ -319,6 +345,72 @@ def post_guest(
         raise HTTPException(status_code=404, detail="Inviting member not found.") from exc
     except GUEST_JOIN_ERRORS as exc:
         raise guest_join_http_error(exc) from exc
+    return _detail(db, guest, claims, scope)
+
+
+@router.post(
+    "/{guest_id}/deactivate",
+    name="deactivate_guest",
+    description="Mark the guest inactive: ends their open group period today (guests: deactivate)",
+    dependencies=[
+        Depends(require_permission("guests", "deactivate")),
+        Depends(rate_limit("20/minute", scope="deactivate_guest")),
+    ],
+)
+def post_guest_deactivate(
+    guest_id: int,
+    body: GuestDeactivateSchema,
+    db: MembersSessionDep,
+    claims: CurrentClaimsDep,
+    scope: GuestScopeDep,
+) -> GuestDetailSchema:
+    guest = _get_or_404(db, guest_id, scope)
+    try:
+        guest = deactivate_guest(
+            db,
+            guest,
+            reason=body.reason,
+            effective_date=body.effective_date,
+            note=body.note,
+            changed_by_user_id=claims.sub,
+            today=church_today(),
+        )
+    except GuestAlreadyInactiveError as exc:
+        raise CodedHTTPError(409, "This guest is already inactive.", "already_inactive") from exc
+    except GuestEffectiveDateInFutureError as exc:
+        raise HTTPException(status_code=422, detail="The date they left can't be in the future.") from exc
+    return _detail(db, guest, claims, scope)
+
+
+@router.post(
+    "/{guest_id}/reactivate",
+    name="reactivate_guest",
+    description="Mark the guest active again from today; their group is not restored (guests: reactivate)",
+    dependencies=[
+        Depends(require_permission("guests", "reactivate")),
+        Depends(rate_limit("20/minute", scope="reactivate_guest")),
+    ],
+)
+def post_guest_reactivate(
+    guest_id: int,
+    db: MembersSessionDep,
+    claims: CurrentClaimsDep,
+    scope: GuestScopeDep,
+    body: GuestReactivateSchema | None = None,
+) -> GuestDetailSchema:
+    # An inactive guest is in no group, so a leader's scope never includes them: leaders reactivate by
+    # adding the guest to a group instead (rule 6).
+    guest = _get_or_404(db, guest_id, scope)
+    try:
+        guest = reactivate_guest(
+            db,
+            guest,
+            note=body.note if body is not None else None,
+            changed_by_user_id=claims.sub,
+            today=church_today(),
+        )
+    except GuestAlreadyActiveError as exc:
+        raise CodedHTTPError(409, "This guest is already active.", "already_active") from exc
     return _detail(db, guest, claims, scope)
 
 

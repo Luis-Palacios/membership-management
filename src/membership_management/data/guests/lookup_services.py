@@ -4,13 +4,14 @@ from typing import Literal
 
 from sqlalchemy.orm import Session
 
-from membership_management.data.guests.models import Guest
+from membership_management.data.guests.models import Guest, GuestStatus
 from membership_management.data.guests.queries import (
     guest_active_in_groups_query,
     guest_counts_query,
     guest_periods_query,
     guest_recent_attendance_query,
     guest_rows_query,
+    guest_status_history_query,
     guests_active_in_groups_query,
     led_open_guest_group_ids_query,
 )
@@ -21,11 +22,12 @@ from membership_management.data.guests.results import (
     GuestPage,
     GuestPeriodRow,
     GuestRow,
+    GuestStatusChangeRow,
 )
 from membership_management.data.query_helpers import all_as
 from membership_management.data.small_groups.services import missed_streaks_by_person
 
-GuestStatus = Literal["all", "active", "inactive"]
+GuestStatusFilter = Literal["all", "active", "inactive"]
 # How many attendance rows the guest detail shows: the missed-streak window (reports rule 11).
 RECENT_ATTENDANCE_LIMIT = 12
 SEARCH_LIMIT = 10
@@ -57,7 +59,7 @@ def get_guest(session: Session, guest_id: int) -> Guest | None:
 
 
 def list_guests(
-    session: Session, *, status: GuestStatus, q: str | None, page: int, page_size: int, today: date
+    session: Session, *, status: GuestStatusFilter, q: str | None, page: int, page_size: int, today: date
 ) -> GuestPage:
     """One page of guests by name, filtered by status and search text, with the tab counts.
 
@@ -67,12 +69,14 @@ def list_guests(
     counts = GuestCounts(
         all=counts_row.all, active=counts_row.active, inactive=counts_row.all - counts_row.active
     )
-    only_active = {"all": None, "active": True, "inactive": False}[status]
     rows = list(
         all_as(
             session,
             guest_rows_query(
-                match_text=q, only_active=only_active, limit=page_size, offset=(page - 1) * page_size
+                match_text=q,
+                status=None if status == "all" else GuestStatus(status),
+                limit=page_size,
+                offset=(page - 1) * page_size,
             ),
             GuestRow,
         )
@@ -96,7 +100,8 @@ def _current_group_streaks(session: Session, rows: Sequence[GuestRow], today: da
 def search_guests(session: Session, text: str) -> Sequence[GuestRow]:
     """At most SEARCH_LIMIT guests matching `text` church-wide, best matches first.
 
-    No scope here: the caller decides who may search (rule 17); the route only returns rule 14's fields.
+    Inactive guests are found too, so nobody creates a duplicate (inactive-guests rule 8). No scope
+    here: the caller decides who may search (rule 17); the route only returns rule 14's fields.
     """
     return all_as(
         session, guest_rows_query(match_text=text, best_matches_first=True, limit=SEARCH_LIMIT), GuestRow
@@ -110,12 +115,14 @@ def get_guest_detail(
     only_group_ids: frozenset[int] | None,
     sees_all_observations: bool,
     led_group_ids: frozenset[int],
+    sees_status_details: bool,
 ) -> GuestDetail:
     """The guest as the viewer may see it (rule 15).
 
     `only_group_ids` limits the attendance rows to those groups (a scoped caller gets the groups they
     lead; None: every row). An attendance row's observation is readable with `sees_all_observations`
-    or when its group is among `led_group_ids` (reports rule 9).
+    or when its group is among `led_group_ids` (reports rule 9). `sees_status_details` loads the status
+    history (inactive-guests rule 9).
     """
     row = all_as(session, guest_rows_query(only_ids=[guest.id]), GuestRow)[0]
     attendance = list(
@@ -139,4 +146,7 @@ def get_guest_detail(
         observations_visible_in=frozenset(
             a.report_id for a in attendance if sees_all_observations or a.small_group_id in led_group_ids
         ),
+        status_history=list(all_as(session, guest_status_history_query(guest.id), GuestStatusChangeRow))
+        if sees_status_details
+        else None,
     )
