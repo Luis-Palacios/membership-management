@@ -267,8 +267,8 @@ def get_guest_detail_route(
     "/{guest_id}/timeline",
     name="get_guest_timeline",
     description=(
-        "The held reports a guest is on the attendance list of or tagged in, with only what the caller "
-        "may see (within your guests scope)"
+        "A guest's timeline: held reports they are on the attendance list of or tagged in, and status "
+        "changes, with only what the caller may see (within your guests scope)"
     ),
     dependencies=[Depends(require_permission("guests", "view"))],
 )

@@ -1,4 +1,4 @@
-"""The person timeline as the API sends it (report tags rules 21 to 23): query parameters and the response."""
+"""The person timeline as the API sends it: query parameters and the response."""
 
 from dataclasses import dataclass
 from datetime import date
@@ -15,14 +15,24 @@ from membership_management.api.schemas.person import PersonSchema
 from membership_management.api.schemas.person_timeline import (
     PersonTimelineSchema,
     TimelineAttendanceSchema,
+    TimelineChangedBySchema,
     TimelineCountsSchema,
     TimelineGroupSchema,
     TimelineItemSchema,
     TimelineObservationSchema,
+    TimelineReportEntrySchema,
     TimelineRowSchema,
+    TimelineStatusEntrySchema,
     TimelineSubmitterSchema,
 )
-from membership_management.data.small_groups.results import PersonKey, PersonTimeline, TimelineGroup
+from membership_management.data.small_groups.results import (
+    PersonKey,
+    PersonTimeline,
+    TimelineGroup,
+    TimelineReportEntry,
+    TimelineRow,
+    TimelineStatusEntry,
+)
 from membership_management.data.small_groups.timeline_services import TimelineRangeError, resolve_range
 
 
@@ -62,6 +72,22 @@ def _group(group: TimelineGroup) -> TimelineGroupSchema:
     return TimelineGroupSchema(id=group.id, name=group.name, audience=group.audience)
 
 
+def _status_entry(entry: TimelineStatusEntry) -> TimelineStatusEntrySchema:
+    change = entry.change
+    changed_by = None
+    if change.changed_by_member_id is not None and change.changed_by_name is not None:
+        changed_by = TimelineChangedBySchema(
+            member_id=change.changed_by_member_id, name=change.changed_by_name
+        )
+    return TimelineStatusEntrySchema(
+        date=entry.entry_date,
+        status=change.status,
+        reason=change.reason,
+        note=change.note,
+        changed_by=changed_by,
+    )
+
+
 def timeline_schema(
     db: Session,
     claims: AuthClaims,
@@ -79,6 +105,36 @@ def timeline_schema(
         member_scope,
         guest_scope,
     ) | {own}
+
+    def row_schema(row: TimelineRow) -> TimelineRowSchema:
+        return TimelineRowSchema(
+            report_id=row.report_id,
+            meeting_date=row.meeting_date,
+            small_group=_group(row.small_group),
+            attendance=TimelineAttendanceSchema(
+                role=row.attendance.role,
+                attended_group=row.attendance.attended_group,
+                attended_church=row.attendance.attended_church,
+            )
+            if row.attendance is not None
+            else None,
+            observation=TimelineObservationSchema(
+                text=row.observation.text,
+                submitted_by=TimelineSubmitterSchema(
+                    member_id=row.observation.submitted_by_member_id,
+                    name=row.observation.submitted_by_name,
+                ),
+            )
+            if row.observation is not None
+            else None,
+            items=[
+                TimelineItemSchema(
+                    id=item.id, section=item.section, segments=segment_schemas(item.segments, viewable)
+                )
+                for item in row.items
+            ],
+        )
+
     return PersonTimelineSchema(
         person=person,
         from_date=timeline.from_date,
@@ -91,34 +147,11 @@ def timeline_schema(
             praise=timeline.counts.praise,
             follow_up=timeline.counts.follow_up,
         ),
-        rows=[
-            TimelineRowSchema(
-                report_id=row.report_id,
-                meeting_date=row.meeting_date,
-                small_group=_group(row.small_group),
-                attendance=TimelineAttendanceSchema(
-                    role=row.attendance.role,
-                    attended_group=row.attendance.attended_group,
-                    attended_church=row.attendance.attended_church,
-                )
-                if row.attendance is not None
-                else None,
-                observation=TimelineObservationSchema(
-                    text=row.observation.text,
-                    submitted_by=TimelineSubmitterSchema(
-                        member_id=row.observation.submitted_by_member_id,
-                        name=row.observation.submitted_by_name,
-                    ),
-                )
-                if row.observation is not None
-                else None,
-                items=[
-                    TimelineItemSchema(
-                        id=item.id, section=item.section, segments=segment_schemas(item.segments, viewable)
-                    )
-                    for item in row.items
-                ],
-            )
-            for row in timeline.rows
+        rows=[row_schema(row) for row in timeline.rows],
+        entries=[
+            TimelineReportEntrySchema(date=entry.entry_date, report=row_schema(entry.row))
+            if isinstance(entry, TimelineReportEntry)
+            else _status_entry(entry)
+            for entry in timeline.entries
         ],
     )
