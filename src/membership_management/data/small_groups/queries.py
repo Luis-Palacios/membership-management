@@ -8,7 +8,6 @@ from sqlalchemy import (
     and_,
     case,
     cast,
-    false,
     func,
     literal,
     null,
@@ -18,7 +17,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import aliased, joinedload, selectinload
 
-from membership_management.data.guests.models import Guest
+from membership_management.data.guests.models import Guest, GuestStatus
 from membership_management.data.members.models import Member, MemberStatus
 from membership_management.data.small_groups.models import (
     SmallGroup,
@@ -544,7 +543,7 @@ def people_current_groups_query(member_ids: frozenset[int], guest_ids: frozenset
 
 
 def people_query(member_ids: frozenset[int], guest_ids: frozenset[int]) -> Select:
-    """Name and inactive flag of each of these members and guests that exists (guests never inactive)."""
+    """Name and inactive flag of each of these members and guests that exists."""
     members = select(
         literal("member").label("kind"),
         Member.id.label("id"),
@@ -555,6 +554,6 @@ def people_query(member_ids: frozenset[int], guest_ids: frozenset[int]) -> Selec
         literal("guest").label("kind"),
         Guest.id.label("id"),
         Guest.name.label("name"),
-        false().label("inactive"),
+        (Guest.status == GuestStatus.INACTIVE).label("inactive"),
     ).where(Guest.id.in_(guest_ids))
     return select(union_all(members, guests).subquery())

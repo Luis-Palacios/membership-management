@@ -1,9 +1,11 @@
 import re
 
-from sqlalchemy import ColumnElement, Select, case, func, literal_column, or_, select
+from sqlalchemy import ColumnElement, ScalarSelect, Select, case, func, literal_column, or_, select
+from sqlalchemy.orm import InstrumentedAttribute, aliased
 from sqlalchemy.sql import Subquery
 
-from membership_management.data.guests.models import Guest
+from membership_management.data.guests.models import Guest, GuestStatus, GuestStatusChange
+from membership_management.data.members.models import Member
 from membership_management.data.small_groups.models import (
     GroupAudience,
     SmallGroup,
@@ -101,29 +103,46 @@ def _last_attended() -> Subquery:
     )
 
 
+def _latest_status_change_column(column: InstrumentedAttribute) -> ScalarSelect:
+    """`column` of the guest's latest status change (correlated to `guests`)."""
+    return (
+        select(column)
+        .where(GuestStatusChange.guest_id == Guest.id)
+        .order_by(GuestStatusChange.created_at.desc(), GuestStatusChange.id.desc())
+        .limit(1)
+        .scalar_subquery()
+    )
+
+
 def guest_rows_query(
     *,
     match_text: str | None = None,
-    only_active: bool | None = None,
+    status: GuestStatus | None = None,
     only_ids: list[int] | None = None,
     best_matches_first: bool = False,
     limit: int | None = None,
     offset: int = 0,
 ) -> Select:
-    """Guests with their current group, last group and last attended date (`GuestRow`).
+    """Guests with their status, current group, last group and last attended date (`GuestRow`).
 
-    `match_text` keeps the guests matching that search. `only_active` True/False keeps guests in / not
-    in a guest group today (None: all). Ordered by name, or with `best_matches_first` (needs
+    `match_text` keeps the guests matching that search, `status` those with that status (None: all).
+    Inactive ones carry the date they left and why. Ordered by name, or with `best_matches_first` (needs
     `match_text`) exact name matches first, then names starting with it, then the rest, each by most
     recently seen.
     """
     current, last, attended = _current_period(), _last_period(), _last_attended()
+    inactive = Guest.status == GuestStatus.INACTIVE
     query = (
         select(
             Guest.id.label("id"),
             Guest.name.label("name"),
             Guest.phone.label("phone"),
             Guest.first_visit_date.label("first_visit_date"),
+            Guest.status.label("status"),
+            case((inactive, _latest_status_change_column(GuestStatusChange.effective_date))).label(
+                "inactive_since"
+            ),
+            case((inactive, _latest_status_change_column(GuestStatusChange.reason))).label("inactive_reason"),
             current.c.group_id.label("current_group_id"),
             current.c.group_name.label("current_group_name"),
             current.c.joined_at.label("current_joined_at"),
@@ -139,10 +158,8 @@ def guest_rows_query(
     )
     if match_text is not None:
         query = query.where(guest_match_condition(match_text))
-    if only_active is True:
-        query = query.where(current.c.guest_id.is_not(None))
-    elif only_active is False:
-        query = query.where(current.c.guest_id.is_(None))
+    if status is not None:
+        query = query.where(Guest.status == status)
     if only_ids is not None:
         query = query.where(Guest.id.in_(only_ids))
     if best_matches_first and match_text is not None:
@@ -161,11 +178,11 @@ def guest_rows_query(
 
 
 def guest_counts_query(match_text: str | None) -> Select:
-    """Guests matching the search (all if none), and how many of them are in a guest group today."""
-    current = _current_period()
+    """Guests matching the search (all if none), and how many of them are active."""
     query = select(
-        func.count(Guest.id).label("all"), func.count(current.c.guest_id).label("active")
-    ).outerjoin(current, current.c.guest_id == Guest.id)
+        func.count(Guest.id).label("all"),
+        func.count(Guest.id).filter(Guest.status == GuestStatus.ACTIVE).label("active"),
+    )
     if match_text is not None:
         query = query.where(guest_match_condition(match_text))
     return query
@@ -227,6 +244,26 @@ def guest_periods_query(guest_id: int) -> Select:
         .join(SmallGroup, SmallGroup.id == SmallGroupMember.small_group_id)
         .where(SmallGroupMember.guest_id == guest_id)
         .order_by(SmallGroupMember.joined_at.desc(), SmallGroupMember.id.desc())
+    )
+
+
+def guest_status_history_query(guest_id: int) -> Select:
+    """Every status change of the guest, newest first, with the name of whoever made it (when that user
+    is linked to a member)."""
+    changed_by = aliased(Member)
+    return (
+        select(
+            GuestStatusChange.status.label("status"),
+            GuestStatusChange.reason.label("reason"),
+            GuestStatusChange.effective_date.label("effective_date"),
+            GuestStatusChange.note.label("note"),
+            GuestStatusChange.changed_by_user_id.label("changed_by_user_id"),
+            changed_by.name.label("changed_by_name"),
+            GuestStatusChange.created_at.label("created_at"),
+        )
+        .outerjoin(changed_by, changed_by.user_id == GuestStatusChange.changed_by_user_id)
+        .where(GuestStatusChange.guest_id == guest_id)
+        .order_by(GuestStatusChange.created_at.desc(), GuestStatusChange.id.desc())
     )
 
 
