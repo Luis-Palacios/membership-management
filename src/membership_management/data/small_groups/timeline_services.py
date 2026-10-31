@@ -144,8 +144,9 @@ def _report_source(session: Session, request: _TimelineRequest) -> _SourceResult
     periods = list(all_as(session, person_timeline_periods_query(person), TimelinePeriod))
     items_by_report: dict[int, list[ReportItemRow]] = defaultdict(list)
     report_ids = [report.report_id for report in reports]
-    for item in all_as(session, person_timeline_items_query(person, report_ids), ReportItemRow):
-        items_by_report[item.report_id].append(item)
+    if report_ids:
+        for item in all_as(session, person_timeline_items_query(person, report_ids), ReportItemRow):
+            items_by_report[item.report_id].append(item)
 
     visible = [
         (
