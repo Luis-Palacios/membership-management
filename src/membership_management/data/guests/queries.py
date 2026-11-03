@@ -14,6 +14,7 @@ from membership_management.data.small_groups.models import (
     SmallGroupReportAttendance,
     SmallGroupRole,
 )
+from membership_management.data.small_groups.queries import submitted_report_condition
 
 # Digits of a phone number, for matching "last 4 digits" and formats like "+505 8367 0887".
 _NON_DIGITS = re.compile(r"\D")
@@ -97,6 +98,7 @@ def _last_attended() -> Subquery:
         .where(
             SmallGroupReportAttendance.guest_id.is_not(None),
             SmallGroupReportAttendance.attended_group.is_(True),
+            submitted_report_condition(),
         )
         .group_by(SmallGroupReportAttendance.guest_id)
         .subquery("last_attended")
@@ -268,7 +270,8 @@ def guest_status_history_query(guest_id: int) -> Select:
 
 
 def guest_recent_attendance_query(guest_id: int, only_group_ids: frozenset[int] | None, limit: int) -> Select:
-    """The guest's newest attendance rows (held reports only have rows), optionally only of some groups."""
+    """The guest's newest attendance rows on submitted reports (held ones only have rows), optionally only
+    of some groups."""
     query = (
         select(
             SmallGroupReport.id.label("report_id"),
@@ -281,7 +284,7 @@ def guest_recent_attendance_query(guest_id: int, only_group_ids: frozenset[int] 
         )
         .join(SmallGroupReport, SmallGroupReport.id == SmallGroupReportAttendance.report_id)
         .join(SmallGroup, SmallGroup.id == SmallGroupReport.small_group_id)
-        .where(SmallGroupReportAttendance.guest_id == guest_id)
+        .where(SmallGroupReportAttendance.guest_id == guest_id, submitted_report_condition())
         .order_by(SmallGroupReport.meeting_date.desc(), SmallGroupReport.id.desc())
         .limit(limit)
     )

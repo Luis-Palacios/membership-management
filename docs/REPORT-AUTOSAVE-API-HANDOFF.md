@@ -35,7 +35,7 @@ per-route `rate_limit`).
 | Stage | Status | Commit |
 | --- | --- | --- |
 | 1. Migration and model | ✅ | |
-| 2. Every read ignores drafts | ⬜ | |
+| 2. Every read ignores drafts | ✅ | |
 | 3. Draft writes: create, save with version, submit, discard, replace, close | ⬜ | |
 | 4. Draft reads: detail, roster, list, summary, week | ⬜ | |
 | 5. Seed and docs | ⬜ | |
@@ -45,6 +45,10 @@ per-route `rate_limit`).
 
 - The list route's filter type, which was called `ReportStatus`, is now `ReportListStatus`: the name
   belongs to the new enum.
+- `reported_group_ids_in_week_query` stays unfiltered, and that is the one read that does: a church-wide
+  no meeting skips a group with a draft dated in the week and counts it under `skipped.reported`. The
+  spec doesn't cover this case. Filtering would make the mark hit the unique date on a draft's date and
+  fail, and replacing the draft breaks rule 18 (only someone who can see it may).
 
 ## Data model
 

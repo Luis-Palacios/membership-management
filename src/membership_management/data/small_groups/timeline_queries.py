@@ -15,6 +15,7 @@ from membership_management.data.small_groups.models import (
     SmallGroupReportItem,
     SmallGroupReportItemPerson,
 )
+from membership_management.data.small_groups.queries import submitted_report_condition
 from membership_management.data.small_groups.results import PersonKey
 
 
@@ -73,7 +74,9 @@ def person_timeline_groups_query(person: PersonKey, observation_groups: frozense
             func.min(SmallGroupReport.meeting_date).label("earliest_date"),
         )
         .join(SmallGroupReport, SmallGroupReport.small_group_id == SmallGroup.id)
-        .where(SmallGroupReport.held, _visible_report(person, observation_groups))
+        .where(
+            SmallGroupReport.held, submitted_report_condition(), _visible_report(person, observation_groups)
+        )
         .group_by(SmallGroup.id)
     )
 
@@ -116,7 +119,7 @@ def person_timeline_reports_query(
                 _is_person(SmallGroupReportAttendance, person),
             ),
         )
-        .where(SmallGroupReport.held)
+        .where(SmallGroupReport.held, submitted_report_condition())
         .order_by(SmallGroupReport.meeting_date.desc(), SmallGroupReport.id.desc())
         .limit(latest)
     )

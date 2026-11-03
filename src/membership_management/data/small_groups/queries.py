@@ -20,6 +20,7 @@ from sqlalchemy.orm import aliased, joinedload, selectinload
 from membership_management.data.guests.models import Guest, GuestStatus
 from membership_management.data.members.models import Member, MemberStatus
 from membership_management.data.small_groups.models import (
+    ReportStatus,
     SmallGroup,
     SmallGroupMember,
     SmallGroupNoMeetingWeek,
@@ -29,6 +30,12 @@ from membership_management.data.small_groups.models import (
     SmallGroupReportItemPerson,
     SmallGroupRole,
 )
+
+
+def submitted_report_condition() -> ColumnElement[bool]:
+    """A draft doesn't exist for anything but the routes that show it (report auto-save rule 16): every
+    other read of reports filters on this."""
+    return SmallGroupReport.status == ReportStatus.SUBMITTED
 
 
 def list_small_groups_query(only_ids: frozenset[int] | None = None) -> Select:
@@ -197,6 +204,7 @@ def recent_attendance_marks_query(small_group_id: int, before: date, report_limi
             SmallGroupReport.small_group_id == small_group_id,
             SmallGroupReport.meeting_date < before,
             SmallGroupReport.held.is_(True),
+            submitted_report_condition(),
         )
         .order_by(SmallGroupReport.meeting_date.desc())
         .limit(report_limit)
@@ -224,6 +232,7 @@ def guests_last_attended_query(guest_ids: Sequence[int]) -> Select:
         .where(
             SmallGroupReportAttendance.guest_id.in_(guest_ids),
             SmallGroupReportAttendance.attended_group.is_(True),
+            submitted_report_condition(),
         )
         .group_by(SmallGroupReportAttendance.guest_id)
     )
@@ -244,7 +253,9 @@ def latest_guest_report_date_query(small_group_id: int, guest_id: int) -> Select
         select(func.max(SmallGroupReport.meeting_date))
         .join(SmallGroupReportAttendance, SmallGroupReportAttendance.report_id == SmallGroupReport.id)
         .where(
-            SmallGroupReport.small_group_id == small_group_id, SmallGroupReportAttendance.guest_id == guest_id
+            SmallGroupReport.small_group_id == small_group_id,
+            SmallGroupReportAttendance.guest_id == guest_id,
+            submitted_report_condition(),
         )
     )
 
@@ -300,6 +311,7 @@ def filed_reports_query(
         .join(SmallGroup, SmallGroup.id == SmallGroupReport.small_group_id)
         .join(Member, Member.id == SmallGroupReport.submitted_by_member_id)
         .outerjoin(attendance, attendance.report_id == SmallGroupReport.id)
+        .where(submitted_report_condition())
         .group_by(SmallGroupReport.id, SmallGroup.id, Member.id)
         .order_by(SmallGroupReport.meeting_date.desc(), SmallGroup.name, SmallGroupReport.id)
     )
@@ -328,6 +340,7 @@ def report_dates_query(group_ids: frozenset[int], from_date: date, to_date: date
         SmallGroupReport.small_group_id.in_(group_ids),
         SmallGroupReport.meeting_date >= from_date,
         SmallGroupReport.meeting_date <= to_date,
+        submitted_report_condition(),
     )
 
 
@@ -355,7 +368,11 @@ def latest_report_ids_query(group_ids: frozenset[int]) -> Select:
             )
             .label("rank"),
         )
-        .where(SmallGroupReport.small_group_id.in_(group_ids), SmallGroupReport.held.is_(True))
+        .where(
+            SmallGroupReport.small_group_id.in_(group_ids),
+            SmallGroupReport.held.is_(True),
+            submitted_report_condition(),
+        )
         .subquery()
     )
     return select(ranked.c.id).where(ranked.c.rank == 1)
@@ -401,6 +418,7 @@ def week_reports_query(group_ids: frozenset[int], from_date: date, to_date: date
             SmallGroupReport.small_group_id.in_(group_ids),
             SmallGroupReport.meeting_date >= from_date,
             SmallGroupReport.meeting_date <= to_date,
+            submitted_report_condition(),
         )
         .group_by(SmallGroupReport.id, Member.id)
         .order_by(SmallGroupReport.meeting_date.desc(), SmallGroupReport.id.desc())
@@ -408,7 +426,9 @@ def week_reports_query(group_ids: frozenset[int], from_date: date, to_date: date
 
 
 def reported_group_ids_in_week_query(group_ids: frozenset[int], from_date: date, to_date: date) -> Select:
-    """The groups with any report dated in [from_date, to_date], held or not."""
+    """The groups with any report dated in [from_date, to_date], held or not, drafts included on purpose:
+    a church-wide mark takes a group's date, and only someone who can see a draft may replace it (report
+    auto-save rule 18), so a group with a draft that week is skipped and the draft stays."""
     return (
         select(SmallGroupReport.small_group_id)
         .where(
@@ -486,6 +506,7 @@ def shared_reports_query(group_ids: frozenset[int], from_date: date, to_date: da
             SmallGroupReport.held.is_(True),
             SmallGroupReport.meeting_date >= from_date,
             SmallGroupReport.meeting_date <= to_date,
+            submitted_report_condition(),
         )
         .order_by(SmallGroupReport.meeting_date, SmallGroup.name, SmallGroupReport.id)
     )
