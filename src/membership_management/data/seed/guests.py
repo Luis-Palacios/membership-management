@@ -246,6 +246,8 @@ def _seed_reports(
                 address=group.meeting_address,
                 submitted_by_member_id=submitter.id,
                 submitted_at=submitted_at,
+                started_by_member_id=submitter.id,
+                started_at=submitted_at,
             )
             # Drawn here, in the order they always were, so the shared RNG's sequence doesn't change.
             prayer = rng.choice(fixtures.GROUP_PRAYER_REQUESTS)

@@ -130,7 +130,7 @@ MISSED_STREAK_REPORT_WINDOW = 12
 # How far back a meeting without a report still counts as "not filed" (rule 10).
 NOT_FILED_WINDOW_DAYS = 28
 
-ReportStatus = Literal["all", "filed", "notHeld", "notFiled"]
+ReportListStatus = Literal["all", "filed", "notHeld", "notFiled"]
 
 
 class SmallGroupAlreadyClosedError(Exception):
@@ -460,7 +460,7 @@ def build_report_detail(
         address=report.address,
         items=items,
         submitted_by_member_id=report.submitted_by_member_id,
-        submitted_by_name=report.submitted_by.name,
+        submitted_by_name=report.submitted_by.name if report.submitted_by is not None else None,
         submitted_at=report.submitted_at,
         observations_visible=observations_visible,
         attendances=views,
@@ -507,6 +507,8 @@ def create_report(
         not_held_reason=body.not_held_reason,
         address=body.address,
         submitted_by_member_id=submitter_member_id,
+        submitted_at=func.now(),
+        started_by_member_id=submitter_member_id,
         items=_item_models(items),
         attendances=[
             SmallGroupReportAttendance(
@@ -825,7 +827,7 @@ def list_reports(
     small_group_id: int | None,
     from_date: date,
     to_date: date,
-    status: ReportStatus,
+    status: ReportListStatus,
     q: str | None,
     page: int,
     page_size: int,
@@ -1080,6 +1082,8 @@ def _mark_no_meeting_week(
             held=False,
             not_held_reason=week.reason,
             submitted_by_member_id=member_id,
+            submitted_at=func.now(),
+            started_by_member_id=member_id,
             no_meeting_week_id=week.id,
         )
         for g in to_mark

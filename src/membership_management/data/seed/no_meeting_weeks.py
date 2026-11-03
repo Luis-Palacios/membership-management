@@ -66,6 +66,8 @@ def seed_no_meeting_week(ctx: SeedContext) -> None:
                 not_held_reason=week.reason,
                 submitted_by_member_id=creator_id,
                 submitted_at=marked_at,
+                started_by_member_id=creator_id,
+                started_at=marked_at,
                 no_meeting_week_id=week.id,
             )
         )

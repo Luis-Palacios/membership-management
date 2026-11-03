@@ -84,6 +84,8 @@ def seed_small_group_reports(ctx: SeedContext) -> None:
                         not_held_reason=rng.choice(fixtures.NOT_HELD_REASONS),
                         submitted_by_member_id=submitter.member_id,
                         submitted_at=submitted_at,
+                        started_by_member_id=submitter.member_id,
+                        started_at=submitted_at,
                     )
                 )
                 continue
@@ -93,6 +95,8 @@ def seed_small_group_reports(ctx: SeedContext) -> None:
                 address=group.meeting_address,
                 submitted_by_member_id=submitter.member_id,
                 submitted_at=submitted_at,
+                started_by_member_id=submitter.member_id,
+                started_at=submitted_at,
             )
             add_report_items(
                 session,
