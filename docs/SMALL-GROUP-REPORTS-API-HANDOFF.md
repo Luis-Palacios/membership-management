@@ -28,6 +28,10 @@ HTTP codes, and "today" is `church_today()` (`api/church_time.py`). Routes doing
 work stay plain `def`. Put report code next to the small group code (`data/small_groups/`,
 `api/routers/small_group_reports.py`, `api/schemas/small_group_reports.py`).
 
+> **Since report auto-save** (`REPORT-AUTOSAVE-API-HANDOFF.md`): this document describes submitted reports.
+> A report can now also be a draft, which may have null answers and has no submitter, and `submitted_at`
+> is set by the service, not a server default.
+
 ## Progress (handoff log)
 
 | Stage | Status | Commit |

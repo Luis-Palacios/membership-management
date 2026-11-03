@@ -14,6 +14,7 @@ from membership_management.data.seed.inactive_guests import seed_inactive_guests
 from membership_management.data.seed.inactive_members import seed_inactive_members
 from membership_management.data.seed.members import seed_members
 from membership_management.data.seed.no_meeting_weeks import seed_no_meeting_week
+from membership_management.data.seed.report_drafts import seed_report_drafts
 from membership_management.data.seed.report_items import seed_guest_tags_in_member_reports
 from membership_management.data.seed.small_group_report_conversations import seed_report_conversations
 from membership_management.data.seed.small_group_reports import seed_small_group_reports
@@ -35,6 +36,8 @@ SEEDERS: list[Seeder] = [
     seed_no_meeting_week,
     # Last: extra guests, periods and attendance lines only, so no seeded row changes.
     seed_inactive_guests,
+    # Last: replaces two reports, once every seeder that reads them has run.
+    seed_report_drafts,
 ]
 
 DEFAULT_RNG_SEED = 2026
