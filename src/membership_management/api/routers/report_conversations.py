@@ -9,6 +9,8 @@ from membership_management.api.access import (
     comment_side,
     conversation_access,
     conversation_group_ids,
+    draft_viewer,
+    report_visible_to,
 )
 from membership_management.api.current_member import CurrentMemberDep
 from membership_management.api.dependencies import MembersSessionDep
@@ -70,6 +72,7 @@ from membership_management.data.small_groups.models import (
     ReportConversation,
     ReportConversationComment,
     ReportSection,
+    ReportStatus,
     SmallGroupReport,
 )
 from membership_management.data.small_groups.results import ConversationPerson, ConversationThread
@@ -123,7 +126,7 @@ def _report_or_404(
 ) -> SmallGroupReport:
     """The report when the caller is in its audience: 404 outside the scope, 403 outside the audience."""
     report = get_report(db, report_id, None if scope.full else scope.group_ids)
-    if report is None:
+    if report is None or not report_visible_to(report, scope, draft_viewer(db, scope)):
         raise HTTPException(status_code=404, detail=f"Small group report with ID {report_id} not found.")
     conversation_access(report, claims, scope)
     return report
@@ -258,6 +261,8 @@ def _add_anchor_comment(
     member: Member | None,
 ) -> ConversationThreadSchema:
     report = _report_or_404(db, report_id, claims, scope)
+    if report.status == ReportStatus.DRAFT:
+        raise HTTPException(status_code=409, detail="Conversations can't start on a draft.")
     author = _linked_member(member)
     try:
         conversation = add_comment(

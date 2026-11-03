@@ -189,9 +189,31 @@ def report_in_scope_query(report_id: int, only_group_ids: frozenset[int] | None)
 
 
 def report_on_date_query(small_group_id: int, d: date) -> Select:
-    """The (id, held) of the group's report on `d`; at most one row (unique per group and date)."""
-    return select(SmallGroupReport.id, SmallGroupReport.held).where(
-        SmallGroupReport.small_group_id == small_group_id, SmallGroupReport.meeting_date == d
+    """The group's report on `d`, draft or not; at most one row (unique per group and date). Callers
+    apply the draft visibility (report auto-save rule 14)."""
+    return (
+        select(
+            SmallGroupReport.id.label("id"),
+            SmallGroupReport.small_group_id.label("small_group_id"),
+            SmallGroupReport.held.label("held"),
+            SmallGroupReport.status.label("status"),
+            SmallGroupReport.started_by_member_id.label("started_by_member_id"),
+            Member.name.label("started_by_name"),
+        )
+        .join(Member, Member.id == SmallGroupReport.started_by_member_id)
+        .where(SmallGroupReport.small_group_id == small_group_id, SmallGroupReport.meeting_date == d)
+    )
+
+
+def group_drafts_query(small_group_id: int) -> Select:
+    return select(SmallGroupReport).where(
+        SmallGroupReport.small_group_id == small_group_id, SmallGroupReport.status == ReportStatus.DRAFT
+    )
+
+
+def group_drafts_count_query(small_group_id: int) -> Select:
+    return select(func.count()).where(
+        SmallGroupReport.small_group_id == small_group_id, SmallGroupReport.status == ReportStatus.DRAFT
     )
 
 

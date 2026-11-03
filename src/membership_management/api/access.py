@@ -19,9 +19,15 @@ from membership_management.data.members.services import (
     is_member_active_in_open_groups,
     members_active_in_open_groups,
 )
-from membership_management.data.small_groups.models import ConversationSide, SmallGroupReport, SmallGroupRole
-from membership_management.data.small_groups.results import PersonKey
+from membership_management.data.small_groups.models import (
+    ConversationSide,
+    ReportStatus,
+    SmallGroupReport,
+    SmallGroupRole,
+)
+from membership_management.data.small_groups.results import DraftViewer, PersonKey
 from membership_management.data.small_groups.services import (
+    can_see_draft,
     get_active_membership,
     get_led_small_group_ids,
     observations_visible_to,
@@ -76,6 +82,23 @@ def get_optional_small_group_scope(
 
 
 OptionalSmallGroupScopeDep = Annotated[SmallGroupScope | None, Depends(get_optional_small_group_scope)]
+
+
+def draft_viewer(db: Session, scope: SmallGroupScope) -> DraftViewer:
+    """A full scope is not leading a group (report auto-save rule 14), so it looks up what the caller's
+    member really leads; a scoped caller's groups are already that."""
+    if not scope.full:
+        return DraftViewer(scope.member_id, scope.group_ids)
+    led = get_led_small_group_ids(db, scope.member_id) if scope.member_id is not None else frozenset()
+    return DraftViewer(scope.member_id, led)
+
+
+def report_visible_to(report: SmallGroupReport, scope: SmallGroupScope, viewer: DraftViewer) -> bool:
+    """A submitted report goes by the scope. A draft goes by its own rule (report auto-save rule 14), which
+    is narrower for full roles and wider for someone who started it and no longer leads the group."""
+    if report.status == ReportStatus.DRAFT:
+        return can_see_draft(report, viewer)
+    return scope.includes(report.small_group_id)
 
 
 @dataclass(frozen=True)

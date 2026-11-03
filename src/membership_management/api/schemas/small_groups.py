@@ -51,6 +51,14 @@ class SmallGroupDetailSchema(CamelModel):
     member_count: int
     guest_count: int
     members: list[SmallGroupMemberSchema]
+    # Drafts closing the group would discard (report auto-save rule 19); only for callers who may close it.
+    draft_count: int | None = None
+
+
+class SmallGroupClosedSchema(SmallGroupDetailSchema):
+    """The group after closing it, plus how many drafts went with it."""
+
+    discarded_drafts: int
 
 
 class SmallGroupGuestAddedSchema(SmallGroupDetailSchema):
