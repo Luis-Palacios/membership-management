@@ -34,11 +34,11 @@ per-route `rate_limit`).
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. Migration and model | ✅ |71d5a6d |
-| 2. Every read ignores drafts | ✅ |f29d7eb |
-| 3. Draft writes: create, save with version, submit, discard, replace, close | ✅ |8b09227 |
-| 4. Draft reads: detail, roster, list, summary, week | ✅ |580e187 |
-| 5. Seed and docs | ✅ |26a5cbd |
+| 1. Migration and model | ✅ | 29c6180 |
+| 2. Every read ignores drafts | ✅ | c6010fc |
+| 3. Draft writes: create, save with version, submit, discard, replace, close | ✅ | 2c8db35 |
+| 4. Draft reads: detail, roster, list, summary, week | ✅ | 173c3c5 |
+| 5. Seed and docs | ✅ | 9e58a17 |
 | 6. Contract (after the new staff app is deployed) | ⬜ | |
 
 ### Decisions and deviations
