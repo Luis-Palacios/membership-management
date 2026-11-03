@@ -169,8 +169,9 @@ class ReportAttendanceSchema(CamelModel):
     role: SmallGroupRole
     # Null when the member's membership no longer covers the meeting date (memberships edited later).
     joined_at: date | None
-    attended_group: bool
-    attended_church: bool
+    # Null only while the report is a draft.
+    attended_group: bool | None
+    attended_church: bool | None
     missed_streak: int
     # Left unset (so the key is omitted) when the viewer may not see observations (rule 9).
     observation: str | None = None
@@ -248,8 +249,9 @@ class ReportDetailSchema(CamelModel):
     no_meeting_week_id: int | None
     address: str | None
     sections: ReportSectionsSchema
-    submitted_by: ReportPersonSchema
-    submitted_at: datetime
+    # Null on a draft.
+    submitted_by: ReportPersonSchema | None
+    submitted_at: datetime | None
     observations_visible: bool
     attendances: list[ReportAttendanceSchema]
     totals: ReportTotalsSchema

@@ -90,7 +90,7 @@ from membership_management.data.small_groups.services import (
     ReportItemsLimitError,
     ReportItemTooLongError,
     ReportKindChangeError,
-    ReportStatus,
+    ReportListStatus,
     SmallGroupClosedError,
     UnknownTagError,
     build_report_detail,
@@ -324,8 +324,8 @@ def _detail_schema(detail: ReportDetail, viewable: frozenset[PersonKey]) -> Repo
     ]
     totals: dict[str, int] = {
         "roster": len(attendances),
-        "attended_group": sum(a.attended_group for a in detail.attendances),
-        "attended_church": sum(a.attended_church for a in detail.attendances),
+        "attended_group": sum(a.attended_group is True for a in detail.attendances),
+        "attended_church": sum(a.attended_church is True for a in detail.attendances),
     }
     if visible:
         totals["observations"] = sum(a.observation is not None for a in detail.attendances)
@@ -345,8 +345,10 @@ def _detail_schema(detail: ReportDetail, viewable: frozenset[PersonKey]) -> Repo
         no_meeting_week_id=detail.no_meeting_week_id,
         address=detail.address,
         sections=sections_schema(detail.items, viewable),
-        submitted_by=ReportPersonSchema(
-            member_id=detail.submitted_by_member_id, name=detail.submitted_by_name
+        submitted_by=(
+            ReportPersonSchema(member_id=detail.submitted_by_member_id, name=detail.submitted_by_name)
+            if detail.submitted_by_member_id is not None and detail.submitted_by_name is not None
+            else None
         ),
         submitted_at=detail.submitted_at,
         observations_visible=visible,
@@ -391,7 +393,7 @@ def get_small_group_reports(
     small_group_id: Annotated[int | None, Query(alias="smallGroupId")] = None,
     from_date: Annotated[date | None, Query(alias="from")] = None,
     to_date: Annotated[date | None, Query(alias="to")] = None,
-    status_filter: Annotated[ReportStatus, Query(alias="status")] = "all",
+    status_filter: Annotated[ReportListStatus, Query(alias="status")] = "all",
     q: Annotated[str | None, Query(max_length=100)] = None,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(alias="pageSize", ge=1, le=100)] = 25,

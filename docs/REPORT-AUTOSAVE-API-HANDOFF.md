@@ -34,7 +34,7 @@ per-route `rate_limit`).
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. Migration and model | ⬜ | |
+| 1. Migration and model | ✅ | |
 | 2. Every read ignores drafts | ⬜ | |
 | 3. Draft writes: create, save with version, submit, discard, replace, close | ⬜ | |
 | 4. Draft reads: detail, roster, list, summary, week | ⬜ | |
@@ -43,7 +43,8 @@ per-route `rate_limit`).
 
 ### Decisions and deviations
 
-- [Anything decided during implementation, and why.]
+- The list route's filter type, which was called `ReportStatus`, is now `ReportListStatus`: the name
+  belongs to the new enum.
 
 ## Data model
 

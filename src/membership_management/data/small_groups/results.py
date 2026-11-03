@@ -207,8 +207,9 @@ class ReportAttendanceView(NamedTuple):
     role: SmallGroupRole
     # Start of the membership period covering the meeting date; None if memberships were edited since.
     joined_at: date | None
-    attended_group: bool
-    attended_church: bool
+    # Null only while the report is a draft.
+    attended_group: bool | None
+    attended_church: bool | None
     missed_streak: int
     # Always None when the viewer may not see observations (rule 9), so no mapping can leak one.
     observation: str | None
@@ -225,9 +226,10 @@ class ReportDetail(NamedTuple):
     address: str | None
     # By section, then position.
     items: list[ReportItemView]
-    submitted_by_member_id: int
-    submitted_by_name: str
-    submitted_at: datetime
+    # Null while the report is a draft.
+    submitted_by_member_id: int | None
+    submitted_by_name: str | None
+    submitted_at: datetime | None
     observations_visible: bool
     attendances: list[ReportAttendanceView]
     held: bool

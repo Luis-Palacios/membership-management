@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
@@ -8,7 +9,9 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Identity,
+    Integer,
     String,
+    Text,
     UniqueConstraint,
     func,
     true,
@@ -30,6 +33,14 @@ if TYPE_CHECKING:
     from membership_management.data.small_groups.models.small_group_report_item import SmallGroupReportItem
 
 
+class ReportStatus(StrEnum):
+    """A draft is saved as it is filled in and seen only by the group's leaders and whoever started it;
+    submitting is one-way (report auto-save rules 1, 5 and 14)."""
+
+    DRAFT = "draft"
+    SUBMITTED = "submitted"
+
+
 class SmallGroupReport(MemberManagementBase):
     __tablename__ = "small_group_reports"
     __table_args__ = (
@@ -37,6 +48,12 @@ class SmallGroupReport(MemberManagementBase):
         CheckConstraint("NOT held OR not_held_reason IS NULL", name="not_held_reason_only_when_not_held"),
         CheckConstraint("held OR address IS NULL", name="not_held_has_no_texts"),
         CheckConstraint("NOT held OR no_meeting_week_id IS NULL", name="no_meeting_week_only_when_not_held"),
+        CheckConstraint("status IN ('draft', 'submitted')", name="status_valid"),
+        CheckConstraint(
+            "(status = 'draft') = (submitted_by_member_id IS NULL)", name="submitted_by_unless_draft"
+        ),
+        CheckConstraint("(status = 'draft') = (submitted_at IS NULL)", name="submitted_at_unless_draft"),
+        CheckConstraint("held OR status = 'submitted'", name="no_meeting_never_draft"),
     )
 
     id: Mapped[int] = mapped_column(Identity(always=True), primary_key=True)
@@ -49,10 +66,21 @@ class SmallGroupReport(MemberManagementBase):
     # Normally the same address from the small group but could vary for this particular meeting.
     address: Mapped[str | None] = mapped_column(String(255))
 
-    # The leader or co-leader who filled in this report, including every attendance row.
-    # The service layer checks they held one of those roles on meeting_date; the DB can't.
-    submitted_by_member_id: Mapped[int] = mapped_column(ForeignKey("members.id"), index=True)
-    submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    status: Mapped[ReportStatus] = mapped_column(Text, server_default=ReportStatus.SUBMITTED.value)
+    # +1 on every write: a save or submit based on an older version is refused (auto-save rule 9).
+    version: Mapped[int] = mapped_column(Integer, server_default="1")
+    # Who first saved the report, and when. Backfilled from the submitter for older reports.
+    started_by_member_id: Mapped[int] = mapped_column(ForeignKey("members.id"), index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # The last save after the first one; the member is None for an unlinked admin.
+    last_edited_by_member_id: Mapped[int | None] = mapped_column(ForeignKey("members.id"))
+    last_edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # The leader or co-leader who submitted this report, including every attendance row; both null
+    # while it is a draft. The service layer checks they held one of those roles on meeting_date; the
+    # DB can't.
+    submitted_by_member_id: Mapped[int | None] = mapped_column(ForeignKey("members.id"), index=True)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Set when a church-wide no meeting created this report; cleared when a leader edits its reason
     # or date. Undo deletes the reports still linked explicitly, so no ORM cascade.
     no_meeting_week_id: Mapped[int | None] = mapped_column(
@@ -61,7 +89,9 @@ class SmallGroupReport(MemberManagementBase):
 
     small_group: Mapped["SmallGroup"] = relationship()
     no_meeting_week: Mapped["SmallGroupNoMeetingWeek | None"] = relationship()
-    submitted_by: Mapped["Member"] = relationship()
+    submitted_by: Mapped["Member | None"] = relationship(foreign_keys=[submitted_by_member_id])
+    started_by: Mapped["Member"] = relationship(foreign_keys=[started_by_member_id])
+    last_edited_by: Mapped["Member | None"] = relationship(foreign_keys=[last_edited_by_member_id])
     attendances: Mapped[list["SmallGroupReportAttendance"]] = relationship(
         back_populates="report", cascade="all, delete-orphan"
     )

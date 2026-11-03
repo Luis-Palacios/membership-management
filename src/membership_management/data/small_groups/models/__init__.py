@@ -18,7 +18,7 @@ from membership_management.data.small_groups.models.small_group_member import (
     SmallGroupRole,
 )
 from membership_management.data.small_groups.models.small_group_no_meeting_week import SmallGroupNoMeetingWeek
-from membership_management.data.small_groups.models.small_group_report import SmallGroupReport
+from membership_management.data.small_groups.models.small_group_report import ReportStatus, SmallGroupReport
 from membership_management.data.small_groups.models.small_group_report_attendance import (
     SmallGroupReportAttendance,
 )
@@ -37,6 +37,7 @@ __all__ = [
     "ReportConversationCommentRevision",
     "ReportConversationRead",
     "ReportSection",
+    "ReportStatus",
     "SmallGroup",
     "SmallGroupMember",
     "SmallGroupNoMeetingWeek",

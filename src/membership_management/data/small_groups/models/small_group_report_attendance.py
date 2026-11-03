@@ -15,7 +15,9 @@ class SmallGroupReportAttendance(MemberManagementBase):
     """One person's line (a member's or a guest's) in a small group report, entered by the report's submitter.
 
     Created for everyone active in the group on the report's meeting_date, so "absent" is an
-    explicit False rather than a missing row. Exactly one of `member_id`, `guest_id`.
+    explicit False rather than a missing row. Exactly one of `member_id`, `guest_id`. The two answers
+    are null only while the report is a draft; the service keeps a submitted report complete (the DB
+    can't check across tables).
     """
 
     __tablename__ = "small_group_report_attendances"
@@ -33,9 +35,9 @@ class SmallGroupReportAttendance(MemberManagementBase):
     report_id: Mapped[int] = mapped_column(ForeignKey("small_group_reports.id"), index=True)
     member_id: Mapped[int | None] = mapped_column(ForeignKey("members.id"), index=True)
     guest_id: Mapped[int | None] = mapped_column(ForeignKey("guests.id"), index=True)
-    attended_group: Mapped[bool]
+    attended_group: Mapped[bool | None]
     # Attended church the most recent Sunday on or before the report's meeting_date.
-    attended_church: Mapped[bool]
+    attended_church: Mapped[bool | None]
     # Pastoral note about this person: expose to elders only, never with the general report.
     observation: Mapped[str | None] = mapped_column(Text)
 
