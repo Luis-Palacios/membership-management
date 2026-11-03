@@ -443,11 +443,8 @@ def get_report_roster(
     people = roster_on_date(session, small_group.id, d)
     streaks = missed_streaks_by_person(session, small_group.id, [p.key for p in people], d)
     existing = first_as(session, report_on_date_query(small_group.id, d), ReportOnDate)
-    filed = existing if existing is not None and existing.status == ReportStatus.SUBMITTED else None
     return ReportRoster(
         people=[p._replace(missed_streak=streaks[p.key]) for p in people],
-        existing_report_id=filed.id if filed is not None else None,
-        existing_report_held=filed.held if filed is not None else None,
         existing=_existing_report(existing, viewer) if existing is not None else None,
     )
 
@@ -612,10 +609,9 @@ def create_report(
     return report
 
 
-def _lock_for_write(session: Session, report: SmallGroupReport, version: int | None) -> None:
+def _lock_for_write(session: Session, report: SmallGroupReport) -> None:
     """Lock the report's row and reload what a write decides on, so two writers can't both pass the
-    version check (report auto-save rule 9). `version` None skips the check, for clients from before
-    auto-save."""
+    version check that follows (report auto-save rule 9)."""
     try:
         session.refresh(
             report,
@@ -631,8 +627,6 @@ def _lock_for_write(session: Session, report: SmallGroupReport, version: int | N
         )
     except InvalidRequestError as exc:
         raise ReportGoneError from exc
-    if version is not None and version != report.version:
-        raise _version_conflict(session, report)
 
 
 def _version_conflict(session: Session, report: SmallGroupReport) -> ReportVersionConflictError:
@@ -662,7 +656,7 @@ def update_report(
     report: SmallGroupReport,
     body: ReportInput,
     *,
-    version: int | None,
+    version: int,
     editor_member_id: int | None,
     viewer: DraftViewer,
     sees_all_observations: bool,
@@ -677,7 +671,9 @@ def update_report(
     """
     if body.held != report.held or body.replaces_no_meeting:
         raise ReportKindChangeError
-    _lock_for_write(session, report, version)
+    _lock_for_write(session, report)
+    if version != report.version:
+        raise _version_conflict(session, report)
     _validate_date(
         session,
         report.small_group,
@@ -741,18 +737,18 @@ def submit_report(
     session: Session,
     report: SmallGroupReport,
     *,
-    version: int | None,
+    version: int,
     caller_member_id: int | None,
     caller_is_scoped: bool,
 ) -> SmallGroupReport:
     """Turn a draft into a submitted report, one way (report auto-save rule 5). The caller's member
     becomes the submitter, with the same checks as filing a report."""
-    _lock_for_write(session, report, None)
+    _lock_for_write(session, report)
     if report.status != ReportStatus.DRAFT:
         raise ReportAlreadySubmittedError
     if report.small_group.closed_at is not None:
         raise SmallGroupClosedError
-    if version is not None and version != report.version:
+    if version != report.version:
         raise _version_conflict(session, report)
     if caller_member_id is None:
         raise MemberRequiredToSubmitError

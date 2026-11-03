@@ -39,7 +39,7 @@ per-route `rate_limit`).
 | 3. Draft writes: create, save with version, submit, discard, replace, close | ✅ | 2c8db35 |
 | 4. Draft reads: detail, roster, list, summary, week | ✅ | 173c3c5 |
 | 5. Seed and docs | ✅ | 9e58a17 |
-| 6. Contract (after the new staff app is deployed) | ⬜ | |
+| 6. Contract (after the new staff app is deployed) | ✅ | (on `report-autosave`; hash after merge) |
 
 ### Decisions and deviations
 
@@ -72,6 +72,16 @@ per-route `rate_limit`).
   people. Every meeting in the window already has a report, so each draft replaces its group's newest
   report **without conversations** rather than the most recent one, which would lose its threads. The
   second draft is `GP - #1`'s. Re-running with `--reset` gives the same drafts.
+- Stage 6 (contract), after staff-app `ac8f10a` was deployed (it sends `version` on every save, the
+  no-meeting reason edit included, and `status` on every create). The PATCH body schema is shared
+  with create, so a save without `version` is refused in the route with FastAPI's own 422 shape
+  (`loc: ["body", "version"]`); submit's body makes `version` required. `_lock_for_write` only
+  locks now: the "no version, no check" path for old clients is gone, and each write compares the
+  version itself. The duplicate-date 409 keeps `existingReportId` / `existingReportHeld`: that is
+  not the roster, and the staff app reads it. Tried with `TestClient` against the local Postgres as
+  a leader of GP - #2 (claims overridden): roster without the old fields; create without `status`
+  is a draft; PATCH (held and no meeting) and submit without `version` 422, stale 409, current
+  200; the draft was deleted afterwards.
 
 ## Data model
 
@@ -114,7 +124,7 @@ group ids once and filter
 
 ### Create (`POST /small-groups/{id}/reports`)
 
-Held body gains `status: "draft" | "submitted"` (default `"submitted"` until stage 6). With
+Held body gains `status: "draft" | "submitted"` (default `"draft"` since stage 6). With
 `"draft"`:
 
 - each attendance row's `attendedGroup` / `attendedChurch` may be `null`;
@@ -131,11 +141,11 @@ flush-then-insert order as `replacesNoMeeting`).
 
 ### Save (`PATCH /small-group-reports/{id}`)
 
-Same body as today plus `version: int` (optional until stage 6). On a **draft**, null answers are
+Same body as today plus `version: int` (required since stage 6: 422 without it). On a **draft**, null answers are
 allowed; on a **submitted** report, the body must be complete, as today. Writes go through the
 version check:
 
-- `version` given and ≠ current → **409** `"The report changed since you opened it."`, body
+- `version` ≠ current → **409** `"The report changed since you opened it."`, body
   `{ detail, version, lastEditedBy: { memberId, name } | null, lastEditedAt }`.
 - otherwise: replace, `version += 1`, `last_edited_by_member_id` = caller's member (may be null),
   `last_edited_at = now()`. `submitted_*` never change (reports rule 6).
@@ -175,7 +185,8 @@ on a draft. Attendance answers may be `null` on a draft. Observations follow rep
 - a draft the caller can't see: `{ status: "draft", startedBy: { name } }` (no id);
 - a submitted report or no meeting: `{ id, status: "submitted", held }`.
 
-Keep the two old fields (filled for submitted reports only) until stage 6 so the old client works.
+The two old fields (filled for submitted reports only) were kept for the old client until stage 6,
+which removed them.
 
 ### List (`GET /small-group-reports`)
 

@@ -2,6 +2,7 @@ from datetime import date, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi.exceptions import RequestValidationError
 
 from membership_management.api.access import (
     GuestScope,
@@ -279,8 +280,6 @@ def get_report_roster_for_date(
         meeting_date=meeting_date,
         church_sunday=church_sunday(meeting_date),
         existing_report=_existing_report_schema(roster.existing),
-        existing_report_id=roster.existing_report_id,
-        existing_report_held=roster.existing_report_held,
         people=[
             ReportRosterPersonSchema(
                 person=_person(p.member_id, p.guest_id, p.name),
@@ -862,6 +861,11 @@ def patch_small_group_report(
     member_scope: MemberScopeDep,
     guest_scope: GuestScopeDep,
 ) -> ReportDetailSchema:
+    if body.version is None:
+        # Required on a save (report auto-save stage 6); the body schema is shared with create.
+        raise RequestValidationError(
+            [{"type": "missing", "loc": ("body", "version"), "msg": "Field required", "input": None}]
+        )
     report = _report_or_404(db, report_id, scope)
     try:
         update_report(
