@@ -22,6 +22,7 @@ from membership_management.api.jwt_auth import (
 from membership_management.api.rate_limit import default_user_rate_limit, rate_limit
 from membership_management.api.schemas.person import PersonSchema
 from membership_management.api.schemas.small_groups import (
+    SmallGroupClosedSchema,
     SmallGroupCreateSchema,
     SmallGroupDetailSchema,
     SmallGroupGuestAddedSchema,
@@ -67,6 +68,7 @@ from membership_management.data.small_groups.services import (
     get_small_group,
     get_small_group_active_guests,
     get_small_group_active_members,
+    group_draft_count,
     list_small_groups,
     remove_guest_from_group,
     remove_small_group_member,
@@ -194,9 +196,12 @@ def get_small_groups(db: MembersSessionDep, scope: SmallGroupScopeDep) -> list[S
     "/{small_group_id}", name="get_small_group", description="Get a small group with its active members"
 )
 def get_small_group_detail(
-    small_group_id: int, db: MembersSessionDep, scope: SmallGroupScopeDep
+    small_group_id: int, db: MembersSessionDep, claims: CurrentClaimsDep, scope: SmallGroupScopeDep
 ) -> SmallGroupDetailSchema:
-    return _detail(db, _get_or_404(db, small_group_id, scope))
+    detail = _detail(db, _get_or_404(db, small_group_id, scope))
+    if has_permission(claims, "smallGroups", "close"):
+        detail.draft_count = group_draft_count(db, small_group_id)
+    return detail
 
 
 @router.post(
@@ -260,13 +265,15 @@ def patch_small_group(
 )
 def post_close_small_group(
     small_group_id: int, db: MembersSessionDep, scope: SmallGroupScopeDep
-) -> SmallGroupDetailSchema:
+) -> SmallGroupClosedSchema:
     small_group = _get_or_404(db, small_group_id, scope)
     try:
-        small_group = close_small_group(db, small_group, _today())
+        closed = close_small_group(db, small_group, _today())
     except SmallGroupAlreadyClosedError as exc:
         raise HTTPException(status_code=409, detail="This small group is already closed.") from exc
-    return _detail(db, small_group)
+    return SmallGroupClosedSchema(
+        **_detail(db, closed.small_group).model_dump(), discarded_drafts=closed.discarded_drafts
+    )
 
 
 def _member_inactive_error() -> CodedHTTPError:

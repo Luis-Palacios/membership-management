@@ -17,6 +17,7 @@ from membership_management.data.small_groups.models import (
     ConversationStatus,
     GroupAudience,
     ReportSection,
+    ReportStatus,
     SmallGroupRole,
     Weekday,
 )
@@ -71,8 +72,9 @@ class ReportAttendanceInputSchema(CamelModel):
 
     member_id: int | None = None
     guest_id: int | None = None
-    attended_group: bool
-    attended_church: bool
+    # Null only on a draft (report auto-save rule 4). The keys are still required.
+    attended_group: bool | None
+    attended_church: bool | None
     observation: Observation = None
 
     @model_validator(mode="after")
@@ -126,6 +128,10 @@ class HeldReportBodySchema(CamelModel):
     attendances: list[ReportAttendanceInputSchema]
     # Create only; true on an edit is a 422.
     replaces_no_meeting: bool = False
+    # Create only; an edit keeps the report's status, and submitting has its own route.
+    status: ReportStatus = ReportStatus.SUBMITTED
+    # Edit only: the version the save is based on (409 when the report has moved on).
+    version: int | None = None
 
 
 class NotHeldReportBodySchema(CamelModel):
@@ -136,6 +142,16 @@ class NotHeldReportBodySchema(CamelModel):
     held: Literal[False]
     meeting_date: date
     not_held_reason: ReportReason = None
+    # Create only: replace the date's draft, which the caller must be able to see (report auto-save rule 18).
+    replaces_draft: bool = False
+    # Edit only: the version the save is based on (409 when the report has moved on).
+    version: int | None = None
+
+
+class ReportSubmitBodySchema(CamelModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: int | None = None
 
 
 def _report_kind(value: object) -> str:

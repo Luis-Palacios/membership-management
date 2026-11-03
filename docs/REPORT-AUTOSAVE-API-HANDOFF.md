@@ -36,7 +36,7 @@ per-route `rate_limit`).
 | --- | --- | --- |
 | 1. Migration and model | ✅ | |
 | 2. Every read ignores drafts | ✅ | |
-| 3. Draft writes: create, save with version, submit, discard, replace, close | ⬜ | |
+| 3. Draft writes: create, save with version, submit, discard, replace, close | ✅ | |
 | 4. Draft reads: detail, roster, list, summary, week | ⬜ | |
 | 5. Seed and docs | ⬜ | |
 | 6. Contract (after the new staff app is deployed) | ⬜ | |
@@ -49,6 +49,19 @@ per-route `rate_limit`).
   no meeting skips a group with a draft dated in the week and counts it under `skipped.reported`. The
   spec doesn't cover this case. Filtering would make the mark hit the unique date on a draft's date and
   fail, and replacing the draft breaks rule 18 (only someone who can see it may).
+- Submit also refuses with 422 `attendance` when the draft's rows no longer match the roster. Without
+  it a report could be submitted without someone who joined with an earlier date (rule 11 only speaks
+  of saves). It runs after the rule 5 checks and before the completeness check.
+- The PATCH limit is 120/minute, up from 30: auto-save sends one request per coalesced change (taps
+  every 300 ms or so), so filling in a group at speed went past 30 with nothing wrong.
+- Rule 14 reaches a scoped caller whose group is out of their scope when they started the draft: they
+  keep seeing it, as the rule says. They see it through `report_visible_to` rather than the scope, and
+  once it is submitted it's out of their sight (submit still returns the detail, so that response
+  doesn't 404). Their observations follow reports rule 9, so they can't see or edit them.
+- A conflict names whoever really changed the report: submit leaves `last_edited_*` alone, so when it
+  came last, `lastEditedBy` and `lastEditedAt` in the 409 are the submitter and `submittedAt`.
+- Errors that carry extra fields use the existing `CodedHTTPError`, so their bodies also have a `code`
+  (`report_version_conflict`, `draft_in_progress`).
 
 ## Data model
 

@@ -8,6 +8,8 @@ from membership_management.data.small_groups.models import (
     ConversationStatus,
     GroupAudience,
     ReportSection,
+    ReportStatus,
+    SmallGroup,
     SmallGroupRole,
 )
 
@@ -116,8 +118,9 @@ class AttendanceInput(NamedTuple):
     # Exactly one of the two ids.
     member_id: int | None
     guest_id: int | None
-    attended_group: bool
-    attended_church: bool
+    # Null only on a draft.
+    attended_group: bool | None
+    attended_church: bool | None
     observation: str | None
 
 
@@ -138,6 +141,35 @@ class ReportInput(NamedTuple):
     replaces_no_meeting: bool = False
     # The items of a held report; None for a no meeting.
     sections: SectionsInput | None = None
+    # Create only; an edit never changes the status (submitting has its own route). A no meeting is
+    # always submitted.
+    status: ReportStatus = ReportStatus.SUBMITTED
+    # Create of a no meeting only: delete the date's draft and insert the no meeting in one transaction.
+    replaces_draft: bool = False
+
+
+class DraftViewer(NamedTuple):
+    """What decides whether a caller sees a draft (report auto-save rule 14): the member they are linked
+    to, if any, and the groups that member leads or co-leads."""
+
+    member_id: int | None
+    led_group_ids: frozenset[int]
+
+
+class ReportOnDate(NamedTuple):
+    """The report holding a group's date (one at most)."""
+
+    id: int
+    small_group_id: int
+    held: bool
+    status: ReportStatus
+    started_by_member_id: int
+    started_by_name: str
+
+
+class ClosedGroup(NamedTuple):
+    small_group: SmallGroup
+    discarded_drafts: int
 
 
 class ReportItemRow(NamedTuple):

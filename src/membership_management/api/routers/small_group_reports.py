@@ -12,10 +12,13 @@ from membership_management.api.access import (
     SmallGroupScopeDep,
     comment_side,
     conversation_group_ids,
+    draft_viewer,
     leads_group,
+    report_visible_to,
     sees_all_observations,
 )
 from membership_management.api.church_time import church_today
+from membership_management.api.coded_errors import CodedHTTPError
 from membership_management.api.current_member import CurrentMemberDep
 from membership_management.api.dependencies import MembersSessionDep
 from membership_management.api.jwt_auth import (
@@ -54,6 +57,7 @@ from membership_management.api.schemas.small_group_reports import (
     ReportSharedEntrySchema,
     ReportSharedSchema,
     ReportStillToReportSchema,
+    ReportSubmitBodySchema,
     ReportSummaryItemSchema,
     ReportTotalsSchema,
     ReportWeekSchema,
@@ -69,7 +73,7 @@ from membership_management.api.schemas.small_group_reports import (
     WeekSmallGroupSchema,
 )
 from membership_management.data.small_groups.conversation_services import get_section_conversations
-from membership_management.data.small_groups.models import SmallGroup
+from membership_management.data.small_groups.models import SmallGroup, SmallGroupReport
 from membership_management.data.small_groups.results import (
     AttendanceInput,
     NoMeetingWeekRow,
@@ -80,6 +84,7 @@ from membership_management.data.small_groups.results import (
 )
 from membership_management.data.small_groups.services import (
     AttendanceMismatchError,
+    DraftInProgressError,
     FutureMeetingDateError,
     FutureWeekError,
     InactiveTagError,
@@ -87,10 +92,14 @@ from membership_management.data.small_groups.services import (
     NoMeetingWeekNotFoundError,
     NotGroupLeaderOnDateError,
     ReportAlreadyExistsError,
+    ReportAlreadySubmittedError,
+    ReportGoneError,
+    ReportIncompleteError,
     ReportItemsLimitError,
     ReportItemTooLongError,
     ReportKindChangeError,
     ReportListStatus,
+    ReportVersionConflictError,
     SmallGroupClosedError,
     UnknownTagError,
     build_report_detail,
@@ -107,6 +116,7 @@ from membership_management.data.small_groups.services import (
     list_reports,
     mark_no_meeting_week,
     search_taggable_people,
+    submit_report,
     update_no_meeting_week_reason,
     update_report,
 )
@@ -141,10 +151,48 @@ def _small_group_or_404(db: MembersSessionDep, small_group_id: int, scope: Small
     return small_group
 
 
+def _report_not_found(report_id: int) -> HTTPException:
+    return HTTPException(status_code=404, detail=f"Small group report with ID {report_id} not found.")
+
+
+def _report_or_404(db: MembersSessionDep, report_id: int, scope: SmallGroupScope) -> SmallGroupReport:
+    """404 for a missing report and for one the caller can't see: a draft doesn't exist for them."""
+    report = get_report(db, report_id, None)
+    if report is None or not report_visible_to(report, scope, draft_viewer(db, scope)):
+        raise _report_not_found(report_id)
+    return report
+
+
 def _http_error(exc: Exception) -> HTTPException:
     """Map a report domain error to its HTTP error (the staff app matches on status and `detail`)."""
     if isinstance(exc, ReportAlreadyExistsError):
         return DuplicateReportHTTPError(exc.existing_id, exc.existing_held)
+    if isinstance(exc, ReportVersionConflictError):
+        return CodedHTTPError(
+            409,
+            "The report changed since you opened it.",
+            "report_version_conflict",
+            version=exc.version,
+            lastEditedBy=(
+                {"memberId": exc.changed_by_member_id, "name": exc.changed_by_name}
+                if exc.changed_by_member_id is not None
+                else None
+            ),
+            lastEditedAt=exc.changed_at.isoformat() if exc.changed_at is not None else None,
+        )
+    if isinstance(exc, DraftInProgressError):
+        return CodedHTTPError(
+            409,
+            "A draft is in progress for this date.",
+            "draft_in_progress",
+            startedBy={"name": exc.started_by_name},
+        )
+    if isinstance(exc, ReportAlreadySubmittedError):
+        return HTTPException(status_code=409, detail="This report is already submitted.")
+    if isinstance(exc, ReportIncompleteError):
+        return HTTPException(
+            status_code=422, detail="The report is incomplete: every person needs both answers."
+        )
     if isinstance(exc, MemberRequiredToSubmitError):
         return HTTPException(status_code=409, detail="Link your account to a member to submit reports.")
     if isinstance(exc, SmallGroupClosedError):
@@ -279,6 +327,7 @@ def _to_input(body: HeldReportBodySchema | NotHeldReportBodySchema) -> ReportInp
             attendances=[],
             held=False,
             not_held_reason=body.not_held_reason,
+            replaces_draft=body.replaces_draft,
         )
     return ReportInput(
         meeting_date=body.meeting_date,
@@ -289,6 +338,7 @@ def _to_input(body: HeldReportBodySchema | NotHeldReportBodySchema) -> ReportInp
         ],
         replaces_no_meeting=body.replaces_no_meeting,
         sections=sections_input(body.sections),
+        status=body.status,
     )
 
 
@@ -367,10 +417,20 @@ def _report_detail_or_404(
     member_scope: MemberScope,
     guest_scope: GuestScope,
 ) -> ReportDetailSchema:
-    """The report's detail as this caller may see it; 404 when missing or outside the scope."""
-    report = get_report(db, report_id, None if scope.full else scope.group_ids)
-    if report is None:
-        raise HTTPException(status_code=404, detail=f"Small group report with ID {report_id} not found.")
+    """The report's detail as this caller may see it; 404 when missing, outside the scope or a draft they
+    can't see."""
+    report = _report_or_404(db, report_id, scope)
+    return _detail_of(db, report, scope, claims, member_scope, guest_scope)
+
+
+def _detail_of(
+    db: MembersSessionDep,
+    report: SmallGroupReport,
+    scope: SmallGroupScope,
+    claims: AuthClaims,
+    member_scope: MemberScope,
+    guest_scope: GuestScope,
+) -> ReportDetailSchema:
     detail = build_report_detail(
         db,
         report,
@@ -646,7 +706,7 @@ def get_small_group_reports_shared(
 @router.post(
     "/small-groups/{small_group_id}/reports",
     name="create_small_group_report",
-    description="File the report of a meeting; the caller's member is recorded as the submitter",
+    description="File the report of a meeting or start a draft of it; the caller's member is who started it",
     status_code=status.HTTP_201_CREATED,
     response_model_exclude_unset=True,
     dependencies=[
@@ -674,6 +734,7 @@ def post_small_group_report(
             _to_input(body),
             submitter_member_id=member.id,
             caller_is_scoped=not scope.full,
+            viewer=draft_viewer(db, scope),
             today=church_today(),
         )
     except (
@@ -681,7 +742,9 @@ def post_small_group_report(
         SmallGroupClosedError,
         FutureMeetingDateError,
         ReportAlreadyExistsError,
+        DraftInProgressError,
         AttendanceMismatchError,
+        ReportIncompleteError,
         NotGroupLeaderOnDateError,
         *_ITEM_ERRORS,
     ) as exc:
@@ -714,7 +777,8 @@ def get_small_group_report(
     response_model_exclude_unset=True,
     dependencies=[
         Depends(require_permission("smallGroupReports", "update")),
-        Depends(rate_limit("30/minute", scope="update_small_group_report")),
+        # Auto-save: one request per coalesced change while a leader fills in the report.
+        Depends(rate_limit("120/minute", scope="update_small_group_report")),
     ],
 )
 def patch_small_group_report(
@@ -726,14 +790,15 @@ def patch_small_group_report(
     member_scope: MemberScopeDep,
     guest_scope: GuestScopeDep,
 ) -> ReportDetailSchema:
-    report = get_report(db, report_id, None if scope.full else scope.group_ids)
-    if report is None:
-        raise HTTPException(status_code=404, detail=f"Small group report with ID {report_id} not found.")
+    report = _report_or_404(db, report_id, scope)
     try:
         update_report(
             db,
             report,
             _to_input(body),
+            version=body.version,
+            editor_member_id=scope.member_id,
+            viewer=draft_viewer(db, scope),
             sees_all_observations=sees_all_observations(claims),
             leads_group=leads_group(scope, report.small_group_id),
             today=church_today(),
@@ -742,12 +807,62 @@ def patch_small_group_report(
         SmallGroupClosedError,
         FutureMeetingDateError,
         ReportAlreadyExistsError,
+        DraftInProgressError,
+        ReportVersionConflictError,
         AttendanceMismatchError,
+        ReportIncompleteError,
         ReportKindChangeError,
         *_ITEM_ERRORS,
     ) as exc:
         raise _http_error(exc) from exc
+    except ReportGoneError as exc:
+        raise _report_not_found(report_id) from exc
     return _report_detail_or_404(db, report_id, scope, claims, member_scope, guest_scope)
+
+
+@router.post(
+    "/small-group-reports/{report_id}/submit",
+    name="submit_small_group_report",
+    description="Submit a draft, one way: the caller's member becomes the submitter",
+    response_model_exclude_unset=True,
+    dependencies=[
+        Depends(require_permission("smallGroupReports", "create")),
+        Depends(rate_limit("20/minute", scope="submit_small_group_report")),
+    ],
+)
+def post_submit_small_group_report(
+    report_id: int,
+    body: ReportSubmitBodySchema,
+    db: MembersSessionDep,
+    claims: CurrentClaimsDep,
+    scope: SmallGroupScopeDep,
+    member_scope: MemberScopeDep,
+    guest_scope: GuestScopeDep,
+) -> ReportDetailSchema:
+    report = _report_or_404(db, report_id, scope)
+    try:
+        submit_report(
+            db,
+            report,
+            version=body.version,
+            caller_member_id=scope.member_id,
+            caller_is_scoped=not scope.full,
+        )
+    except (
+        ReportAlreadySubmittedError,
+        SmallGroupClosedError,
+        ReportVersionConflictError,
+        MemberRequiredToSubmitError,
+        NotGroupLeaderOnDateError,
+        AttendanceMismatchError,
+        ReportIncompleteError,
+    ) as exc:
+        raise _http_error(exc) from exc
+    except ReportGoneError as exc:
+        raise _report_not_found(report_id) from exc
+    # Not through the visibility check: someone who started the draft and no longer leads the group loses
+    # sight of the report the moment it is submitted, and still gets back what they just submitted.
+    return _detail_of(db, report, scope, claims, member_scope, guest_scope)
 
 
 @router.delete(
@@ -761,9 +876,7 @@ def patch_small_group_report(
     ],
 )
 def delete_small_group_report(report_id: int, db: MembersSessionDep, scope: SmallGroupScopeDep) -> Response:
-    report = get_report(db, report_id, None if scope.full else scope.group_ids)
-    if report is None:
-        raise HTTPException(status_code=404, detail=f"Small group report with ID {report_id} not found.")
+    report = _report_or_404(db, report_id, scope)
     try:
         delete_report(db, report)
     except SmallGroupClosedError as exc:

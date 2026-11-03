@@ -1,10 +1,10 @@
 import unicodedata
 from collections.abc import Collection, Mapping, Sequence
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Literal, NamedTuple
 
 from sqlalchemy import delete, func, select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, InvalidRequestError
 from sqlalchemy.orm import Session
 
 from membership_management.data.guests.models import Guest, GuestStatus
@@ -25,6 +25,7 @@ from membership_management.data.small_groups.models import (
     LeftReason,
     ReportConversation,
     ReportSection,
+    ReportStatus,
     SmallGroup,
     SmallGroupMember,
     SmallGroupNoMeetingWeek,
@@ -38,6 +39,8 @@ from membership_management.data.small_groups.queries import (
     active_guest_period_query,
     active_leaders_query,
     filed_reports_query,
+    group_drafts_count_query,
+    group_drafts_query,
     guests_last_attended_query,
     latest_guest_report_date_query,
     latest_report_ids_query,
@@ -71,6 +74,8 @@ from membership_management.data.small_groups.report_items import (
 from membership_management.data.small_groups.results import (
     ActiveLeaderRow,
     AttendanceMark,
+    ClosedGroup,
+    DraftViewer,
     FiledReportRow,
     GroupReportSummary,
     GroupRole,
@@ -92,6 +97,7 @@ from membership_management.data.small_groups.results import (
     ReportInput,
     ReportItemRow,
     ReportItemView,
+    ReportOnDate,
     ReportPage,
     ReportRoster,
     ReportShared,
@@ -204,6 +210,43 @@ class ReportAlreadyExistsError(Exception):
         super().__init__(existing_id)
         self.existing_id = existing_id
         self.existing_held = existing_held
+
+
+class DraftInProgressError(Exception):
+    """A draft the caller can't see holds the date (report auto-save rule 17)."""
+
+    def __init__(self, started_by_name: str) -> None:
+        super().__init__(started_by_name)
+        self.started_by_name = started_by_name
+
+
+class ReportVersionConflictError(Exception):
+    """The report changed since the version the save or submit was based on (report auto-save rule 9)."""
+
+    def __init__(
+        self,
+        version: int,
+        changed_by_member_id: int | None,
+        changed_by_name: str | None,
+        changed_at: datetime | None,
+    ) -> None:
+        super().__init__(version)
+        self.version = version
+        self.changed_by_member_id = changed_by_member_id
+        self.changed_by_name = changed_by_name
+        self.changed_at = changed_at
+
+
+class ReportGoneError(Exception):
+    """The report was deleted while this request was on its way to writing it."""
+
+
+class ReportAlreadySubmittedError(Exception):
+    """Submit on a report that isn't a draft (report auto-save rule 5)."""
+
+
+class ReportIncompleteError(Exception):
+    """An answer is missing on a report that must be complete (report auto-save rule 5)."""
 
 
 class ReportKindChangeError(Exception):
@@ -393,11 +436,12 @@ def get_report_roster(session: Session, small_group: SmallGroup, d: date, *, tod
         raise FutureMeetingDateError
     people = roster_on_date(session, small_group.id, d)
     streaks = missed_streaks_by_person(session, small_group.id, [p.key for p in people], d)
-    existing = session.execute(report_on_date_query(small_group.id, d)).one_or_none()
+    existing = first_as(session, report_on_date_query(small_group.id, d), ReportOnDate)
+    filed = existing if existing is not None and existing.status == ReportStatus.SUBMITTED else None
     return ReportRoster(
         people=[p._replace(missed_streak=streaks[p.key]) for p in people],
-        existing_report_id=existing[0] if existing is not None else None,
-        existing_report_held=existing[1] if existing is not None else None,
+        existing_report_id=filed.id if filed is not None else None,
+        existing_report_held=filed.held if filed is not None else None,
     )
 
 
@@ -408,6 +452,14 @@ def get_report(
     if only_group_ids is not None and not only_group_ids:
         return None
     return session.scalars(report_in_scope_query(report_id, only_group_ids)).one_or_none()
+
+
+def can_see_draft(report: SmallGroupReport | ReportOnDate, viewer: DraftViewer) -> bool:
+    """Report auto-save rule 14: the group's current leaders and co-leaders, and whoever started it. No
+    role sees other people's drafts. `led_group_ids` also holds closed groups, but those have no drafts."""
+    return report.small_group_id in viewer.led_group_ids or (
+        viewer.member_id is not None and report.started_by_member_id == viewer.member_id
+    )
 
 
 def observations_visible_to(*, sees_all_observations: bool, leads_group: bool) -> bool:
@@ -483,18 +535,25 @@ def create_report(
     *,
     submitter_member_id: int,
     caller_is_scoped: bool,
+    viewer: DraftViewer,
     today: date,
 ) -> SmallGroupReport:
+    """File a report, or start a draft with `body.status` (answers may be missing, report auto-save rule 4).
+    Reports rule 5 applies to both: the caller's member is who started it, and who submitted it unless
+    it's a draft."""
+    is_draft = body.status == ReportStatus.DRAFT
     replaced = _validate_date(
         session,
         small_group,
         body.meeting_date,
         held=body.held,
         today=today,
+        viewer=viewer,
         ignore_report_id=None,
         replaces_no_meeting=body.replaces_no_meeting and body.held,
+        replaces_draft=body.replaces_draft and not body.held,
     )
-    roster = _validated_roster(session, small_group, body)
+    roster = _validated_roster(session, small_group, body, allow_unanswered=is_draft)
     if caller_is_scoped and not any(
         p.member_id == submitter_member_id and p.role != SmallGroupRole.MEMBER for p in roster
     ):
@@ -506,8 +565,9 @@ def create_report(
         held=body.held,
         not_held_reason=body.not_held_reason,
         address=body.address,
-        submitted_by_member_id=submitter_member_id,
-        submitted_at=func.now(),
+        status=body.status,
+        submitted_by_member_id=None if is_draft else submitter_member_id,
+        submitted_at=None if is_draft else func.now(),
         started_by_member_id=submitter_member_id,
         items=_item_models(items),
         attendances=[
@@ -527,8 +587,53 @@ def create_report(
         session.delete(replaced)
         session.flush()
     session.add(report)
-    _commit_report_or_raise_conflict(session, small_group.id, body.meeting_date)
+    _commit_report_or_raise_conflict(session, small_group.id, body.meeting_date, viewer)
     return report
+
+
+def _lock_for_write(session: Session, report: SmallGroupReport, version: int | None) -> None:
+    """Lock the report's row and reload what a write decides on, so two writers can't both pass the
+    version check (report auto-save rule 9). `version` None skips the check, for clients from before
+    auto-save."""
+    try:
+        session.refresh(
+            report,
+            attribute_names=[
+                "status",
+                "version",
+                "submitted_by_member_id",
+                "submitted_at",
+                "last_edited_by_member_id",
+                "last_edited_at",
+            ],
+            with_for_update=True,
+        )
+    except InvalidRequestError as exc:
+        raise ReportGoneError from exc
+    if version is not None and version != report.version:
+        raise _version_conflict(session, report)
+
+
+def _version_conflict(session: Session, report: SmallGroupReport) -> ReportVersionConflictError:
+    """Names the last writer. Submitting isn't an edit, so it leaves `last_edited_*` alone: when the
+    submit came last, the submitter is who changed the report."""
+    submit_was_last = report.submitted_at is not None and (
+        report.last_edited_at is None or report.submitted_at > report.last_edited_at
+    )
+    member_id = report.submitted_by_member_id if submit_was_last else report.last_edited_by_member_id
+    member = session.get(Member, member_id) if member_id is not None else None
+    return ReportVersionConflictError(
+        report.version,
+        member_id,
+        member.name if member is not None else None,
+        report.submitted_at if submit_was_last else report.last_edited_at,
+    )
+
+
+def _mark_edited(report: SmallGroupReport, editor_member_id: int | None) -> None:
+    report.version += 1
+    report.last_edited_by_member_id = editor_member_id
+    report.last_edited_at = func.now()
 
 
 def update_report(
@@ -536,24 +641,29 @@ def update_report(
     report: SmallGroupReport,
     body: ReportInput,
     *,
+    version: int | None,
+    editor_member_id: int | None,
+    viewer: DraftViewer,
     sees_all_observations: bool,
     leads_group: bool,
     today: date,
 ) -> SmallGroupReport:
     """Replace the report's content (rule 6: `submitted_by_member_id` and `submitted_at` never change).
 
-    Attendance rows are updated in place by person (member or guest) so stored observations survive.
-    A caller who can't see observations (rule 9) can't change them either: theirs are ignored, stored
-    ones kept.
+    A draft may have answers missing; a submitted report stays complete. Attendance rows are updated in
+    place by person (member or guest) so stored observations survive. A caller who can't see
+    observations (rule 9) can't change them either: theirs are ignored, stored ones kept.
     """
     if body.held != report.held or body.replaces_no_meeting:
         raise ReportKindChangeError
+    _lock_for_write(session, report, version)
     _validate_date(
         session,
         report.small_group,
         body.meeting_date,
         held=body.held,
         today=today,
+        viewer=viewer,
         ignore_report_id=report.id,
         replaces_no_meeting=False,
     )
@@ -564,9 +674,10 @@ def update_report(
             report.no_meeting_week_id = None
         report.meeting_date = body.meeting_date
         report.not_held_reason = body.not_held_reason
-        _commit_report_or_raise_conflict(session, report.small_group_id, body.meeting_date)
+        _mark_edited(report, editor_member_id)
+        _commit_report_or_raise_conflict(session, report.small_group_id, body.meeting_date, viewer)
         return report
-    _validated_roster(session, report.small_group, body)
+    _validated_roster(session, report.small_group, body, allow_unanswered=report.status == ReportStatus.DRAFT)
     items = _new_items(session, body.sections or {}, previously_tagged=_tagged_by_section(session, report.id))
     may_edit_observations = observations_visible_to(
         sees_all_observations=sees_all_observations, leads_group=leads_group
@@ -600,7 +711,48 @@ def update_report(
         row.attended_church = attendance.attended_church
         if may_edit_observations:
             row.observation = attendance.observation
-    _commit_report_or_raise_conflict(session, report.small_group_id, body.meeting_date)
+    _mark_edited(report, editor_member_id)
+    _commit_report_or_raise_conflict(session, report.small_group_id, body.meeting_date, viewer)
+    return report
+
+
+def submit_report(
+    session: Session,
+    report: SmallGroupReport,
+    *,
+    version: int | None,
+    caller_member_id: int | None,
+    caller_is_scoped: bool,
+) -> SmallGroupReport:
+    """Turn a draft into a submitted report, one way (report auto-save rule 5). The caller's member
+    becomes the submitter, with the same checks as filing a report."""
+    _lock_for_write(session, report, None)
+    if report.status != ReportStatus.DRAFT:
+        raise ReportAlreadySubmittedError
+    if report.small_group.closed_at is not None:
+        raise SmallGroupClosedError
+    if version is not None and version != report.version:
+        raise _version_conflict(session, report)
+    if caller_member_id is None:
+        raise MemberRequiredToSubmitError
+    roster = roster_on_date(session, report.small_group_id, report.meeting_date)
+    if caller_is_scoped and not any(
+        p.member_id == caller_member_id and p.role != SmallGroupRole.MEMBER for p in roster
+    ):
+        raise NotGroupLeaderOnDateError
+    # The roster may have changed since the last save (rule 11): a report never goes out without the
+    # people it should have, and the editor adds them when it reloads.
+    keys = [person_key(a.member_id, a.guest_id) for a in report.attendances]
+    if set(keys) != {p.key for p in roster}:
+        raise AttendanceMismatchError
+    if any(a.attended_group is None or a.attended_church is None for a in report.attendances):
+        raise ReportIncompleteError
+    report.status = ReportStatus.SUBMITTED
+    report.submitted_by_member_id = caller_member_id
+    report.submitted_at = func.now()
+    report.version += 1
+    # The future submit email to elders goes here: an outbox row in this transaction.
+    session.commit()
     return report
 
 
@@ -1029,7 +1181,7 @@ def update_no_meeting_week_reason(session: Session, week_id: int, reason: str | 
     session.execute(
         update(SmallGroupReport)
         .where(SmallGroupReport.no_meeting_week_id == week_id)
-        .values(not_held_reason=reason)
+        .values(not_held_reason=reason, version=SmallGroupReport.version + 1)
     )
     session.commit()
     row = first_as(session, no_meeting_week_query(week_id=week_id), NoMeetingWeekRow)
@@ -1203,28 +1355,44 @@ def _validate_date(
     *,
     held: bool,
     today: date,
+    viewer: DraftViewer,
     ignore_report_id: int | None,
     replaces_no_meeting: bool,
+    replaces_draft: bool = False,
 ) -> SmallGroupReport | None:
     """Rules 1, 2 and 8 for a create or edit (closed, future, duplicate, in that order).
 
-    A held report is dated today or earlier, a no meeting up to the end of next week. Returns the no
-    meeting the new report replaces (rule 13.5), or None. A held report is never replaced.
+    A held report is dated today or earlier, a no meeting up to the end of next week. Returns what the
+    new report replaces, or None: a no meeting (rule 13.5) or a draft the caller can see (report
+    auto-save rule 18). A submitted held report is never replaced.
     """
     if small_group.closed_at is not None:
         raise SmallGroupClosedError
     if meeting_date > (today if held else _last_no_meeting_date(today)):
         raise FutureMeetingDateError
-    existing = session.execute(report_on_date_query(small_group.id, meeting_date)).one_or_none()
+    existing = first_as(session, report_on_date_query(small_group.id, meeting_date), ReportOnDate)
     if existing is None or existing.id == ignore_report_id:
         return None
-    if replaces_no_meeting and not existing.held:
+    is_draft = existing.status == ReportStatus.DRAFT
+    if (replaces_no_meeting and not existing.held) or (
+        replaces_draft and is_draft and can_see_draft(existing, viewer)
+    ):
         return session.get(SmallGroupReport, existing.id)
-    raise ReportAlreadyExistsError(existing.id, existing.held)
+    raise _date_taken(existing, viewer)
 
 
-def _validated_roster(session: Session, small_group: SmallGroup, body: ReportInput) -> list[RosterPerson]:
-    """Rule 3 for a held report; a no meeting has no attendance. Returns the roster on the meeting date."""
+def _date_taken(existing: ReportOnDate, viewer: DraftViewer) -> Exception:
+    """Someone else's draft stays hidden (report auto-save rule 17): no id, only that it is in progress."""
+    if existing.status == ReportStatus.DRAFT and not can_see_draft(existing, viewer):
+        return DraftInProgressError(existing.started_by_name)
+    return ReportAlreadyExistsError(existing.id, existing.held)
+
+
+def _validated_roster(
+    session: Session, small_group: SmallGroup, body: ReportInput, *, allow_unanswered: bool = False
+) -> list[RosterPerson]:
+    """Rule 3 for a held report; a no meeting has no attendance. Returns the roster on the meeting date.
+    Only a draft may have answers missing (report auto-save rule 4)."""
     roster = roster_on_date(session, small_group.id, body.meeting_date)
     if not body.held:
         return roster
@@ -1233,19 +1401,25 @@ def _validated_roster(session: Session, small_group: SmallGroup, body: ReportInp
     # repeated people.
     if len(sent_keys) != len(set(sent_keys)) or set(sent_keys) != {p.key for p in roster}:
         raise AttendanceMismatchError
+    if not allow_unanswered and any(
+        a.attended_group is None or a.attended_church is None for a in body.attendances
+    ):
+        raise ReportIncompleteError
     return roster
 
 
-def _commit_report_or_raise_conflict(session: Session, small_group_id: int, meeting_date: date) -> None:
+def _commit_report_or_raise_conflict(
+    session: Session, small_group_id: int, meeting_date: date, viewer: DraftViewer
+) -> None:
     """Commit, mapping a lost race on (group, meeting date) to the same error as the check."""
     try:
         session.commit()
     except IntegrityError as exc:
         session.rollback()
         if "uq_small_group_reports_small_group_id" in str(exc.orig):
-            existing = session.execute(report_on_date_query(small_group_id, meeting_date)).one_or_none()
+            existing = first_as(session, report_on_date_query(small_group_id, meeting_date), ReportOnDate)
             if existing is not None:
-                raise ReportAlreadyExistsError(existing.id, existing.held) from exc
+                raise _date_taken(existing, viewer) from exc
         raise
 
 
@@ -1275,11 +1449,20 @@ def update_small_group(session: Session, small_group: SmallGroup, changes: dict[
     return small_group
 
 
-def close_small_group(session: Session, small_group: SmallGroup, closed_at: date) -> SmallGroup:
-    """Close the group and end every active membership on the same date, keeping the history."""
+def group_draft_count(session: Session, small_group_id: int) -> int:
+    """How many drafts closing the group would discard."""
+    return session.scalar(group_drafts_count_query(small_group_id)) or 0
+
+
+def close_small_group(session: Session, small_group: SmallGroup, closed_at: date) -> ClosedGroup:
+    """Close the group, discard its drafts (report auto-save rule 19) and end every active membership on
+    the same date, keeping the history."""
     if small_group.closed_at is not None:
         raise SmallGroupAlreadyClosedError
     small_group.closed_at = closed_at
+    drafts = session.scalars(group_drafts_query(small_group.id)).all()
+    for draft in drafts:  # Through the ORM: attendance rows go by its cascade, not the database's.
+        session.delete(draft)
     session.execute(
         update(SmallGroupMember)
         .where(SmallGroupMember.small_group_id == small_group.id, SmallGroupMember.left_at.is_(None))
@@ -1287,7 +1470,7 @@ def close_small_group(session: Session, small_group: SmallGroup, closed_at: date
         .values(left_at=func.greatest(SmallGroupMember.joined_at, closed_at))
     )
     session.commit()
-    return small_group
+    return ClosedGroup(small_group, len(drafts))
 
 
 def add_small_group_member(
