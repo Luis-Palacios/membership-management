@@ -38,7 +38,7 @@ per-route `rate_limit`).
 | 2. Every read ignores drafts | ✅ | |
 | 3. Draft writes: create, save with version, submit, discard, replace, close | ✅ | |
 | 4. Draft reads: detail, roster, list, summary, week | ✅ | |
-| 5. Seed and docs | ⬜ | |
+| 5. Seed and docs | ✅ | |
 | 6. Contract (after the new staff app is deployed) | ⬜ | |
 
 ### Decisions and deviations
@@ -68,6 +68,10 @@ per-route `rate_limit`).
   uses the same test as filing: a draft on any day of that church week.
 - `existingReport` of a submitted report or no meeting also has `version` (same schema as a visible
   draft's).
+- Seed: there's no group called Jóvenes Bello Horizonte; `GP - #4` is the Bello Horizonte group with 8
+  people. Every meeting in the window already has a report, so each draft replaces its group's newest
+  report **without conversations** rather than the most recent one, which would lose its threads. The
+  second draft is `GP - #1`'s. Re-running with `--reset` gives the same drafts.
 
 ## Data model
 
