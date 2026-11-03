@@ -8,7 +8,6 @@ from sqlalchemy import (
     and_,
     case,
     cast,
-    false,
     func,
     literal,
     null,
@@ -18,11 +17,12 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import aliased, joinedload, selectinload
 
-from membership_management.data.guests.models import Guest
+from membership_management.data.guests.models import Guest, GuestStatus
 from membership_management.data.members.models import Member, MemberStatus
 from membership_management.data.small_groups.models import (
     SmallGroup,
     SmallGroupMember,
+    SmallGroupNoMeetingWeek,
     SmallGroupReport,
     SmallGroupReportAttendance,
     SmallGroupReportItem,
@@ -288,6 +288,7 @@ def filed_reports_query(
             SmallGroupReport.submitted_at.label("submitted_at"),
             SmallGroupReport.held.label("held"),
             SmallGroupReport.not_held_reason.label("not_held_reason"),
+            SmallGroupReport.no_meeting_week_id.label("no_meeting_week_id"),
             func.count(attendance.id).label("roster_count"),
             func.count(attendance.id)
             .filter(attendance.attended_group.is_(True))
@@ -392,6 +393,7 @@ def week_reports_query(group_ids: frozenset[int], from_date: date, to_date: date
             Member.name.label("submitted_by_name"),
             SmallGroupReport.held.label("held"),
             SmallGroupReport.not_held_reason.label("not_held_reason"),
+            SmallGroupReport.no_meeting_week_id.label("no_meeting_week_id"),
         )
         .join(Member, Member.id == SmallGroupReport.submitted_by_member_id)
         .outerjoin(attendance, attendance.report_id == SmallGroupReport.id)
@@ -403,6 +405,44 @@ def week_reports_query(group_ids: frozenset[int], from_date: date, to_date: date
         .group_by(SmallGroupReport.id, Member.id)
         .order_by(SmallGroupReport.meeting_date.desc(), SmallGroupReport.id.desc())
     )
+
+
+def reported_group_ids_in_week_query(group_ids: frozenset[int], from_date: date, to_date: date) -> Select:
+    """The groups with any report dated in [from_date, to_date], held or not."""
+    return (
+        select(SmallGroupReport.small_group_id)
+        .where(
+            SmallGroupReport.small_group_id.in_(group_ids),
+            SmallGroupReport.meeting_date >= from_date,
+            SmallGroupReport.meeting_date <= to_date,
+        )
+        .distinct()
+    )
+
+
+def no_meeting_week_query(*, week_id: int | None = None, week_start: date | None = None) -> Select:
+    """A church-wide no meeting week, by id or by week start, with its creator's name and how many
+    reports are still linked to it."""
+    linked_count = (
+        select(func.count())
+        .where(SmallGroupReport.no_meeting_week_id == SmallGroupNoMeetingWeek.id)
+        .scalar_subquery()
+    )
+    query = select(
+        SmallGroupNoMeetingWeek.id.label("id"),
+        SmallGroupNoMeetingWeek.week_start.label("week_start"),
+        SmallGroupNoMeetingWeek.reason.label("reason"),
+        Member.id.label("created_by_member_id"),
+        Member.name.label("created_by_name"),
+        SmallGroupNoMeetingWeek.created_at.label("created_at"),
+        SmallGroupNoMeetingWeek.updated_at.label("updated_at"),
+        linked_count.label("linked_count"),
+    ).join(Member, Member.id == SmallGroupNoMeetingWeek.created_by_member_id)
+    if week_id is not None:
+        query = query.where(SmallGroupNoMeetingWeek.id == week_id)
+    if week_start is not None:
+        query = query.where(SmallGroupNoMeetingWeek.week_start == week_start)
+    return query
 
 
 def active_leaders_query(group_ids: frozenset[int]) -> Select:
@@ -503,7 +543,7 @@ def people_current_groups_query(member_ids: frozenset[int], guest_ids: frozenset
 
 
 def people_query(member_ids: frozenset[int], guest_ids: frozenset[int]) -> Select:
-    """Name and inactive flag of each of these members and guests that exists (guests never inactive)."""
+    """Name and inactive flag of each of these members and guests that exists."""
     members = select(
         literal("member").label("kind"),
         Member.id.label("id"),
@@ -514,6 +554,6 @@ def people_query(member_ids: frozenset[int], guest_ids: frozenset[int]) -> Selec
         literal("guest").label("kind"),
         Guest.id.label("id"),
         Guest.name.label("name"),
-        false().label("inactive"),
+        (Guest.status == GuestStatus.INACTIVE).label("inactive"),
     ).where(Guest.id.in_(guest_ids))
     return select(union_all(members, guests).subquery())

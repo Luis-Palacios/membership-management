@@ -104,7 +104,8 @@ queries, services, results), imported in `data/models.py`.
   ends before it starts, and a zero-length period can't be rewritten in place across two groups), so
   that one day is in both rosters; one that started after `joinedAt` is the 409 overlap, not a move.
   A join is also refused (409 overlap) when any earlier closed period of the guest, in any group,
-  ends on or after `joinedAt`.
+  ends after `joinedAt`. Ending on it is fine, so a guest removed today can rejoin today (changed by
+  inactive guests, see `INACTIVE-GUESTS-API-HANDOFF.md`).
 - **Stage 2, other choices:** `missed_streaks_by_person` (keys `("member"|"guest", id)`) is the one
   streak implementation; `missed_streaks` keeps its member signature on top of it (stage 4 moves its
   callers). `lastAttendedDate` is the newest meeting the guest attended in *any* group, the streak is

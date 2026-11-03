@@ -34,7 +34,12 @@ from membership_management.api.schemas.small_groups import (
     SmallGroupSummarySchema,
     SmallGroupUpdateSchema,
 )
-from membership_management.data.guests.services import InvitedByNotFoundError, NewGuest
+from membership_management.data.guests.services import (
+    GuestInactiveError,
+    GuestReactivation,
+    InvitedByNotFoundError,
+    NewGuest,
+)
 from membership_management.data.members.services import MemberInactiveError
 from membership_management.data.small_groups.models import GroupAudience, SmallGroup, SmallGroupRole
 from membership_management.data.small_groups.results import OtherGroup
@@ -88,6 +93,7 @@ class GuestInAnotherGroupHTTPError(HTTPException):
 
 
 GUEST_JOIN_ERRORS = (
+    GuestInactiveError,
     SmallGroupClosedError,
     NotGuestGroupError,
     GuestNotFoundError,
@@ -103,6 +109,8 @@ def guest_join_http_error(exc: Exception) -> HTTPException:
     """Map the errors of `add_guest_to_group` to HTTP (the staff app matches on a phrase in `detail`)."""
     if isinstance(exc, GuestInAnotherGroupError):
         return GuestInAnotherGroupHTTPError(exc.other_group)
+    if isinstance(exc, GuestInactiveError):
+        return CodedHTTPError(409, "This guest is inactive.", "guest_inactive")
     errors: dict[type[Exception], tuple[int, str]] = {
         SmallGroupClosedError: (409, "This small group is closed."),
         NotGuestGroupError: (422, "Only a guest group can have guests."),
@@ -436,6 +444,8 @@ def post_small_group_guest(
             raise HTTPException(status_code=403, detail="You don't have permission to do this.")
         ensure_guest_groups_enabled()
         new_guest = NewGuest(**body.new_guest.model_dump())
+    if body.reactivate and not has_permission(claims, "guests", "reactivate"):
+        raise HTTPException(status_code=403, detail="You don't have permission to do this.")
     try:
         guest_id = add_guest_to_group(
             db,
@@ -446,6 +456,7 @@ def post_small_group_guest(
             move_from_other_group=body.move_from_other_group,
             created_by_member_id=member.id if member is not None else None,
             today=_today(),
+            reactivation=GuestReactivation(body.reactivate_note, claims.sub) if body.reactivate else None,
         )
     except GUEST_JOIN_ERRORS as exc:
         raise guest_join_http_error(exc) from exc

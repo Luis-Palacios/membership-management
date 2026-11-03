@@ -38,15 +38,26 @@ Work through it **stage by stage**, one reviewable commit per stage, on the
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. Migration and model | ⬜ | |
-| 2. Next week: week endpoint and future no meetings | ⬜ | |
-| 3. Mark a week (`POST /no-meeting-weeks`) | ⬜ | |
-| 4. Edit reason, undo, unlink on leader edit, reads | ⬜ | |
-| 5. Seed and docs | ⬜ | |
+| 1. Migration and model | ✅ | `a82e1f0` |
+| 2. Next week: week endpoint and future no meetings | ✅ | `b8c773f` |
+| 3. Mark a week (`POST /no-meeting-weeks`) | ✅ | `351b553` |
+| 4. Edit reason, undo, unlink on leader edit, reads | ✅ | `98fc56b` |
+| 5. Seed and docs | ✅ | `26e2412` |
 
 ### Decisions and deviations
 
-- (none yet)
+- Stage 3: `skipped.reported` counts every group with a report dated in the week, as written, so on
+  a re-run it includes the groups this week already marked (first run 3, re-run 3 + `linkedCount`).
+  The staff app shows `marked` and `linkedCount`, so nothing there depends on it.
+- Stage 4: dropping the `no_meeting_week_id` defaults meant dropping the older trailing defaults
+  before it too (`held`, `not_held_reason`, and `conversation_count` on `ReportDetail`), since a
+  NamedTuple field without a default can't follow one with a default. Every construction already
+  passed them.
+- Stage 5: the seed's "met anyway" groups are the two guest groups, which `seed_guests` files every
+  week; it isn't touched, so guest attendance plans stay as they were. The first member group's
+  leader marks the week first; the other member groups are left empty, and `seed_no_meeting_week`
+  (last seeder, needs every group's reports) marks them, after the week's last report came in.
+- Rules 1–13 of the cross-repo spec needed no change.
 
 ## Data model
 

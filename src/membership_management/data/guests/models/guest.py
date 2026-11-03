@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Date, DateTime, Enum, ForeignKey, Identity, Index, String, func, text
@@ -9,6 +10,13 @@ from membership_management.data.members.models import MemberSex
 
 if TYPE_CHECKING:
     from membership_management.data.members.models import Member
+
+
+class GuestStatus(StrEnum):
+    """`inactive` means the person is gone, with a reason; it isn't the same as being in no group."""
+
+    ACTIVE = "active"
+    INACTIVE = "inactive"
 
 
 class Guest(MemberManagementBase):
@@ -57,6 +65,21 @@ class Guest(MemberManagementBase):
     # Null when the creator has no linked member (an unlinked admin or elder can create guests).
     created_by_member_id: Mapped[int | None] = mapped_column(ForeignKey("members.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Copies of the latest guest_status_changes row, kept in the same transaction (inactive-guests
+    # spec, rule 2). Never set directly: go through deactivate_guest / reactivate_guest.
+    status: Mapped[GuestStatus] = mapped_column(
+        Enum(
+            GuestStatus,
+            native_enum=False,
+            create_constraint=True,
+            length=10,
+            name="status",
+            values_callable=lambda values: [v.value for v in values],
+        ),
+        default=GuestStatus.ACTIVE,
+        server_default=GuestStatus.ACTIVE.value,
+    )
+    status_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # Points to the assimilation DB's Persona.Id_Persona, like members.legacy_id. This feature never
     # sets it: importing is a separate scope.

@@ -21,6 +21,9 @@ if TYPE_CHECKING:
     from membership_management.data.members.models import Member
     from membership_management.data.small_groups.models.report_conversation import ReportConversation
     from membership_management.data.small_groups.models.small_group import SmallGroup
+    from membership_management.data.small_groups.models.small_group_no_meeting_week import (
+        SmallGroupNoMeetingWeek,
+    )
     from membership_management.data.small_groups.models.small_group_report_attendance import (
         SmallGroupReportAttendance,
     )
@@ -33,6 +36,7 @@ class SmallGroupReport(MemberManagementBase):
         UniqueConstraint("small_group_id", "meeting_date"),
         CheckConstraint("NOT held OR not_held_reason IS NULL", name="not_held_reason_only_when_not_held"),
         CheckConstraint("held OR address IS NULL", name="not_held_has_no_texts"),
+        CheckConstraint("NOT held OR no_meeting_week_id IS NULL", name="no_meeting_week_only_when_not_held"),
     )
 
     id: Mapped[int] = mapped_column(Identity(always=True), primary_key=True)
@@ -49,8 +53,14 @@ class SmallGroupReport(MemberManagementBase):
     # The service layer checks they held one of those roles on meeting_date; the DB can't.
     submitted_by_member_id: Mapped[int] = mapped_column(ForeignKey("members.id"), index=True)
     submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Set when a church-wide no meeting created this report; cleared when a leader edits its reason
+    # or date. Undo deletes the reports still linked explicitly, so no ORM cascade.
+    no_meeting_week_id: Mapped[int | None] = mapped_column(
+        ForeignKey("small_group_no_meeting_weeks.id", ondelete="SET NULL"), index=True
+    )
 
     small_group: Mapped["SmallGroup"] = relationship()
+    no_meeting_week: Mapped["SmallGroupNoMeetingWeek | None"] = relationship()
     submitted_by: Mapped["Member"] = relationship()
     attendances: Mapped[list["SmallGroupReportAttendance"]] = relationship(
         back_populates="report", cascade="all, delete-orphan"

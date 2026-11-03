@@ -13,6 +13,7 @@ from membership_management.data.small_groups.models import (
     SmallGroupReportAttendance,
     SmallGroupRole,
 )
+from membership_management.data.small_groups.services import church_sunday
 
 if TYPE_CHECKING:
     from membership_management.data.small_groups.results import PersonKey
@@ -24,12 +25,22 @@ SKIPPED_WEEK_RATE = 0.15
 NO_MEETING_SHARE = 1 / 3
 ATTENDED_GROUP_RATE = 0.8
 ATTENDED_CHURCH_RATE = 0.85
+# One past week is marked church-wide (`seed_no_meeting_week`, after every report): the first member
+# group's leader marked it first, the other member groups are left empty for the mark, and the guest
+# groups (`seed_guests`) met anyway, so the week shows all three.
+CHURCH_WIDE_WEEKS_AGO = 2
+CHURCH_WIDE_REASON = "Semana Santa: no hay grupos pequeños"
+
+
+def church_wide_week_start(today: date) -> date:
+    return church_sunday(today) - timedelta(weeks=CHURCH_WIDE_WEEKS_AGO)
 
 
 def seed_small_group_reports(ctx: SeedContext) -> None:
     rng, session = ctx.rng, ctx.session
     current = list(session.scalars(select(SmallGroupMember).where(SmallGroupMember.left_at.is_(None))))
-    for group in session.scalars(select(SmallGroup).order_by(SmallGroup.id)):
+    church_wide = church_wide_week_start(ctx.today)
+    for group_index, group in enumerate(session.scalars(select(SmallGroup).order_by(SmallGroup.id))):
         rows = list(
             session.scalars(select(SmallGroupMember).where(SmallGroupMember.small_group_id == group.id))
         )
@@ -44,7 +55,12 @@ def seed_small_group_reports(ctx: SeedContext) -> None:
         for meeting_date in _meeting_dates(group, ctx.today):
             skipped = rng.random() < SKIPPED_WEEK_RATE
             no_meeting = skipped and rng.random() < NO_MEETING_SHARE
-            if skipped and not no_meeting:
+            if church_sunday(meeting_date) == church_wide:
+                # Not the random skips: the first group's leader marks it, the rest wait for the mark.
+                if group_index > 0:
+                    continue
+                no_meeting = True
+            elif skipped and not no_meeting:
                 continue
             active = [row for row in rows if _active_on(row, meeting_date)]
             leaders = [row for row in active if row.role != SmallGroupRole.MEMBER]

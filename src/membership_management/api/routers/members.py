@@ -208,8 +208,8 @@ def get_membermember_detail(
     "/{member_id}/timeline",
     name="get_member_timeline",
     description=(
-        "The held reports a member is on the attendance list of or tagged in, with only what the caller "
-        "may see (within your members scope)"
+        "A member's timeline: held reports they are on the attendance list of or tagged in, and status "
+        "changes, with only what the caller may see (within your members scope)"
     ),
     dependencies=[Depends(require_permission("members", "view"))],
 )

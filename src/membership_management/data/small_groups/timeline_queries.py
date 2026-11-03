@@ -1,7 +1,13 @@
-from sqlalchemy import ColumnElement, CompoundSelect, Select, and_, case, select, union
+from collections.abc import Collection
+from datetime import date
 
-from membership_management.data.members.models import Member
+from sqlalchemy import ColumnElement, CompoundSelect, Select, and_, case, func, or_, select, union
+from sqlalchemy.orm import aliased
+
+from membership_management.data.guests.models import GuestStatusChange
+from membership_management.data.members.models import Member, MemberStatusChange
 from membership_management.data.small_groups.models import (
+    ReportSection,
     SmallGroup,
     SmallGroupMember,
     SmallGroupReport,
@@ -34,13 +40,60 @@ def _person_report_ids(person: PersonKey) -> CompoundSelect:
     return union(on_list, tagged)
 
 
-def person_timeline_reports_query(person: PersonKey) -> Select:
-    """Held reports, any date and group, the person has an attendance line in or is tagged in.
+def _visible_report(person: PersonKey, observation_groups: frozenset[int] | None) -> ColumnElement[bool]:
+    """Reports with something of the person the caller may see (rule 23): an attendance line or any tag
+    in the caller's observation audience (`observation_groups`; None: every group), and a prayer or
+    praise tag anywhere. The service's `_visible_parts` picks those same parts out of each report."""
+    if observation_groups is None:
+        return SmallGroupReport.id.in_(_person_report_ids(person))
+    tagged_for_anyone = (
+        select(SmallGroupReportItem.report_id)
+        .join(SmallGroupReportItemPerson, SmallGroupReportItemPerson.item_id == SmallGroupReportItem.id)
+        .where(
+            _is_person(SmallGroupReportItemPerson, person),
+            SmallGroupReportItem.section != ReportSection.FOLLOW_UP,
+        )
+    )
+    return or_(
+        and_(
+            SmallGroupReport.small_group_id.in_(observation_groups),
+            SmallGroupReport.id.in_(_person_report_ids(person)),
+        ),
+        SmallGroupReport.id.in_(tagged_for_anyone),
+    )
+
+
+def person_timeline_groups_query(person: PersonKey, observation_groups: frozenset[int] | None) -> Select:
+    """Each group with a report visible to the caller, any date, and that group's oldest such report."""
+    return (
+        select(
+            SmallGroup.id.label("id"),
+            SmallGroup.name.label("name"),
+            SmallGroup.audience.label("audience"),
+            func.min(SmallGroupReport.meeting_date).label("earliest_date"),
+        )
+        .join(SmallGroupReport, SmallGroupReport.small_group_id == SmallGroup.id)
+        .where(SmallGroupReport.held, _visible_report(person, observation_groups))
+        .group_by(SmallGroup.id)
+    )
+
+
+def person_timeline_reports_query(
+    person: PersonKey,
+    observation_groups: frozenset[int] | None,
+    *,
+    from_: date | None,
+    to: date | None,
+    small_group_id: int | None,
+    latest: int | None,
+) -> Select:
+    """Held reports visible to the caller the person has an attendance line in or is tagged in, newest
+    first, between `from_` and `to` and in one group when those are given, at most `latest` of them.
 
     A report has at most one attendance line per person (unique constraint), so the outer join adds no
-    rows. Visibility (rule 23) depends on the caller and is applied by the service.
+    rows.
     """
-    return (
+    query = (
         select(
             SmallGroupReport.id.label("report_id"),
             SmallGroupReport.meeting_date.label("meeting_date"),
@@ -53,7 +106,7 @@ def person_timeline_reports_query(person: PersonKey) -> Select:
             Member.id.label("submitted_by_member_id"),
             Member.name.label("submitted_by_name"),
         )
-        .where(SmallGroupReport.id.in_(_person_report_ids(person)))
+        .where(_visible_report(person, observation_groups))
         .join(SmallGroup, SmallGroup.id == SmallGroupReport.small_group_id)
         .join(Member, Member.id == SmallGroupReport.submitted_by_member_id)
         .outerjoin(
@@ -64,7 +117,16 @@ def person_timeline_reports_query(person: PersonKey) -> Select:
             ),
         )
         .where(SmallGroupReport.held)
+        .order_by(SmallGroupReport.meeting_date.desc(), SmallGroupReport.id.desc())
+        .limit(latest)
     )
+    if from_ is not None:
+        query = query.where(SmallGroupReport.meeting_date >= from_)
+    if to is not None:
+        query = query.where(SmallGroupReport.meeting_date <= to)
+    if small_group_id is not None:
+        query = query.where(SmallGroupReport.small_group_id == small_group_id)
+    return query
 
 
 def person_timeline_periods_query(person: PersonKey) -> Select:
@@ -78,8 +140,9 @@ def person_timeline_periods_query(person: PersonKey) -> Select:
     ).where(_is_person(SmallGroupMember, person))
 
 
-def person_timeline_items_query(person: PersonKey) -> Select:
-    """The items tagging the person, by report, then section (prayer, praise, follow-up), then position."""
+def person_timeline_items_query(person: PersonKey, report_ids: Collection[int]) -> Select:
+    """The items of these reports tagging the person, by report, then section (prayer, praise,
+    follow-up), then position."""
     section_order = case(
         {"prayer": 0, "praise": 1, "followUp": 2}, value=SmallGroupReportItem.section, else_=3
     )
@@ -91,7 +154,50 @@ def person_timeline_items_query(person: PersonKey) -> Select:
             SmallGroupReportItem.text.label("text"),
         )
         .join(SmallGroupReportItemPerson, SmallGroupReportItemPerson.item_id == SmallGroupReportItem.id)
-        .join(SmallGroupReport, SmallGroupReport.id == SmallGroupReportItem.report_id)
-        .where(SmallGroupReport.held, _is_person(SmallGroupReportItemPerson, person))
+        .where(SmallGroupReportItem.report_id.in_(report_ids), _is_person(SmallGroupReportItemPerson, person))
         .order_by(SmallGroupReportItem.report_id, section_order, SmallGroupReportItem.position)
     )
+
+
+def _status_changes_of(
+    person: PersonKey,
+) -> tuple[type[MemberStatusChange] | type[GuestStatusChange], ColumnElement[bool]]:
+    """The person's status history table, and the condition that keeps their rows."""
+    kind, person_id = person
+    if kind == "member":
+        return MemberStatusChange, MemberStatusChange.member_id == person_id
+    return GuestStatusChange, GuestStatusChange.guest_id == person_id
+
+
+def person_timeline_status_changes_query(
+    person: PersonKey, *, from_: date | None, to: date | None, latest: int | None
+) -> Select:
+    """The person's status changes, newest first, with the member linked to whoever made each (if any),
+    between `from_` and `to` when given, at most `latest` of them."""
+    model, is_person = _status_changes_of(person)
+    changed_by = aliased(Member)
+    query = (
+        select(
+            model.effective_date.label("effective_date"),
+            model.status.label("status"),
+            model.reason.label("reason"),
+            model.note.label("note"),
+            changed_by.id.label("changed_by_member_id"),
+            changed_by.name.label("changed_by_name"),
+        )
+        .outerjoin(changed_by, changed_by.user_id == model.changed_by_user_id)
+        .where(is_person)
+        .order_by(model.effective_date.desc(), model.created_at.desc(), model.id.desc())
+        .limit(latest)
+    )
+    if from_ is not None:
+        query = query.where(model.effective_date >= from_)
+    if to is not None:
+        query = query.where(model.effective_date <= to)
+    return query
+
+
+def person_timeline_earliest_status_change_query(person: PersonKey) -> Select:
+    """The date of the person's oldest status change, whatever the range."""
+    model, is_person = _status_changes_of(person)
+    return select(func.min(model.effective_date)).where(is_person)

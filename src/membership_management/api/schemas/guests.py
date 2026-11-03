@@ -3,7 +3,8 @@ from datetime import date, datetime
 from pydantic import EmailStr
 
 from membership_management.api.schemas.base import CamelModel
-from membership_management.api.schemas.members import Address, Name, Phone
+from membership_management.api.schemas.members import Address, Name, Note, Phone
+from membership_management.data.guests.models import GuestInactiveReason, GuestStatus
 from membership_management.data.members.models import MemberSex
 from membership_management.data.small_groups.models import LeftReason, SmallGroupRole
 
@@ -39,6 +40,11 @@ class GuestListItemSchema(CamelModel):
     name: str
     phone: str | None
     first_visit_date: date | None
+    status: GuestStatus
+    # The date they left, from the latest deactivation; null while active.
+    inactive_since: date | None
+    # Private (inactive-guests rule 9): null unless the caller has `guests: deactivate`.
+    inactive_reason: GuestInactiveReason | None
     # Exactly one of these is set for a guest who has been in a group; neither for one who never was.
     current_group: GuestCurrentGroupSchema | None
     last_group: GuestLastGroupSchema | None
@@ -68,11 +74,14 @@ class GuestSearchLastGroupSchema(CamelModel):
 
 
 class GuestSearchItemSchema(CamelModel):
-    """Rule 14, and nothing more: enough to recognise someone, no email, address or observations."""
+    """Rule 14, and nothing more: enough to recognise someone, no email, address or observations. An
+    inactive guest shows as such, with the date they left but never why (inactive-guests rule 7)."""
 
     id: int
     name: str
     phone_last4: str | None
+    status: GuestStatus
+    inactive_since: date | None
     current_group: GuestCurrentGroupSchema | None
     last_group: GuestSearchLastGroupSchema | None
     last_attended_date: date | None
@@ -102,6 +111,16 @@ class GuestAttendanceSchema(CamelModel):
     observation: str | None
 
 
+class GuestStatusChangeSchema(CamelModel):
+    status: GuestStatus
+    reason: GuestInactiveReason | None
+    effective_date: date
+    note: str | None
+    changed_by_user_id: str
+    changed_by_name: str | None
+    created_at: datetime
+
+
 class GuestDetailSchema(CamelModel):
     id: int
     name: str
@@ -113,12 +132,31 @@ class GuestDetailSchema(CamelModel):
     invited_by: GuestRefSchema | None
     created_by: GuestRefSchema | None
     created_at: datetime
+    status: GuestStatus
+    # The date they left, from the latest deactivation; null while active.
+    inactive_since: date | None
+    # Private (inactive-guests rule 9): null unless the caller has `guests: deactivate`.
+    inactive_reason: GuestInactiveReason | None
+    inactive_note: str | None
+    # Newest first; same privacy as the reason.
+    status_history: list[GuestStatusChangeSchema] | None
     current_group: GuestCurrentGroupSchema | None
     last_attended_date: date | None
     # Every period in a guest group, newest first.
     group_history: list[GuestPeriodSchema]
     # The last 12 attendance rows; a leader only gets the rows of the groups they lead.
     recent_attendance: list[GuestAttendanceSchema]
+
+
+class GuestDeactivateSchema(CamelModel):
+    reason: GuestInactiveReason
+    # The date they left: today or earlier.
+    effective_date: date
+    note: Note = None
+
+
+class GuestReactivateSchema(CamelModel):
+    note: Note = None
 
 
 class GuestCreateSchema(NewGuestSchema):

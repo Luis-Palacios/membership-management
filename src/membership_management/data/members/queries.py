@@ -3,7 +3,7 @@ from datetime import date
 from sqlalchemy import ColumnElement, ScalarSelect, Select, case, exists, func, literal, null, select
 from sqlalchemy.orm import InstrumentedAttribute, aliased
 
-from membership_management.data.guests.models import Guest
+from membership_management.data.guests.models import Guest, GuestStatus
 from membership_management.data.guests.queries import guest_name_match
 from membership_management.data.members.models import Member, MemberStatus, MemberStatusChange
 from membership_management.data.small_groups.models import (
@@ -119,7 +119,7 @@ def tag_search_query(text: str, small_group_id: int, *, limit: int) -> Select:
         Guest.phone.label("phone"),
         in_group(SmallGroupMember.guest_id, Guest.id).label("in_this_group"),
         guest_name_match(text, prefix=True).label("starts_with"),
-    ).where(guest_name_match(text))
+    ).where(Guest.status == GuestStatus.ACTIVE, guest_name_match(text))
     people = members.union_all(guests).subquery()
     return (
         select(people.c.kind, people.c.id, people.c.name, people.c.phone, people.c.in_this_group)

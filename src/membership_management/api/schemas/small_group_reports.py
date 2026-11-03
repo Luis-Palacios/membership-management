@@ -244,6 +244,8 @@ class ReportDetailSchema(CamelModel):
     church_sunday: date
     held: bool
     not_held_reason: str | None
+    # The church-wide no meeting week the report belongs to; a leader's edit of the reason or date unlinks it.
+    no_meeting_week_id: int | None
     address: str | None
     sections: ReportSectionsSchema
     submitted_by: ReportPersonSchema
@@ -275,6 +277,7 @@ class FiledReportItemSchema(CamelModel):
     attended_church_count: int
     held: bool
     not_held_reason: str | None
+    no_meeting_week_id: int | None
 
 
 class NotFiledItemSchema(CamelModel):
@@ -329,6 +332,46 @@ class ReportSummaryItemSchema(CamelModel):
     recent_meetings: list[RecentMeetingSchema]
 
 
+class NoMeetingWeekBodySchema(CamelModel):
+    """Mark the church week containing `date` (any day of it) as no meeting for every open group."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    date: date
+    # Ignored when the week is already marked: a re-run keeps the week's reason.
+    reason: ReportReason = None
+
+
+class NoMeetingWeekReasonBodySchema(CamelModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Required: null clears the reason.
+    reason: ReportReason
+
+
+class NoMeetingWeekSchema(CamelModel):
+    id: int
+    week_start: date
+    reason: str | None
+    created_by: ReportPersonSchema
+    created_at: datetime
+    updated_at: datetime
+    # Reports still linked to the week (a leader's edit or a held report unlinks or replaces one).
+    linked_count: int
+
+
+class NoMeetingWeekSkippedSchema(CamelModel):
+    # Groups with any report dated in the week, held or not.
+    reported: int
+    no_meeting_day: int
+
+
+class NoMeetingWeekMarkSchema(NoMeetingWeekSchema):
+    # Created by this call.
+    marked: int
+    skipped: NoMeetingWeekSkippedSchema
+
+
 class WeekSmallGroupSchema(CamelModel):
     id: int
     name: str
@@ -351,6 +394,7 @@ class WeekReportSchema(CamelModel):
     observation_count: int
     held: bool
     not_held_reason: str | None
+    no_meeting_week_id: int | None
     submitted_by: ReportPersonSchema
 
 
@@ -367,6 +411,8 @@ class ReportWeekSchema(CamelModel):
     week_end: date
     today: date
     is_current_week: bool
+    # Set when the week is marked church-wide.
+    no_meeting_week: NoMeetingWeekSchema | None
     groups: list[WeekGroupSchema]
 
 
