@@ -8,6 +8,10 @@ its group's leaders and the person who started it. *Rule N* = `../docs/specs/rep
 `staff-app/docs/design/REPORT-AUTOSAVE.md`; design boards: [Staff App canvas](https://claude.ai/artifact/PLs9gdHVcigkRSAWJrsKs1),
 page "Report auto-save".
 
+**Status: done** (2026-11-03). Stages 1–6 are merged and in production (stage 6 as `beb61eb`, after
+staff-app `ac8f10a`). The stage sections below are kept as the record of how it was built; the code
+is the reference for the current shapes.
+
 **Decided (don't re-open):**
 
 - A draft is **the same `small_group_reports` row** with `status = 'draft'`, not a separate table.
@@ -39,7 +43,7 @@ per-route `rate_limit`).
 | 3. Draft writes: create, save with version, submit, discard, replace, close | ✅ | 2c8db35 |
 | 4. Draft reads: detail, roster, list, summary, week | ✅ | 173c3c5 |
 | 5. Seed and docs | ✅ | 9e58a17 |
-| 6. Contract (after the new staff app is deployed) | ✅ | (on `report-autosave`; hash after merge) |
+| 6. Contract (after the new staff app is deployed) | ✅ | beb61eb |
 
 ### Decisions and deviations
 
