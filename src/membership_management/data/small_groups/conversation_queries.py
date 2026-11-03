@@ -13,6 +13,7 @@ from membership_management.data.small_groups.models import (
     SmallGroupReportAttendance,
     SmallGroupReportItem,
 )
+from membership_management.data.small_groups.queries import submitted_report_condition
 from membership_management.data.small_groups.results import PersonKey
 
 
@@ -165,7 +166,9 @@ def newest_live_comment_query(conversation_id: int) -> Select:
 
 
 def _audience_filters(group_ids: frozenset[int] | None) -> list[ColumnElement[bool]]:
-    return [] if group_ids is None else [SmallGroupReport.small_group_id.in_(group_ids)]
+    """A draft has no conversations (report auto-save rule 16); the filter keeps one from ever leaking."""
+    submitted = submitted_report_condition()
+    return [submitted] if group_ids is None else [submitted, SmallGroupReport.small_group_id.in_(group_ids)]
 
 
 def _needs_reply(my_side: str) -> ColumnElement[bool]:
