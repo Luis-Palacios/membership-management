@@ -83,9 +83,6 @@ class ReportRosterSchema(CamelModel):
     meeting_date: date
     church_sunday: date
     existing_report: ExistingReportSchema | HiddenDraftSchema | None
-    # Submitted reports only, for clients from before auto-save. Gone in stage 6.
-    existing_report_id: int | None
-    existing_report_held: bool | None
     people: list[ReportRosterPersonSchema]
 
 
@@ -151,8 +148,9 @@ class HeldReportBodySchema(CamelModel):
     # Create only; true on an edit is a 422.
     replaces_no_meeting: bool = False
     # Create only; an edit keeps the report's status, and submitting has its own route.
-    status: ReportStatus = ReportStatus.SUBMITTED
-    # Edit only: the version the save is based on (409 when the report has moved on).
+    status: ReportStatus = ReportStatus.DRAFT
+    # Edit only, and required there (422 without it): the version the save is based on (409 when the
+    # report has moved on). Create ignores it.
     version: int | None = None
 
 
@@ -166,14 +164,15 @@ class NotHeldReportBodySchema(CamelModel):
     not_held_reason: ReportReason = None
     # Create only: replace the date's draft, which the caller must be able to see (report auto-save rule 18).
     replaces_draft: bool = False
-    # Edit only: the version the save is based on (409 when the report has moved on).
+    # Edit only, and required there (422 without it): the version the save is based on (409 when the
+    # report has moved on). Create ignores it.
     version: int | None = None
 
 
 class ReportSubmitBodySchema(CamelModel):
     model_config = ConfigDict(extra="forbid")
 
-    version: int | None = None
+    version: int
 
 
 def _report_kind(value: object) -> str:

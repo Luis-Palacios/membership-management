@@ -120,9 +120,6 @@ class ExistingReport(NamedTuple):
 
 class ReportRoster(NamedTuple):
     people: list[RosterPerson]
-    # Submitted reports only: what clients from before auto-save read. Gone in stage 6.
-    existing_report_id: int | None
-    existing_report_held: bool | None = None
     existing: ExistingReport | None = None
 
 
