@@ -58,10 +58,32 @@ class ReportRosterPersonSchema(CamelModel):
     missed_streak: int
 
 
+class ReportStarterNameSchema(CamelModel):
+    name: str
+
+
+class ExistingReportSchema(CamelModel):
+    """The report on the roster's date: a submitted report, a no meeting or a draft the caller sees."""
+
+    id: int
+    status: ReportStatus
+    held: bool
+    version: int
+
+
+class HiddenDraftSchema(CamelModel):
+    """A draft the caller can't see holds the date: no id, no content (report auto-save rule 17)."""
+
+    status: Literal[ReportStatus.DRAFT] = ReportStatus.DRAFT
+    started_by: ReportStarterNameSchema
+
+
 class ReportRosterSchema(CamelModel):
     small_group: ReportRosterGroupSchema
     meeting_date: date
     church_sunday: date
+    existing_report: ExistingReportSchema | HiddenDraftSchema | None
+    # Submitted reports only, for clients from before auto-save. Gone in stage 6.
     existing_report_id: int | None
     existing_report_held: bool | None
     people: list[ReportRosterPersonSchema]
@@ -274,6 +296,14 @@ class ReportDetailSchema(CamelModel):
     permissions: ReportPermissionsSchema
     # Threads on this report: deleting the report deletes them too (the delete dialog says how many).
     conversation_count: int
+    status: ReportStatus
+    # Send it back on the next save or submit (report auto-save rule 9).
+    version: int
+    started_by: ReportPersonSchema
+    started_at: datetime
+    # Null member with a date: an unlinked admin's edit.
+    last_edited_by: ReportPersonSchema | None
+    last_edited_at: datetime | None
 
 
 class ReportListGroupSchema(CamelModel):
@@ -302,6 +332,22 @@ class NotFiledItemSchema(CamelModel):
     kind: Literal["notFiled"] = "notFiled"
     small_group: ReportListGroupSchema
     meeting_date: date
+    # A draft the caller can't see is in progress for this meeting; it still isn't filed (rule 15).
+    has_draft: bool
+    draft_started_by: ReportStarterNameSchema | None
+
+
+class DraftItemSchema(CamelModel):
+    """A draft the caller sees (report auto-save rule 14)."""
+
+    kind: Literal["draft"] = "draft"
+    id: int
+    small_group: ReportListGroupSchema
+    meeting_date: date
+    started_by: ReportPersonSchema
+    answered_count: int
+    roster_count: int
+    last_saved_at: datetime
 
 
 class ReportCountsSchema(CamelModel):
@@ -309,10 +355,13 @@ class ReportCountsSchema(CamelModel):
     filed: int
     not_held: int
     not_filed: int
+    draft: int
 
 
 class ReportListSchema(CamelModel):
-    items: list[Annotated[FiledReportItemSchema | NotFiledItemSchema, Field(discriminator="kind")]]
+    items: list[
+        Annotated[FiledReportItemSchema | NotFiledItemSchema | DraftItemSchema, Field(discriminator="kind")]
+    ]
     counts: ReportCountsSchema
     total: int
     page: int
@@ -341,6 +390,14 @@ class RecentMeetingSchema(CamelModel):
     held: bool | None
 
 
+class SummaryDraftSchema(CamelModel):
+    id: int
+    meeting_date: date
+    answered_count: int
+    roster_count: int
+    last_saved_at: datetime
+
+
 class ReportSummaryItemSchema(CamelModel):
     small_group: SummaryGroupSchema
     role: SmallGroupRole | None
@@ -348,6 +405,8 @@ class ReportSummaryItemSchema(CamelModel):
     not_filed_dates: list[date]
     has_leader: bool
     recent_meetings: list[RecentMeetingSchema]
+    # The newest draft the caller sees (report auto-save rule 14).
+    draft: SummaryDraftSchema | None
 
 
 class NoMeetingWeekBodySchema(CamelModel):
@@ -422,6 +481,8 @@ class WeekGroupSchema(CamelModel):
     status: Literal["submitted", "notHeld", "notFiled", "today", "upcoming", "noLeader", "noMeetingDay"]
     meeting_date: date | None
     reports: list[WeekReportSchema]
+    # On `notFiled` and `today` rows only: a label, with no id or content (report auto-save rule 15).
+    has_draft: bool
 
 
 class ReportWeekSchema(CamelModel):

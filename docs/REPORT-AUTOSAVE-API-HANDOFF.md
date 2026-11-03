@@ -37,7 +37,7 @@ per-route `rate_limit`).
 | 1. Migration and model | ✅ | |
 | 2. Every read ignores drafts | ✅ | |
 | 3. Draft writes: create, save with version, submit, discard, replace, close | ✅ | |
-| 4. Draft reads: detail, roster, list, summary, week | ⬜ | |
+| 4. Draft reads: detail, roster, list, summary, week | ✅ | |
 | 5. Seed and docs | ⬜ | |
 | 6. Contract (after the new staff app is deployed) | ⬜ | |
 
@@ -62,6 +62,12 @@ per-route `rate_limit`).
   came last, `lastEditedBy` and `lastEditedAt` in the 409 are the submitter and `submittedAt`.
 - Errors that carry extra fields use the existing `CodedHTTPError`, so their bodies also have a `code`
   (`report_version_conflict`, `draft_in_progress`).
+- In the list, a meeting with a draft the caller sees is that draft's row, not a not-filed row as well,
+  and it leaves the `notFiled` count: the leader would otherwise get *Not filed* and *Draft* for the same
+  meeting. Summary's `notFiledDates` keeps the date, as the shapes say. `hasDraft` on a not-filed row
+  uses the same test as filing: a draft on any day of that church week.
+- `existingReport` of a submitted report or no meeting also has `version` (same schema as a visible
+  draft's).
 
 ## Data model
 

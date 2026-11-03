@@ -32,8 +32,11 @@ from membership_management.api.rate_limit import default_user_rate_limit, rate_l
 from membership_management.api.report_items import sections_input, sections_schema, viewable_tagged
 from membership_management.api.schemas.person import PersonSchema
 from membership_management.api.schemas.small_group_reports import (
+    DraftItemSchema,
+    ExistingReportSchema,
     FiledReportItemSchema,
     HeldReportBodySchema,
+    HiddenDraftSchema,
     NoMeetingWeekBodySchema,
     NoMeetingWeekMarkSchema,
     NoMeetingWeekReasonBodySchema,
@@ -56,6 +59,7 @@ from membership_management.api.schemas.small_group_reports import (
     ReportRosterSchema,
     ReportSharedEntrySchema,
     ReportSharedSchema,
+    ReportStarterNameSchema,
     ReportStillToReportSchema,
     ReportSubmitBodySchema,
     ReportSummaryItemSchema,
@@ -63,6 +67,7 @@ from membership_management.api.schemas.small_group_reports import (
     ReportWeekSchema,
     SharedConversationSchema,
     SharedSmallGroupSchema,
+    SummaryDraftSchema,
     SummaryGroupSchema,
     SummaryLastReportSchema,
     TagSearchGroupSchema,
@@ -76,6 +81,8 @@ from membership_management.data.small_groups.conversation_services import get_se
 from membership_management.data.small_groups.models import SmallGroup, SmallGroupReport
 from membership_management.data.small_groups.results import (
     AttendanceInput,
+    DraftRow,
+    ExistingReport,
     NoMeetingWeekRow,
     NotFiledMeeting,
     PersonKey,
@@ -255,7 +262,9 @@ def get_report_roster_for_date(
 ) -> ReportRosterSchema:
     small_group = _small_group_or_404(db, small_group_id, scope)
     try:
-        roster = get_report_roster(db, small_group, meeting_date, today=church_today())
+        roster = get_report_roster(
+            db, small_group, meeting_date, today=church_today(), viewer=draft_viewer(db, scope)
+        )
     except (SmallGroupClosedError, FutureMeetingDateError) as exc:
         raise _http_error(exc) from exc
     return ReportRosterSchema(
@@ -269,6 +278,7 @@ def get_report_roster_for_date(
         ),
         meeting_date=meeting_date,
         church_sunday=church_sunday(meeting_date),
+        existing_report=_existing_report_schema(roster.existing),
         existing_report_id=roster.existing_report_id,
         existing_report_held=roster.existing_report_held,
         people=[
@@ -309,6 +319,18 @@ def get_tag_search(
         )
         for row in search_taggable_people(db, small_group, q)
     ]
+
+
+def _existing_report_schema(
+    existing: ExistingReport | None,
+) -> ExistingReportSchema | HiddenDraftSchema | None:
+    if existing is None:
+        return None
+    if existing.id is None or existing.held is None or existing.version is None:
+        return HiddenDraftSchema(started_by=ReportStarterNameSchema(name=existing.started_by_name or ""))
+    return ExistingReportSchema(
+        id=existing.id, status=existing.status, held=existing.held, version=existing.version
+    )
 
 
 def _person(member_id: int | None, guest_id: int | None, name: str) -> PersonSchema:
@@ -406,6 +428,16 @@ def _detail_schema(detail: ReportDetail, viewable: frozenset[PersonKey]) -> Repo
         totals=ReportTotalsSchema(**totals),
         permissions=ReportPermissionsSchema(can_edit=open_group, can_delete=open_group),
         conversation_count=detail.conversation_count,
+        status=detail.status,
+        version=detail.version,
+        started_by=ReportPersonSchema(member_id=detail.started_by_member_id, name=detail.started_by_name),
+        started_at=detail.started_at,
+        last_edited_by=(
+            ReportPersonSchema(member_id=detail.last_edited_by_member_id, name=detail.last_edited_by_name)
+            if detail.last_edited_by_member_id is not None and detail.last_edited_by_name is not None
+            else None
+        ),
+        last_edited_at=detail.last_edited_at,
     )
 
 
@@ -444,7 +476,7 @@ def _detail_of(
 @router.get(
     "/small-group-reports",
     name="list_small_group_reports",
-    description="Filed reports and not-filed meetings of the groups in scope, newest first, with counts",
+    description="Filed reports, not-filed meetings and drafts the caller sees, newest first, with counts",
     dependencies=[Depends(require_permission("smallGroupReports", "view"))],
 )
 def get_small_group_reports(
@@ -470,8 +502,9 @@ def get_small_group_reports(
         page=page,
         page_size=page_size,
         today=today,
+        viewer=draft_viewer(db, scope),
     )
-    items: list[FiledReportItemSchema | NotFiledItemSchema] = []
+    items: list[FiledReportItemSchema | NotFiledItemSchema | DraftItemSchema] = []
     for item in result.items:
         group = ReportListGroupSchema(
             id=item.small_group_id,
@@ -480,7 +513,32 @@ def get_small_group_reports(
             closed_at=item.small_group_closed_at,
         )
         if isinstance(item, NotFiledMeeting):
-            items.append(NotFiledItemSchema(small_group=group, meeting_date=item.meeting_date))
+            items.append(
+                NotFiledItemSchema(
+                    small_group=group,
+                    meeting_date=item.meeting_date,
+                    has_draft=item.has_draft,
+                    draft_started_by=(
+                        ReportStarterNameSchema(name=item.draft_started_by_name)
+                        if item.draft_started_by_name is not None
+                        else None
+                    ),
+                )
+            )
+        elif isinstance(item, DraftRow):
+            items.append(
+                DraftItemSchema(
+                    id=item.id,
+                    small_group=group,
+                    meeting_date=item.meeting_date,
+                    started_by=ReportPersonSchema(
+                        member_id=item.started_by_member_id, name=item.started_by_name
+                    ),
+                    answered_count=item.answered_count,
+                    roster_count=item.roster_count,
+                    last_saved_at=item.last_saved_at,
+                )
+            )
         else:
             items.append(
                 FiledReportItemSchema(
@@ -506,6 +564,7 @@ def get_small_group_reports(
             filed=result.counts.filed,
             not_held=result.counts.not_held,
             not_filed=result.counts.not_filed,
+            draft=result.counts.draft,
         ),
         total=result.total,
         page=page,
@@ -527,6 +586,7 @@ def get_small_group_reports_summary(
         only_group_ids=None if scope.full else scope.group_ids,
         member_id=scope.member_id,
         today=church_today(),
+        viewer=draft_viewer(db, scope),
     )
     return [
         ReportSummaryItemSchema(
@@ -558,6 +618,17 @@ def get_small_group_reports_summary(
                 RecentMeetingSchema(date=m.date, report_id=m.report_id, held=m.held)
                 for m in row.recent_meetings
             ],
+            draft=(
+                SummaryDraftSchema(
+                    id=row.draft.id,
+                    meeting_date=row.draft.meeting_date,
+                    answered_count=row.draft.answered_count,
+                    roster_count=row.draft.roster_count,
+                    last_saved_at=row.draft.last_saved_at,
+                )
+                if row.draft is not None
+                else None
+            ),
         )
         for row in summary
     ]
@@ -618,6 +689,7 @@ def get_small_group_reports_week(
                     )
                     for r in g.reports
                 ],
+                has_draft=g.has_draft,
             )
             for g in week.groups
         ],

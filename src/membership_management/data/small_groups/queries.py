@@ -178,6 +178,8 @@ def report_in_scope_query(report_id: int, only_group_ids: frozenset[int] | None)
         .options(
             joinedload(SmallGroupReport.small_group),
             joinedload(SmallGroupReport.submitted_by),
+            joinedload(SmallGroupReport.started_by),
+            joinedload(SmallGroupReport.last_edited_by),
             selectinload(SmallGroupReport.attendances).options(
                 joinedload(SmallGroupReportAttendance.member), joinedload(SmallGroupReportAttendance.guest)
             ),
@@ -197,11 +199,78 @@ def report_on_date_query(small_group_id: int, d: date) -> Select:
             SmallGroupReport.small_group_id.label("small_group_id"),
             SmallGroupReport.held.label("held"),
             SmallGroupReport.status.label("status"),
+            SmallGroupReport.version.label("version"),
             SmallGroupReport.started_by_member_id.label("started_by_member_id"),
             Member.name.label("started_by_name"),
         )
         .join(Member, Member.id == SmallGroupReport.started_by_member_id)
         .where(SmallGroupReport.small_group_id == small_group_id, SmallGroupReport.meeting_date == d)
+    )
+
+
+def draft_rows_query(
+    only_group_ids: frozenset[int] | None,
+    *,
+    started_by_member_id: int | None = None,
+    small_group_id: int | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+) -> Select:
+    """Drafts with their progress, newest date first: of `only_group_ids` (None = every group) or started
+    by `started_by_member_id`. Who may see each one is `can_see_draft`'s to say."""
+    attendance = SmallGroupReportAttendance
+    query = (
+        select(
+            SmallGroupReport.id.label("id"),
+            SmallGroup.id.label("small_group_id"),
+            SmallGroup.name.label("small_group_name"),
+            SmallGroup.audience.label("small_group_audience"),
+            SmallGroup.closed_at.label("small_group_closed_at"),
+            SmallGroupReport.meeting_date.label("meeting_date"),
+            Member.id.label("started_by_member_id"),
+            Member.name.label("started_by_name"),
+            func.count(attendance.id)
+            .filter(attendance.attended_group.is_not(None), attendance.attended_church.is_not(None))
+            .label("answered_count"),
+            func.count(attendance.id).label("roster_count"),
+            func.coalesce(SmallGroupReport.last_edited_at, SmallGroupReport.started_at).label(
+                "last_saved_at"
+            ),
+        )
+        .join(SmallGroup, SmallGroup.id == SmallGroupReport.small_group_id)
+        .join(Member, Member.id == SmallGroupReport.started_by_member_id)
+        .outerjoin(attendance, attendance.report_id == SmallGroupReport.id)
+        .where(SmallGroupReport.status == ReportStatus.DRAFT)
+        .group_by(SmallGroupReport.id, SmallGroup.id, Member.id)
+        .order_by(SmallGroupReport.meeting_date.desc(), SmallGroupReport.id.desc())
+    )
+    if only_group_ids is not None:
+        in_groups = SmallGroupReport.small_group_id.in_(only_group_ids)
+        query = query.where(
+            in_groups
+            if started_by_member_id is None
+            else or_(in_groups, SmallGroupReport.started_by_member_id == started_by_member_id)
+        )
+    if small_group_id is not None:
+        query = query.where(SmallGroupReport.small_group_id == small_group_id)
+    if from_date is not None:
+        query = query.where(SmallGroupReport.meeting_date >= from_date)
+    if to_date is not None:
+        query = query.where(SmallGroupReport.meeting_date <= to_date)
+    return query
+
+
+def group_ids_with_draft_query(group_ids: frozenset[int], from_date: date, to_date: date) -> Select:
+    """The groups with a draft dated in [from_date, to_date]."""
+    return (
+        select(SmallGroupReport.small_group_id)
+        .where(
+            SmallGroupReport.small_group_id.in_(group_ids),
+            SmallGroupReport.status == ReportStatus.DRAFT,
+            SmallGroupReport.meeting_date >= from_date,
+            SmallGroupReport.meeting_date <= to_date,
+        )
+        .distinct()
     )
 
 
