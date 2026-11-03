@@ -108,10 +108,22 @@ class RosterPerson(NamedTuple):
         return person_key(self.member_id, self.guest_id)
 
 
+class ExistingReport(NamedTuple):
+    """The report holding a roster's date. A draft the caller can't see has no id, only who started it."""
+
+    status: ReportStatus
+    id: int | None = None
+    held: bool | None = None
+    version: int | None = None
+    started_by_name: str | None = None
+
+
 class ReportRoster(NamedTuple):
     people: list[RosterPerson]
+    # Submitted reports only: what clients from before auto-save read. Gone in stage 6.
     existing_report_id: int | None
     existing_report_held: bool | None = None
+    existing: ExistingReport | None = None
 
 
 class AttendanceInput(NamedTuple):
@@ -163,6 +175,7 @@ class ReportOnDate(NamedTuple):
     small_group_id: int
     held: bool
     status: ReportStatus
+    version: int
     started_by_member_id: int
     started_by_name: str
 
@@ -270,6 +283,15 @@ class ReportDetail(NamedTuple):
     conversation_count: int
     # The church-wide no meeting week the report belongs to, if any.
     no_meeting_week_id: int | None
+    status: ReportStatus
+    version: int
+    started_by_member_id: int
+    started_by_name: str
+    started_at: datetime
+    # The member is None for an unlinked admin's edit; `last_edited_at` is still set.
+    last_edited_by_member_id: int | None
+    last_edited_by_name: str | None
+    last_edited_at: datetime | None
 
 
 class ReportGroupRow(NamedTuple):
@@ -278,6 +300,23 @@ class ReportGroupRow(NamedTuple):
     audience: GroupAudience
     meeting_day: int | None
     closed_at: date | None
+
+
+class DraftRow(NamedTuple):
+    """A draft with its progress. Show it only to those `can_see_draft` lets through."""
+
+    id: int
+    small_group_id: int
+    small_group_name: str
+    small_group_audience: GroupAudience
+    small_group_closed_at: date | None
+    meeting_date: date
+    started_by_member_id: int
+    started_by_name: str
+    # Rows with both answers.
+    answered_count: int
+    roster_count: int
+    last_saved_at: datetime
 
 
 class FiledReportRow(NamedTuple):
@@ -304,6 +343,9 @@ class NotFiledMeeting(NamedTuple):
     small_group_audience: GroupAudience
     small_group_closed_at: date | None
     meeting_date: date
+    # A draft the caller can't see is in progress for that meeting (report auto-save rule 15).
+    has_draft: bool = False
+    draft_started_by_name: str | None = None
 
 
 class ReportDate(NamedTuple):
@@ -339,10 +381,11 @@ class ReportCounts(NamedTuple):
     filed: int
     not_held: int
     not_filed: int
+    draft: int = 0
 
 
 class ReportPage(NamedTuple):
-    items: list[FiledReportRow | NotFiledMeeting]
+    items: list[FiledReportRow | NotFiledMeeting | DraftRow]
     counts: ReportCounts
     total: int
 
@@ -356,6 +399,8 @@ class GroupReportSummary(NamedTuple):
     has_leader: bool
     # Newest first; `not_filed_dates` is the entries without a report.
     recent_meetings: list[RecentMeeting]
+    # The newest draft the caller sees; `last_report` and the not-filed dates ignore drafts.
+    draft: DraftRow | None = None
 
 
 WeekStatus = Literal["submitted", "notHeld", "notFiled", "today", "upcoming", "noLeader", "noMeetingDay"]
@@ -398,6 +443,8 @@ class WeekGroup(NamedTuple):
     # The week's date on the group's meeting day (even when the report is on another day).
     meeting_date: date | None
     reports: list[WeekReportRow]
+    # On `notFiled` and `today` rows only: a draft is in progress (a label; report auto-save rule 15).
+    has_draft: bool = False
 
 
 class NoMeetingWeekRow(NamedTuple):

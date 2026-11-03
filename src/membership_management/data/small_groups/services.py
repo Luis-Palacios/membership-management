@@ -38,9 +38,11 @@ from membership_management.data.small_groups.models import (
 from membership_management.data.small_groups.queries import (
     active_guest_period_query,
     active_leaders_query,
+    draft_rows_query,
     filed_reports_query,
     group_drafts_count_query,
     group_drafts_query,
+    group_ids_with_draft_query,
     guests_last_attended_query,
     latest_guest_report_date_query,
     latest_report_ids_query,
@@ -75,7 +77,9 @@ from membership_management.data.small_groups.results import (
     ActiveLeaderRow,
     AttendanceMark,
     ClosedGroup,
+    DraftRow,
     DraftViewer,
+    ExistingReport,
     FiledReportRow,
     GroupReportSummary,
     GroupRole,
@@ -136,7 +140,7 @@ MISSED_STREAK_REPORT_WINDOW = 12
 # How far back a meeting without a report still counts as "not filed" (rule 10).
 NOT_FILED_WINDOW_DAYS = 28
 
-ReportListStatus = Literal["all", "filed", "notHeld", "notFiled"]
+ReportListStatus = Literal["all", "filed", "notHeld", "notFiled", "draft"]
 
 
 class SmallGroupAlreadyClosedError(Exception):
@@ -428,8 +432,10 @@ def missed_streaks(
     return {member_id: by_person[("member", member_id)] for member_id in member_ids}
 
 
-def get_report_roster(session: Session, small_group: SmallGroup, d: date, *, today: date) -> ReportRoster:
-    """Who goes in a report for `d`, their missed streaks, and the report already filed for `d`, if any."""
+def get_report_roster(
+    session: Session, small_group: SmallGroup, d: date, *, today: date, viewer: DraftViewer
+) -> ReportRoster:
+    """Who goes in a report for `d`, their missed streaks, and the report already on `d`, if any."""
     if small_group.closed_at is not None:
         raise SmallGroupClosedError
     if d > today:
@@ -442,7 +448,14 @@ def get_report_roster(session: Session, small_group: SmallGroup, d: date, *, tod
         people=[p._replace(missed_streak=streaks[p.key]) for p in people],
         existing_report_id=filed.id if filed is not None else None,
         existing_report_held=filed.held if filed is not None else None,
+        existing=_existing_report(existing, viewer) if existing is not None else None,
     )
+
+
+def _existing_report(existing: ReportOnDate, viewer: DraftViewer) -> ExistingReport:
+    if existing.status == ReportStatus.DRAFT and not can_see_draft(existing, viewer):
+        return ExistingReport(ReportStatus.DRAFT, started_by_name=existing.started_by_name)
+    return ExistingReport(ReportStatus(existing.status), existing.id, existing.held, existing.version)
 
 
 def get_report(
@@ -454,7 +467,7 @@ def get_report(
     return session.scalars(report_in_scope_query(report_id, only_group_ids)).one_or_none()
 
 
-def can_see_draft(report: SmallGroupReport | ReportOnDate, viewer: DraftViewer) -> bool:
+def can_see_draft(report: SmallGroupReport | ReportOnDate | DraftRow, viewer: DraftViewer) -> bool:
     """Report auto-save rule 14: the group's current leaders and co-leaders, and whoever started it. No
     role sees other people's drafts. `led_group_ids` also holds closed groups, but those have no drafts."""
     return report.small_group_id in viewer.led_group_ids or (
@@ -525,6 +538,14 @@ def build_report_detail(
         )
         or 0,
         no_meeting_week_id=report.no_meeting_week_id,
+        status=report.status,
+        version=report.version,
+        started_by_member_id=report.started_by_member_id,
+        started_by_name=report.started_by.name,
+        started_at=report.started_at,
+        last_edited_by_member_id=report.last_edited_by_member_id,
+        last_edited_by_name=report.last_edited_by.name if report.last_edited_by is not None else None,
+        last_edited_at=report.last_edited_at,
     )
 
 
@@ -984,14 +1005,41 @@ def list_reports(
     page: int,
     page_size: int,
     today: date,
+    viewer: DraftViewer,
 ) -> ReportPage:
-    """Filed reports and not-filed meetings of the groups in scope, newest first, one page of them.
+    """Filed reports, not-filed meetings and the drafts the caller sees, newest first, one page of them.
+
+    A meeting with a draft the caller sees is that draft's row, not a not-filed row too. For anyone else
+    it stays not filed, with a label (report auto-save rule 15). As with a filed report, a draft on any
+    day of the church week counts for that week's meeting.
 
     `counts` ignore `status` (they feed the status filter); `total` is after it. `q` matches the group
-    or, for filed reports, the submitter or a no meeting's reason, ignoring case and accents.
+    or, for filed reports and drafts, the submitter, who started it or a no meeting's reason, ignoring
+    case and accents.
     """
-    if only_group_ids is not None and not only_group_ids:
-        return ReportPage(items=[], counts=ReportCounts(0, 0, 0, 0), total=0)
+    # Whole weeks: a meeting in range can have its draft on a day just outside it.
+    all_drafts = all_as(
+        session,
+        draft_rows_query(
+            only_group_ids,
+            started_by_member_id=viewer.member_id,
+            small_group_id=small_group_id,
+            from_date=church_sunday(from_date),
+            to_date=church_sunday(to_date) + timedelta(days=6),
+        ),
+        DraftRow,
+    )
+    seen_weeks: set[tuple[int, date]] = set()
+    hidden_weeks: dict[tuple[int, date], str] = {}
+    drafts: list[DraftRow] = []
+    for draft in all_drafts:
+        week = (draft.small_group_id, church_sunday(draft.meeting_date))
+        if can_see_draft(draft, viewer):
+            seen_weeks.add(week)
+            if from_date <= draft.meeting_date <= to_date:
+                drafts.append(draft)
+        else:
+            hidden_weeks[week] = draft.started_by_name
     filed = all_as(
         session,
         filed_reports_query(
@@ -1007,9 +1055,18 @@ def list_reports(
         min(to_date, today - timedelta(days=1)),
     )
     not_filed = [
-        NotFiledMeeting(g.id, g.name, g.audience, g.closed_at, day)
+        NotFiledMeeting(
+            g.id,
+            g.name,
+            g.audience,
+            g.closed_at,
+            day,
+            has_draft=(g.id, church_sunday(day)) in hidden_weeks,
+            draft_started_by_name=hidden_weeks.get((g.id, church_sunday(day))),
+        )
         for g in groups
         for day in missing.get(g.id, [])
+        if (g.id, church_sunday(day)) not in seen_weeks
     ]
     if q is not None and q.strip():
         needle = _fold(q.strip())
@@ -1021,18 +1078,27 @@ def list_reports(
             or needle in _fold(r.not_held_reason or "")
         ]
         not_filed = [m for m in not_filed if needle in _fold(m.small_group_name)]
+        drafts = [
+            d for d in drafts if needle in _fold(d.small_group_name) or needle in _fold(d.started_by_name)
+        ]
     held = [r for r in filed if r.held]
     not_held = [r for r in filed if not r.held]
     counts = ReportCounts(
-        all=len(filed) + len(not_filed), filed=len(held), not_held=len(not_held), not_filed=len(not_filed)
+        all=len(filed) + len(not_filed) + len(drafts),
+        filed=len(held),
+        not_held=len(not_held),
+        not_filed=len(not_filed),
+        draft=len(drafts),
     )
-    items: list[FiledReportRow | NotFiledMeeting] = []
+    items: list[FiledReportRow | NotFiledMeeting | DraftRow] = []
     if status in ("all", "filed"):
         items.extend(held)
     if status in ("all", "notHeld"):
         items.extend(not_held)
     if status in ("all", "notFiled"):
         items.extend(not_filed)
+    if status in ("all", "draft"):
+        items.extend(drafts)
     # Two stable passes: group name ascending inside each date, newest date first.
     items.sort(key=lambda item: item.small_group_name.casefold())
     items.sort(key=lambda item: item.meeting_date, reverse=True)
@@ -1046,8 +1112,10 @@ def get_report_summary(
     only_group_ids: frozenset[int] | None,
     member_id: int | None,
     today: date,
+    viewer: DraftViewer,
 ) -> list[GroupReportSummary]:
-    """Per open group in scope: newest report, rule 10's recent meetings and whether anyone leads today.
+    """Per open group in scope: newest report, rule 10's recent meetings, whether anyone leads today and
+    the newest draft the caller sees.
 
     `role` is the caller's current role in the group for scoped callers (pass `only_group_ids`); full
     callers get None.
@@ -1076,6 +1144,10 @@ def get_report_summary(
     meetings = recent_meetings(
         session, groups, today - timedelta(days=NOT_FILED_WINDOW_DAYS), today - timedelta(days=1), leadership
     )
+    drafts: dict[int, DraftRow] = {}
+    for draft in all_as(session, draft_rows_query(ids), DraftRow):  # Newest first: keep each group's first.
+        if can_see_draft(draft, viewer):
+            drafts.setdefault(draft.small_group_id, draft)
     return [
         GroupReportSummary(
             group=g,
@@ -1084,6 +1156,7 @@ def get_report_summary(
             not_filed_dates=[m.date for m in meetings.get(g.id, []) if m.report_id is None],
             has_leader=any(p.left_at is None for p in leadership.get(g.id, [])),
             recent_meetings=meetings.get(g.id, []),
+            draft=drafts.get(g.id),
         )
         for g in groups
     ]
@@ -1100,13 +1173,19 @@ def get_report_week(session: Session, *, day: date, today: date) -> ReportWeek:
     groups = _open_report_groups(session, None)
     if not groups:
         return ReportWeek(week_start, week_end, today, is_current_week, [], no_meeting_week)
-    leaders = _active_leaders_by_group(session, frozenset(g.id for g in groups))
+    ids = frozenset(g.id for g in groups)
+    leaders = _active_leaders_by_group(session, ids)
+    with_draft = set(session.scalars(group_ids_with_draft_query(ids, week_start, week_end)))
     return ReportWeek(
         week_start=week_start,
         week_end=week_end,
         today=today,
         is_current_week=is_current_week,
-        groups=_week_groups(session, groups, week_start, today, leaders),
+        groups=[
+            # A draft doesn't change the status (rule 15): the row only gains the label.
+            g._replace(has_draft=g.group.id in with_draft and g.status in ("notFiled", "today"))
+            for g in _week_groups(session, groups, week_start, today, leaders)
+        ],
         no_meeting_week=no_meeting_week,
     )
 
