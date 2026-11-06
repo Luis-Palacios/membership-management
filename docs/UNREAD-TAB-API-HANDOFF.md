@@ -7,6 +7,11 @@ reply); its rules are referred to as *rule N*. It builds on `docs/REPORT-CONVERS
 and `docs/PRAYER-FOLLOW-UP-API-HANDOFF.md` (both on `main`): the inbox, the read rows and the anchors
 are unchanged.
 
+**Status: done** (2026-11-05). Stages 1–3 are merged to `main` (PR #67, rebased: stage 3 is
+`30c4a29`) and the migration has been run. The staff-app side (spec step 2b) is next, in
+`staff-app/docs/design/UNREAD-TAB.md`. The stage sections below are kept as the record of how it was
+built; the code is the reference for the current shapes.
+
 Three pieces of work, in-app only:
 
 - **Stage 1: `tab=unread`** on `GET /report-conversations` and an `unread` tab count, both filtered
@@ -34,9 +39,9 @@ Keep the existing conventions: routes call `conversation_services.py` directly,
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. `tab=unread` and its count | ✅ | `1342a40` |
-| 2. `last_activity_at` migration and backfill | ✅ | `9bd077b` |
-| 3. `POST /report-conversations/read-all`, docs | ✅ | this commit |
+| 1. `tab=unread` and its count | ✅ | `9adf7ea` |
+| 2. `last_activity_at` migration and backfill | ✅ | `80a8789` |
+| 3. `POST /report-conversations/read-all`, docs | ✅ | `30c4a29` |
 
 ### Decisions and deviations
 
