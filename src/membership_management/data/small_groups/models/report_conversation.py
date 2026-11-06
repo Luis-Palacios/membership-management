@@ -76,6 +76,9 @@ class ReportConversation(MemberManagementBase):
     last_comment_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     last_comment_side: Mapped[ConversationSide] = mapped_column(String(8))
     last_comment_user_id: Mapped[str] = mapped_column(String)
+    # The newest comment's `created_at` counting deleted ones (rule 17): set on every new comment and,
+    # unlike `last_comment_at`, never moved back by a delete. *Mark all read* reads up to it.
+    last_activity_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
     report: Mapped["SmallGroupReport"] = relationship(back_populates="conversations")
     member: Mapped["Member | None"] = relationship(foreign_keys=[member_id])

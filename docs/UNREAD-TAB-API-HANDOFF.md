@@ -34,8 +34,8 @@ Keep the existing conventions: routes call `conversation_services.py` directly,
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. `tab=unread` and its count | ✅ | this commit |
-| 2. `last_activity_at` migration and backfill | ⬜ | |
+| 1. `tab=unread` and its count | ✅ | `1342a40` |
+| 2. `last_activity_at` migration and backfill | ✅ | this commit |
 | 3. `POST /report-conversations/read-all`, docs | ⬜ | |
 
 ### Decisions and deviations
@@ -63,6 +63,18 @@ Keep the existing conventions: routes call `conversation_services.py` directly,
   closed g3 0 (the newest comment is theirs); former leader and deacon 0; `user` 403. Marking g2's
   unread thread read dropped the count by one and took it off the tab; a comment by the elder put
   it back for the leader and not for the elder.
+- **Stage 2:** migration `096025ed70a6`. Autogenerate found only the column (as NOT NULL, which
+  would fail on existing rows); the nullable add, the backfill and `SET NOT NULL` are hand-written.
+  Set in `_get_or_create` and `add_comment` next to `last_comment_at`; `_sync_last_comment` (delete)
+  and `edit_comment` don't touch it; the seed sets it to the newest comment, deleted or not. Tried:
+  `alembic check` clean; `downgrade -1` + `upgrade head` round-trip on the scratch DB, where thread 7
+  first had its newest comment soft-deleted (as `delete_comment` would): after the backfill it is
+  the only thread with `last_activity_at > last_comment_at`, the other nine have them equal, and
+  all ten match `max(created_at)` of their comments. Every role's inbox dump (stage 1 code on the
+  downgraded DB vs this branch on the upgraded one) is byte-identical. Through the API: a new thread
+  gets the comment's time in both columns; a reply moves both; an edit moves neither; deleting that
+  reply moves `last_comment_at` back and leaves `last_activity_at`. The seed run on a fresh
+  migrated DB sets it on all 10 threads to their newest comment.
 
 ## Who can do what
 
