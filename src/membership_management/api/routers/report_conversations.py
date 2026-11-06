@@ -1,6 +1,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
+from pydantic import AwareDatetime
 
 from membership_management.api.access import (
     OptionalSmallGroupScopeDep,
@@ -584,7 +585,17 @@ def get_report_conversation_inbox(
     small_group_id: Annotated[int | None, Query(alias="smallGroupId")] = None,
     limit: Annotated[int, Query(ge=1, le=50)] = 25,
     offset: Annotated[int, Query(ge=0)] = 0,
+    resolved_since: Annotated[
+        AwareDatetime | None,
+        Query(
+            alias="resolvedSince",
+            description="Only with tab=resolved: threads resolved at or after this instant (offset required)",
+        ),
+    ] = None,
 ) -> InboxSchema:
+    # Rule 15 (Part 1d): a period only means something on Resolved; elsewhere it's a caller bug, not a no-op.
+    if resolved_since is not None and tab != "resolved":
+        raise HTTPException(status_code=422, detail="resolvedSince only applies to the resolved tab.")
     page = get_inbox(
         db,
         group_ids=conversation_group_ids(claims, scope),
@@ -594,6 +605,7 @@ def get_report_conversation_inbox(
         small_group_id=small_group_id,
         limit=limit,
         offset=offset,
+        resolved_since=resolved_since,
     )
     return InboxSchema(
         items=[

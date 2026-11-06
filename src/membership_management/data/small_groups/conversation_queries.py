@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from sqlalchemy import ColumnElement, Select, String, and_, exists, func, literal, or_, select, true
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import aliased, joinedload
@@ -221,9 +223,15 @@ def _tab_filter(
 
 
 def _tab_threads(
-    group_ids: frozenset[int] | None, user_id: str, my_side: str, tab: str, small_group_id: int | None
+    group_ids: frozenset[int] | None,
+    user_id: str,
+    my_side: str,
+    tab: str,
+    small_group_id: int | None,
+    resolved_since: datetime | None = None,
 ) -> Select:
-    """`FROM` threads of the tab in the caller's audience (and group); the caller picks the columns."""
+    """`FROM` threads of the tab in the caller's audience (and group, and resolved period: rule 15,
+    Part 1d, only meaningful on `resolved`); the caller picks the columns."""
     read = _caller_read()
     query = _join_caller_read(
         select()
@@ -234,6 +242,8 @@ def _tab_threads(
     ).where(_tab_filter(tab, my_side, read, user_id), *_audience_filters(group_ids))
     if small_group_id is not None:
         query = query.where(SmallGroupReport.small_group_id == small_group_id)
+    if resolved_since is not None:
+        query = query.where(ReportConversation.resolved_at >= resolved_since)
     return query
 
 
@@ -292,9 +302,16 @@ def mark_all_read_query(group_ids: frozenset[int] | None, user_id: str, small_gr
 
 
 def inbox_total_query(
-    group_ids: frozenset[int] | None, user_id: str, my_side: str, tab: str, small_group_id: int | None
+    group_ids: frozenset[int] | None,
+    user_id: str,
+    my_side: str,
+    tab: str,
+    small_group_id: int | None,
+    resolved_since: datetime | None = None,
 ) -> Select:
-    return _tab_threads(group_ids, user_id, my_side, tab, small_group_id).add_columns(func.count())
+    return _tab_threads(group_ids, user_id, my_side, tab, small_group_id, resolved_since).add_columns(
+        func.count()
+    )
 
 
 def inbox_rows_query(
@@ -305,6 +322,7 @@ def inbox_rows_query(
     small_group_id: int | None,
     limit: int,
     offset: int,
+    resolved_since: datetime | None = None,
 ) -> Select:
     """One page of threads, newest activity first, each with its newest comment (lateral join).
 
@@ -313,7 +331,7 @@ def inbox_rows_query(
     the per-thread comment lookups run for the rows returned, not for every thread in the audience.
     """
     page = (
-        _tab_threads(group_ids, user_id, my_side, tab, small_group_id)
+        _tab_threads(group_ids, user_id, my_side, tab, small_group_id, resolved_since)
         .add_columns(ReportConversation.id.label("id"))
         .order_by(ReportConversation.last_comment_at.desc(), ReportConversation.id.desc())
         .limit(limit)
