@@ -42,19 +42,49 @@ function createJWT(appId, pem) {
 
 const cacheDir = path.join(os.homedir(), '.config', 'gh-bot');
 
+function parseOwnerFromRepoSpec(spec) {
+  if (!spec) return null;
+  const cleaned = String(spec).trim().replace(/\.git$/, '').replace(/^\/+|\/+$/g, '');
+  const urlMatch = /^(?:https?:\/\/[^/]+\/|git@[^:]+:)([^/]+)\/[^/]+/.exec(cleaned);
+  if (urlMatch && urlMatch[1] !== '{owner}') {
+    return urlMatch[1];
+  }
+  const parts = cleaned.split('/').filter(Boolean);
+  if (parts.length === 2 && parts[0] !== 'repos' && parts[0] !== '{owner}') {
+    return parts[0];
+  }
+  if (parts.length === 3 && parts[0] !== 'repos' && parts[1] !== '{owner}') {
+    return parts[1];
+  }
+  return null;
+}
+
 function resolveTargetOwner(args) {
   if (process.env.GITHUB_APP_INSTALLATION_LOGIN) {
-    return process.env.GITHUB_APP_INSTALLATION_LOGIN;
+    return parseOwnerFromRepoSpec(process.env.GITHUB_APP_INSTALLATION_LOGIN) || process.env.GITHUB_APP_INSTALLATION_LOGIN.trim();
   }
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if ((arg === '-R' || arg === '--repo') && args[i + 1]) {
-      const parts = args[i + 1].split('/');
-      if (parts.length >= 2) return parts[0];
+      const owner = parseOwnerFromRepoSpec(args[i + 1]);
+      if (owner) return owner;
     }
-    const repoMatch = /^repos\/([^/]+)\/[^/]+/.exec(arg);
+    if (arg.startsWith('--repo=') || arg.startsWith('-R=')) {
+      const owner = parseOwnerFromRepoSpec(arg.slice(arg.indexOf('=') + 1));
+      if (owner) return owner;
+    } else if (arg.startsWith('-R') && arg.length > 2) {
+      const owner = parseOwnerFromRepoSpec(arg.slice(2));
+      if (owner) return owner;
+    }
+  }
+  for (const arg of args) {
+    const repoMatch = /^\/?repos\/([^/]+)\/[^/]+/.exec(arg);
     if (repoMatch && repoMatch[1] !== '{owner}') {
       return repoMatch[1];
+    }
+    const urlMatch = /^https?:\/\/[^/]+\/([^/]+)\/[^/]+\/(?:pull|issues|discussions|commits|releases|actions)\b/.exec(arg);
+    if (urlMatch && urlMatch[1] !== '{owner}') {
+      return urlMatch[1];
     }
   }
   try {
