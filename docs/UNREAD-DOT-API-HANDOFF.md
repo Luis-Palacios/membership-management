@@ -7,7 +7,7 @@ paragraph), plus rules 11 (unread) and 12 (needs my reply); its rules are referr
 It builds on `docs/UNREAD-TAB-API-HANDOFF.md` (done, on `main`): the unread condition, the inbox and
 *Mark all read* are unchanged.
 
-**Status: in progress.** The staff-app side (spec step 2c, the dot itself) comes after, in
+**Status: done on `unread-dot`** (2026-11-05), not merged yet. The staff-app side (spec step 2c, the dot itself) comes after, in
 `staff-app/docs/design/UNREAD-DOT.md`.
 
 One piece of work, in-app only:
@@ -34,8 +34,8 @@ Keep the existing conventions: routes call `conversation_services.py` directly,
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. `hasUnread` on `/report-conversations/counts` | ✅ | (this commit) |
-| 2. Docs | ⬜ | |
+| 1. `hasUnread` on `/report-conversations/counts` | ✅ | `0d18852` |
+| 2. Docs | ✅ | (this commit) |
 
 ### Decisions and deviations
 
@@ -71,6 +71,11 @@ Keep the existing conventions: routes call `conversation_services.py` directly,
   reply afterwards turned it back on. Former leader, deacon with no member and `user` were
   `{ needsMyReply: 0, hasUnread: false }`, 200, throughout. `?smallGroupId=1` on the counts route is
   ignored (same answer as without it).
+- **Stage 2:** docs only: `docs/ARCHITECTURE.md` (*Permissions* row for the counts route, *Report
+  conversations* inbox paragraph), the conversations line in `CLAUDE.md`.
+- **For the staff app (step 2c):** `GET /report-conversations/counts` now returns
+  `{ needsMyReply, hasUnread }`, schema `ConversationBadgeSchema` (was `NeedsMyReplyCountSchema`);
+  regenerate the API types. No migration, no new permission.
 
 ## Who can do what
 
