@@ -7,8 +7,10 @@ paragraph), plus rules 11 (unread) and 12 (needs my reply); its rules are referr
 It builds on `docs/UNREAD-TAB-API-HANDOFF.md` (done, on `main`): the unread condition, the inbox and
 *Mark all read* are unchanged.
 
-**Status: done on `unread-dot`** (2026-11-05), not merged yet. The staff-app side (spec step 2c, the dot itself) comes after, in
-`staff-app/docs/design/UNREAD-DOT.md`.
+**Status: done** (2026-11-05). Stages 1–2 are merged to `main` (PR #69, rebased: stage 2 is
+`a8cfd2d`). No migration. The staff-app side (spec step 2c, the dot itself) is next, in
+`staff-app/docs/design/UNREAD-DOT.md`. The stage sections below are kept as the record of how it was
+built; the code is the reference for the current shapes.
 
 One piece of work, in-app only:
 
@@ -34,8 +36,8 @@ Keep the existing conventions: routes call `conversation_services.py` directly,
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. `hasUnread` on `/report-conversations/counts` | ✅ | `0d18852` |
-| 2. Docs | ✅ | (this commit) |
+| 1. `hasUnread` on `/report-conversations/counts` | ✅ | `55460ce` |
+| 2. Docs | ✅ | `a8cfd2d` |
 
 ### Decisions and deviations
 
