@@ -26,6 +26,7 @@ from membership_management.api.schemas.report_conversations import (
     AttendanceAnchorSchema,
     CommentAuthorSchema,
     CommentBodySchema,
+    ConversationBadgeSchema,
     ConversationCommentSchema,
     ConversationCountsSchema,
     ConversationPersonSchema,
@@ -39,7 +40,6 @@ from membership_management.api.schemas.report_conversations import (
     InboxReportSchema,
     InboxSchema,
     MarkAllReadSchema,
-    NeedsMyReplyCountSchema,
     ReportConversationsSchema,
     ResolveBodySchema,
     SectionAnchorSchema,
@@ -57,9 +57,9 @@ from membership_management.data.small_groups.conversation_services import (
     StaleThreadError,
     add_comment,
     build_thread,
-    count_needing_reply,
     delete_comment,
     edit_comment,
+    get_badge,
     get_comment,
     get_conversation,
     get_inbox,
@@ -530,15 +530,18 @@ def post_report_conversation_reopen(
 @router.get(
     "/report-conversations/counts",
     name="count_report_conversations_needing_reply",
-    description="How many threads wait for the caller's reply (the sidebar badge); 0 outside the audience",
+    description=(
+        "The sidebar badge: how many threads wait for the caller's reply, and whether any is unread"
+        " (the dot); 0 and false outside the audience"
+    ),
 )
 def get_report_conversation_counts(
     db: MembersSessionDep, claims: CurrentClaimsDep, scope: OptionalSmallGroupScopeDep
-) -> NeedsMyReplyCountSchema:
-    count = count_needing_reply(
-        db, group_ids=conversation_group_ids(claims, scope), my_side=comment_side(claims)
+) -> ConversationBadgeSchema:
+    badge = get_badge(
+        db, group_ids=conversation_group_ids(claims, scope), user_id=claims.sub, my_side=comment_side(claims)
     )
-    return NeedsMyReplyCountSchema(needs_my_reply=count)
+    return ConversationBadgeSchema(needs_my_reply=badge.needs_my_reply, has_unread=badge.has_unread)
 
 
 @router.post(

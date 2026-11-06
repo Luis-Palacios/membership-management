@@ -34,12 +34,43 @@ Keep the existing conventions: routes call `conversation_services.py` directly,
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. `hasUnread` on `/report-conversations/counts` | ⬜ | |
+| 1. `hasUnread` on `/report-conversations/counts` | ✅ | (this commit) |
 | 2. Docs | ⬜ | |
 
 ### Decisions and deviations
 
-- (none yet)
+- **How it was tried:** no test runner, so a throwaway `TestClient` script (not committed) with
+  `get_current_claims` overridden per role, against a scratch Postgres database (`udot-scratch`:
+  migrated, seeded, then the Part 1b fixtures: members 33, 49, 54, 41, 27 linked to the seed's
+  made-up user ids, group 3 closed with its leaders' periods ended on the close date, member 27
+  stepped down as group 2's co-leader), reset and re-seeded before each run. The dev database was
+  not touched. Roles: admin (unlinked), elder linked (m33, author of the seed's elder comments) and
+  unlinked, leader of group 2 (m49), leader of group 5 (m54, outside group 2's audience), leader of
+  the closed group 3 (m41), former leader (m27), deacon with no member, `user`.
+- **Stage 1:** `badge_query` in `conversation_queries.py` replaces `needs_reply_count_query`: one
+  `SELECT` of the unchanged `reply` count as a scalar subquery and `EXISTS (_tab_threads(…,
+  "unread", None))`, so the dot reads the *Unread* tab's own `FROM`/`WHERE` (the caller's read row
+  outer-joined, the audience filters) and nothing else. `get_badge` (was `count_needing_reply`)
+  returns a `ConversationBadge` and still answers `(0, false)` for an empty audience without a
+  query; `NeedsMyReplyCountSchema` became `ConversationBadgeSchema`. Tried: `needsMyReply` for every
+  role is identical to `main` (a `main` worktree against the same DB: admin and both elders 4,
+  leader g2 1, everyone else 0). After every step below, for every role, `hasUnread` equalled
+  `counts.unread > 0` from `GET /report-conversations?tab=unread` and `needsMyReply` equalled
+  `counts.reply` (41 checks, all passed). Unread and not: leader g2's only unread thread (7, an
+  elder's comment) turned the dot on; `POST …/7/read` turned it off with `needsMyReply` still 1; an
+  elder's reply on thread 2 turned it back on for leader g2 and left leader g5 (outside group 2)
+  off. *Mark all read*: every role's `hasUnread` was `false` right after (admin marked 10, elder
+  linked 6, elder unlinked 10, leader g2 1, the others 0, `user` 403 on read-all and still 200
+  `{0, false}` on counts). The dot-only state: once the linked elder answered every thread waiting
+  on elders, admin and the unlinked elder had `needsMyReply: 0, hasUnread: true`, the linked elder
+  (author) `0, false`, the leaders of groups 2, 5 and the closed 3 the elder's replies unread.
+  Newest comment deleted: leader g5 replied twice on thread 5 after admin and both elders had
+  marked all read; the second reply made it unread for them; deleting it (newest live comment now
+  the first, already read) turned the dot off for all three, `needsMyReply` unchanged. The same on
+  thread 2 the other way round (an elder's unread comment deleted, leader g2's dot off), and a new
+  reply afterwards turned it back on. Former leader, deacon with no member and `user` were
+  `{ needsMyReply: 0, hasUnread: false }`, 200, throughout. `?smallGroupId=1` on the counts route is
+  ignored (same answer as without it).
 
 ## Who can do what
 
@@ -84,7 +115,7 @@ of the gold number (rule 17: one signal at a time is the staff app's job, the AP
 on, reading it turns it off when it was the only one); after `POST /report-conversations/read-all`
 it is `false`; a thread whose newest comment (by someone else, unread) is deleted, leaving the
 caller's own or an already-read comment as the newest live one, turns it off; a reply by someone
-else turns it back on; a group filter isn't accepted (the route takes none); `user` and deacon with
+else turns it back on; a `smallGroupId` on the URL is ignored (the route takes none); `user` and deacon with
 no member get `{ needsMyReply: 0, hasUnread: false }`, 200.
 
 ## Stage 2: docs
