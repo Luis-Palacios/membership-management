@@ -100,6 +100,8 @@ def seed_report_conversations(ctx: SeedContext) -> None:
             last_comment_at=newest.created_at,
             last_comment_side=newest.side,
             last_comment_user_id=newest.author_user_id,
+            # The newest comment, deleted or not (rule 17).
+            last_activity_at=comments[-1].created_at,
             comments=comments,
         )
         if script.resolved_by is not None:

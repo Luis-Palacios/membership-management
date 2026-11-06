@@ -289,7 +289,7 @@ def _sync_last_comment(session: Session, conversation: ReportConversation) -> No
     """Point `last_comment_*` at the newest non-deleted comment.
 
     A thread whose comments are all deleted keeps its last values: it stays where it was in the
-    inbox and shows only stubs.
+    inbox and shows only stubs. `last_activity_at` is never moved back (rule 17).
     """
     newest = session.execute(newest_live_comment_query(conversation.id)).first()
     if newest is not None:
@@ -333,6 +333,7 @@ def _get_or_create(
                     last_comment_at=now,
                     last_comment_side=side,
                     last_comment_user_id=user_id,
+                    last_activity_at=now,
                 )
                 session.add(conversation)
         except IntegrityError:
@@ -370,6 +371,7 @@ def add_comment(
     conversation.last_comment_at = now
     conversation.last_comment_side = side
     conversation.last_comment_user_id = user_id
+    conversation.last_activity_at = now
     _reopen(conversation)
     _upsert_read(session, conversation.id, user_id, now)
     session.commit()
