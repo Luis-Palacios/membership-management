@@ -7,7 +7,8 @@ paragraph) and the inbox row of *Contracts (Part 1)*; its rules are referred to 
 builds on `docs/UNREAD-DOT-API-HANDOFF.md` (done, on `main`): counts, *Unread*, *Mark all read* and
 the badge are unchanged.
 
-**Status: in progress.** No migration.
+**Status: done on the branch** (2026-11-06), stages 1–2 on `resolved-period`, not merged yet. No
+migration. The staff-app side (spec step 2d) is next, in `staff-app/docs/design/RESOLVED-PERIOD.md`.
 
 One piece of work, in-app only:
 
@@ -31,8 +32,8 @@ database work stay plain `def`.
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. `resolvedSince` on `/report-conversations` | ✅ | (this commit) |
-| 2. Docs | ⬜ | |
+| 1. `resolvedSince` on `/report-conversations` | ✅ | `fa544e8` |
+| 2. Docs | ✅ | (this commit) |
 
 ### Decisions and deviations
 
@@ -53,6 +54,12 @@ database work stay plain `def`.
   `resolvedSince only applies to the resolved tab.`), a naive datetime and garbage; the elder
   reopening thread 9 dropped it from the filtered list, resolving it again brought it back past
   today's midnight; `user` → 403.
+- **Stage 2:** docs only: `docs/ARCHITECTURE.md` (*Report conversations*, inbox paragraph), the
+  conversations line in `CLAUDE.md`. No *Permissions* row changes (same route, same rules).
+- **For the staff app (step 2d):** `GET /report-conversations` takes `resolvedSince` (ISO 8601 with
+  an offset, `tab=resolved` only); the response shape is unchanged. Regenerate the API types if the
+  query parameters are generated; otherwise add `resolvedSince?: string` to
+  `ConversationInboxParams`. No migration, no new permission.
 
 ## Who can do what
 
