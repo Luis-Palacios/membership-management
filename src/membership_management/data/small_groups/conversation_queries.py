@@ -1,4 +1,4 @@
-from sqlalchemy import ColumnElement, Select, and_, exists, func, select, true
+from sqlalchemy import ColumnElement, Select, and_, exists, func, or_, select, true
 from sqlalchemy.orm import aliased, joinedload
 
 from membership_management.data.guests.models import Guest
@@ -175,18 +175,38 @@ def _needs_reply(my_side: str) -> ColumnElement[bool]:
     return and_(ReportConversation.status == "open", ReportConversation.last_comment_side != my_side)
 
 
-def inbox_counts_query(group_ids: frozenset[int] | None, my_side: str) -> Select:
-    """The three tab counts in one pass. `open` includes `reply`."""
-    return (
+def _caller_read() -> type[ReportConversationRead]:
+    """The caller's read rows, aliased; outer-join with `_join_caller_read`."""
+    return aliased(ReportConversationRead, name="caller_read")
+
+
+def _join_caller_read(query: Select, read: type[ReportConversationRead], user_id: str) -> Select:
+    return query.outerjoin(read, and_(read.conversation_id == ReportConversation.id, read.user_id == user_id))
+
+
+def _unread(read: type[ReportConversationRead], user_id: str) -> ColumnElement[bool]:
+    """Rule 11 in SQL (the twin of `is_unread`, which stays for the row flags): the newest comment is
+    someone else's and newer than the caller's `last_read_at`. Needs `read` outer-joined."""
+    return and_(
+        ReportConversation.last_comment_user_id != user_id,
+        or_(read.last_read_at.is_(None), read.last_read_at < ReportConversation.last_comment_at),
+    )
+
+
+def inbox_counts_query(group_ids: frozenset[int] | None, user_id: str, my_side: str) -> Select:
+    """The four tab counts in one pass. `open` includes `reply`; `unread` is any status."""
+    read = _caller_read()
+    query = (
         select(
             func.count().filter(_needs_reply(my_side)).label("reply"),
             func.count().filter(ReportConversation.status == "open").label("open"),
             func.count().filter(ReportConversation.status == "resolved").label("resolved"),
+            func.count().filter(_unread(read, user_id)).label("unread"),
         )
         .select_from(ReportConversation)
         .join(SmallGroupReport, SmallGroupReport.id == ReportConversation.report_id)
-        .where(*_audience_filters(group_ids))
     )
+    return _join_caller_read(query, read, user_id).where(*_audience_filters(group_ids))
 
 
 def needs_reply_count_query(group_ids: frozenset[int] | None, my_side: str) -> Select:
@@ -199,24 +219,37 @@ def needs_reply_count_query(group_ids: frozenset[int] | None, my_side: str) -> S
     )
 
 
-def _tab_filter(tab: str, my_side: str) -> ColumnElement[bool]:
+def _tab_filter(
+    tab: str, my_side: str, read: type[ReportConversationRead], user_id: str
+) -> ColumnElement[bool]:
     if tab == "reply":
         return _needs_reply(my_side)
+    if tab == "unread":
+        return _unread(read, user_id)
     return ReportConversation.status == ("resolved" if tab == "resolved" else "open")
 
 
-def inbox_total_query(
-    group_ids: frozenset[int] | None, my_side: str, tab: str, small_group_id: int | None
+def _tab_threads(
+    group_ids: frozenset[int] | None, user_id: str, my_side: str, tab: str, small_group_id: int | None
 ) -> Select:
-    query = (
-        select(func.count())
+    """`FROM` threads of the tab in the caller's audience (and group); the caller picks the columns."""
+    read = _caller_read()
+    query = _join_caller_read(
+        select()
         .select_from(ReportConversation)
-        .join(SmallGroupReport, SmallGroupReport.id == ReportConversation.report_id)
-        .where(_tab_filter(tab, my_side), *_audience_filters(group_ids))
-    )
+        .join(SmallGroupReport, SmallGroupReport.id == ReportConversation.report_id),
+        read,
+        user_id,
+    ).where(_tab_filter(tab, my_side, read, user_id), *_audience_filters(group_ids))
     if small_group_id is not None:
         query = query.where(SmallGroupReport.small_group_id == small_group_id)
     return query
+
+
+def inbox_total_query(
+    group_ids: frozenset[int] | None, user_id: str, my_side: str, tab: str, small_group_id: int | None
+) -> Select:
+    return _tab_threads(group_ids, user_id, my_side, tab, small_group_id).add_columns(func.count())
 
 
 def inbox_rows_query(
@@ -235,15 +268,12 @@ def inbox_rows_query(
     the per-thread comment lookups run for the rows returned, not for every thread in the audience.
     """
     page = (
-        select(ReportConversation.id.label("id"))
-        .join(SmallGroupReport, SmallGroupReport.id == ReportConversation.report_id)
-        .where(_tab_filter(tab, my_side), *_audience_filters(group_ids))
+        _tab_threads(group_ids, user_id, my_side, tab, small_group_id)
+        .add_columns(ReportConversation.id.label("id"))
         .order_by(ReportConversation.last_comment_at.desc(), ReportConversation.id.desc())
         .limit(limit)
         .offset(offset)
     )
-    if small_group_id is not None:
-        page = page.where(SmallGroupReport.small_group_id == small_group_id)
     page_ids = page.subquery("page")
     last_comment = (
         select(

@@ -601,7 +601,10 @@ def get_report_conversation_inbox(
             for i in page.items
         ],
         counts=InboxCountsSchema(
-            reply=page.counts.reply, open=page.counts.open, resolved=page.counts.resolved
+            reply=page.counts.reply,
+            open=page.counts.open,
+            resolved=page.counts.resolved,
+            unread=page.counts.unread,
         ),
         total=page.total,
     )
