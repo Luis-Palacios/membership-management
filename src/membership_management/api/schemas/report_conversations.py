@@ -159,6 +159,8 @@ class InboxCountsSchema(CamelModel):
     reply: int
     open: int
     resolved: int
+    # Rule 17: threads unread for the caller, any status. Not in the sidebar badge.
+    unread: int
 
 
 class InboxSchema(CamelModel):

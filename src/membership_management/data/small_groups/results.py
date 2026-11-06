@@ -631,6 +631,7 @@ class InboxCounts(NamedTuple):
     reply: int
     open: int
     resolved: int
+    unread: int
 
 
 class InboxPage(NamedTuple):

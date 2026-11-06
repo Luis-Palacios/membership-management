@@ -465,7 +465,7 @@ def reopen(session: Session, conversation: ReportConversation) -> ReportConversa
     return conversation
 
 
-InboxTab = Literal["reply", "open", "resolved"]
+InboxTab = Literal["reply", "unread", "open", "resolved"]
 EXCERPT_LENGTH = 160
 
 
@@ -485,17 +485,17 @@ def get_inbox(
     limit: int,
     offset: int,
 ) -> InboxPage:
-    """Rules 11, 12, 15. `group_ids` is the caller's audience (None = every group).
+    """Rules 11, 12, 15, 17. `group_ids` is the caller's audience (None = every group).
 
-    The three tab counts ignore `small_group_id` (they are the whole inbox, so the tabs don't jump when
+    The four tab counts ignore `small_group_id` (they are the whole inbox, so the tabs don't jump when
     a group is picked); `total` is the filtered tab.
     """
     if group_ids is not None and not group_ids:
-        return InboxPage(items=[], counts=InboxCounts(reply=0, open=0, resolved=0), total=0)
-    counts = session.execute(inbox_counts_query(group_ids, my_side)).one()
+        return InboxPage(items=[], counts=InboxCounts(reply=0, open=0, resolved=0, unread=0), total=0)
+    counts = session.execute(inbox_counts_query(group_ids, user_id, my_side)).one()
     if small_group_id is not None and group_ids is not None and small_group_id not in group_ids:
         return InboxPage(items=[], counts=InboxCounts(*counts), total=0)
-    total = session.scalar(inbox_total_query(group_ids, my_side, tab, small_group_id)) or 0
+    total = session.scalar(inbox_total_query(group_ids, user_id, my_side, tab, small_group_id)) or 0
     rows = session.execute(
         inbox_rows_query(group_ids, user_id, my_side, tab, small_group_id, limit, offset)
     ).all()

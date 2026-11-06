@@ -34,13 +34,35 @@ Keep the existing conventions: routes call `conversation_services.py` directly,
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. `tab=unread` and its count | ⬜ | |
+| 1. `tab=unread` and its count | ✅ | this commit |
 | 2. `last_activity_at` migration and backfill | ⬜ | |
 | 3. `POST /report-conversations/read-all`, docs | ⬜ | |
 
 ### Decisions and deviations
 
-(Filled in as the stages land.)
+- **How it was tried:** no test runner, so a throwaway `TestClient` script (not committed) with
+  `get_current_claims` overridden per role, against a scratch Postgres database (`unread-scratch`:
+  migrated, seeded, then fixtures: members 33, 49, 54, 41, 27 linked to the seed's made-up user ids,
+  group 3 closed with its leaders' periods ended on the close date, member 27 stepped down as
+  group 2's co-leader). The dev database was not touched. Roles: admin (unlinked), elder linked
+  (m33, author of the seed's elder comments) and unlinked, leader of group 2 (m49), leader of group
+  5 (m54, out of scope for 2), leader of the closed group 3 (m41), former leader (m27), deacon with
+  no member, `user`.
+- **Stage 1:** the unread condition is `_unread(read, user_id)` in `conversation_queries.py`, with
+  the caller's read row outer-joined as `caller_read` (`_join_caller_read`). The tab filter, total
+  and page share one `_tab_threads` `FROM`/`WHERE` builder (the total and the page used to repeat
+  it), so they can't drift; the page query keeps its own read join for the row's `last_read_at`.
+  The count is a fourth `FILTER` in `inbox_counts_query`, which now takes the user id. Tried: every
+  role's inbox responses (4 tabs × no filter / `smallGroupId=2`, plus `/counts`) dumped on `main`
+  and on this branch: the 63 that `main` answers are identical once `counts.unread` is removed, and
+  `tab=unread` (422 on `main`) answers 200 (403 for `user`). For every role each tab's `total` equals
+  its count, every *Unread* row has `unread: true`, the open + resolved rows flagged `unread` are
+  exactly the *Unread* tab, and paging with `limit=2` returns each thread once. Admin and unlinked
+  elder see all 10 unread (no read rows, none of the comments are theirs), the linked elder 7 (their
+  own newest comments are not unread), resolved threads included; leader g2 1; leaders g5 and
+  closed g3 0 (the newest comment is theirs); former leader and deacon 0; `user` 403. Marking g2's
+  unread thread read dropped the count by one and took it off the tab; a comment by the elder put
+  it back for the leader and not for the elder.
 
 ## Who can do what
 
