@@ -488,20 +488,25 @@ def get_inbox(
     small_group_id: int | None,
     limit: int,
     offset: int,
+    resolved_since: datetime | None = None,
 ) -> InboxPage:
     """Rules 11, 12, 15, 17. `group_ids` is the caller's audience (None = every group).
 
-    The four tab counts ignore `small_group_id` (they are the whole inbox, so the tabs don't jump when
-    a group is picked); `total` is the filtered tab.
+    The four tab counts ignore `small_group_id` and `resolved_since` (they are the whole inbox, so the
+    tabs don't jump when a filter changes); `total` is the filtered tab. `resolved_since` (rule 15,
+    Part 1d) keeps threads resolved at or after it; the route allows it only on `resolved`.
     """
     if group_ids is not None and not group_ids:
         return InboxPage(items=[], counts=InboxCounts(reply=0, open=0, resolved=0, unread=0), total=0)
     counts = session.execute(inbox_counts_query(group_ids, user_id, my_side)).one()
     if small_group_id is not None and group_ids is not None and small_group_id not in group_ids:
         return InboxPage(items=[], counts=InboxCounts(*counts), total=0)
-    total = session.scalar(inbox_total_query(group_ids, user_id, my_side, tab, small_group_id)) or 0
+    total = (
+        session.scalar(inbox_total_query(group_ids, user_id, my_side, tab, small_group_id, resolved_since))
+        or 0
+    )
     rows = session.execute(
-        inbox_rows_query(group_ids, user_id, my_side, tab, small_group_id, limit, offset)
+        inbox_rows_query(group_ids, user_id, my_side, tab, small_group_id, limit, offset, resolved_since)
     ).all()
     items = [
         InboxRow(

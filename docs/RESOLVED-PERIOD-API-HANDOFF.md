@@ -31,12 +31,28 @@ database work stay plain `def`.
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. `resolvedSince` on `/report-conversations` | ⬜ | |
+| 1. `resolvedSince` on `/report-conversations` | ✅ | (this commit) |
 | 2. Docs | ⬜ | |
 
 ### Decisions and deviations
 
-(Filled in as the stages land.)
+- **How it was tried:** no test runner, so a throwaway `TestClient` script (not committed) with
+  `get_current_claims` overridden per role, against a scratch Postgres database (`rperiod-scratch`:
+  migrated, seeded, members 15 (leader of group 1), 49 (leader of group 2) and 33 (elder) linked to
+  made-up user ids). The dev database was not touched. Roles: admin (unlinked), elder (linked),
+  leader g1, leader g2, `user`.
+- **Stage 1:** `resolved_since` is an optional last argument of `_tab_threads`, `inbox_total_query`,
+  `inbox_rows_query` and `get_inbox` (default `None`, so the badge and *Mark all read* are
+  untouched); the route types it `AwareDatetime` and raises the 422 for other tabs before any query.
+  Tried (49 checks, all passed): per role, a future instant → no rows, `total: 0`, `counts`
+  identical to the unfiltered call; a far-past instant → the response identical to the unfiltered
+  one; `2026-11-01T00:00:00-06:00` → only threads resolved since (admin and elder `[4, 9]` of
+  `[4, 9, 6]`, leader g1 `[9]` of `[9, 6]`, never group 4's thread 4; leader g2 none), `total`
+  equal to the rows, and `limit=1` paging walking exactly those rows; `smallGroupId=1` / `4` with
+  the period → `[9]` / `[4]`; 422 for `tab=open|reply|unread` with the parameter (detail
+  `resolvedSince only applies to the resolved tab.`), a naive datetime and garbage; the elder
+  reopening thread 9 dropped it from the filtered list, resolving it again brought it back past
+  today's midnight; `user` → 403.
 
 ## Who can do what
 
