@@ -38,6 +38,7 @@ from membership_management.api.schemas.report_conversations import (
     InboxLastCommentSchema,
     InboxReportSchema,
     InboxSchema,
+    MarkAllReadSchema,
     NeedsMyReplyCountSchema,
     ReportConversationsSchema,
     ResolveBodySchema,
@@ -64,6 +65,7 @@ from membership_management.data.small_groups.conversation_services import (
     get_inbox,
     get_report_anchor_conversation,
     get_report_conversations,
+    mark_all_read,
     mark_read,
     reopen,
     resolve,
@@ -537,6 +539,32 @@ def get_report_conversation_counts(
         db, group_ids=conversation_group_ids(claims, scope), my_side=comment_side(claims)
     )
     return NeedsMyReplyCountSchema(needs_my_reply=count)
+
+
+@router.post(
+    "/report-conversations/read-all",
+    name="mark_all_report_conversations_read",
+    description=(
+        "Mark every thread in the caller's inbox (and smallGroupId) read up to its latest activity;"
+        " returns how many were unread"
+    ),
+    dependencies=[
+        _needs_reports_view,
+        Depends(rate_limit("30/minute", scope="mark_all_report_conversations_read")),
+    ],
+)
+def post_report_conversations_read_all(
+    db: MembersSessionDep,
+    claims: CurrentClaimsDep,
+    scope: SmallGroupScopeDep,
+    small_group_id: Annotated[int | None, Query(alias="smallGroupId")] = None,
+) -> MarkAllReadSchema:
+    # Reading needs no linked member (rule 5 is about comments). A group outside the audience marks
+    # nothing, like the inbox shows nothing for it (no 404 that would confirm it exists).
+    marked = mark_all_read(
+        db, group_ids=conversation_group_ids(claims, scope), user_id=claims.sub, small_group_id=small_group_id
+    )
+    return MarkAllReadSchema(marked=marked)
 
 
 @router.get(

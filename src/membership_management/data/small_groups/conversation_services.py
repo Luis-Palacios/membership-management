@@ -14,6 +14,7 @@ from membership_management.data.small_groups.conversation_queries import (
     inbox_total_query,
     last_read_query,
     lock_conversation_query,
+    mark_all_read_query,
     needs_reply_count_query,
     newest_live_comment_query,
     person_on_report_query,
@@ -534,6 +535,18 @@ def get_inbox(
         for r in rows
     ]
     return InboxPage(items=items, counts=InboxCounts(*counts), total=total)
+
+
+def mark_all_read(
+    session: Session, *, group_ids: frozenset[int] | None, user_id: str, small_group_id: int | None
+) -> int:
+    """Rule 17, *Mark all read*: every thread in the caller's audience (and `small_group_id`) read up to
+    its `last_activity_at`. Returns how many were unread (what leaves the *Unread* tab)."""
+    if group_ids is not None and not group_ids:
+        return 0
+    marked = session.scalar(mark_all_read_query(group_ids, user_id, small_group_id)) or 0
+    session.commit()
+    return marked
 
 
 def count_needing_reply(
