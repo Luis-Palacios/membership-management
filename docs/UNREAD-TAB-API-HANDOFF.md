@@ -35,8 +35,8 @@ Keep the existing conventions: routes call `conversation_services.py` directly,
 | Stage | Status | Commit |
 | --- | --- | --- |
 | 1. `tab=unread` and its count | ✅ | `1342a40` |
-| 2. `last_activity_at` migration and backfill | ✅ | this commit |
-| 3. `POST /report-conversations/read-all`, docs | ⬜ | |
+| 2. `last_activity_at` migration and backfill | ✅ | `9bd077b` |
+| 3. `POST /report-conversations/read-all`, docs | ✅ | this commit |
 
 ### Decisions and deviations
 
@@ -75,6 +75,26 @@ Keep the existing conventions: routes call `conversation_services.py` directly,
   gets the comment's time in both columns; a reply moves both; an edit moves neither; deleting that
   reply moves `last_comment_at` back and leaves `last_activity_at`. The seed run on a fresh
   migrated DB sets it on all 10 threads to their newest comment.
+- **Stage 3:** `mark_all_read_query` is one statement: a `target` CTE (the audience's threads with
+  their `last_activity_at` and the stage 1 unread flag), the upsert as a data-modifying CTE
+  (`ON CONFLICT … greatest(…)`, with `WHERE last_read_at < excluded` so rows already at or past it
+  aren't rewritten), and the count over `target`'s flag. Both CTEs see one snapshot, so `marked`
+  can't disagree with the write. Rate limit `30/minute` on top of the default. The route returns
+  `MarkAllReadSchema`. Tried: elder (linked) with `smallGroupId=2` marked 2, group 2's unread went
+  to 0 and the other groups' five unread threads stayed; leader g2 with `smallGroupId=1` (outside
+  the audience) got `{ "marked": 0 }` and no read row changed; then for every role `marked` equalled
+  the unread count before, the count was 0 after, and a second call marked 0 (admin 10, elder
+  linked 5, elder unlinked 11, leaders/former leader/deacon 0, `user` 403). Admin's read row on
+  thread 1, set a day ahead beforehand, kept its later value (`greatest`); thread 7 (newest comment
+  deleted) got `last_read_at = last_activity_at`, past `last_comment_at`; admin ended with a row for
+  all 11 threads. A comment by the elder afterwards made thread 2 unread again for admin and leader
+  g2; leader g5's call left leader g2's unread alone and leader g2's marked exactly 1 without
+  touching admin's. Mid-click: with a comment's transaction open (thread row locked, comment and
+  `last_*` written, not committed) admin's read-all returned at once with `marked: 0`, and once the
+  comment committed thread 2 was unread for admin.
+- **For the staff app (stage 2b):** `InboxCountsSchema.unread`, `tab=unread`, and
+  `POST /report-conversations/read-all` → `MarkAllReadSchema { marked }` are new; regenerate the API
+  types. Deploys need the migration (`096025ed70a6`) before the service update, as usual.
 
 ## Who can do what
 

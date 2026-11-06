@@ -173,6 +173,12 @@ class NeedsMyReplyCountSchema(CamelModel):
     needs_my_reply: int
 
 
+class MarkAllReadSchema(CamelModel):
+    """*Mark all read* (rule 17): how many threads were unread for the caller and no longer are."""
+
+    marked: int
+
+
 class ResolveBodySchema(CamelModel):
     """The newest comment the caller saw (null: the thread has no live comments), so a comment posted
     since can't be resolved over unseen. Required, so a client can't skip the check by omission."""

@@ -1,4 +1,5 @@
-from sqlalchemy import ColumnElement, Select, and_, exists, func, or_, select, true
+from sqlalchemy import ColumnElement, Select, String, and_, exists, func, literal, or_, select, true
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import aliased, joinedload
 
 from membership_management.data.guests.models import Guest
@@ -244,6 +245,46 @@ def _tab_threads(
     if small_group_id is not None:
         query = query.where(SmallGroupReport.small_group_id == small_group_id)
     return query
+
+
+def mark_all_read_query(group_ids: frozenset[int] | None, user_id: str, small_group_id: int | None) -> Select:
+    """Rule 17, *Mark all read*, as one statement: every thread in the caller's audience (and group),
+    any status, read up to its `last_activity_at` (never `now()`, never backwards). Selects how many
+    of them were unread before (the CTEs see the same snapshot, so the count and the write agree).
+
+    Every thread is marked, not only the unread ones: a thread whose newest comment was deleted isn't
+    unread but its mark still has to pass that comment (Part 2's throttle reads it).
+    """
+    read = _caller_read()
+    target = _join_caller_read(
+        select(
+            ReportConversation.id.label("conversation_id"),
+            ReportConversation.last_activity_at.label("activity_at"),
+            _unread(read, user_id).label("was_unread"),
+        )
+        .select_from(ReportConversation)
+        .join(SmallGroupReport, SmallGroupReport.id == ReportConversation.report_id),
+        read,
+        user_id,
+    ).where(*_audience_filters(group_ids))
+    if small_group_id is not None:
+        target = target.where(SmallGroupReport.small_group_id == small_group_id)
+    target_cte = target.cte("target")
+    upsert = insert(ReportConversationRead).from_select(
+        ["user_id", "conversation_id", "last_read_at"],
+        select(literal(user_id, String), target_cte.c.conversation_id, target_cte.c.activity_at),
+    )
+    upsert = upsert.on_conflict_do_update(
+        index_elements=[ReportConversationRead.user_id, ReportConversationRead.conversation_id],
+        set_={
+            "last_read_at": func.greatest(ReportConversationRead.last_read_at, upsert.excluded.last_read_at)
+        },
+        # Skip rows already at or past it: no needless row versions.
+        where=ReportConversationRead.last_read_at < upsert.excluded.last_read_at,
+    )
+    # A data-modifying CTE always runs to completion, whether or not the outer query reads it.
+    marked = upsert.returning(ReportConversationRead.conversation_id).cte("marked")
+    return select(func.count()).select_from(target_cte).where(target_cte.c.was_unread).add_cte(marked)
 
 
 def inbox_total_query(
