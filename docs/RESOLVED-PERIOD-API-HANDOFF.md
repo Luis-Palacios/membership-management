@@ -7,8 +7,10 @@ paragraph) and the inbox row of *Contracts (Part 1)*; its rules are referred to 
 builds on `docs/UNREAD-DOT-API-HANDOFF.md` (done, on `main`): counts, *Unread*, *Mark all read* and
 the badge are unchanged.
 
-**Status: done on the branch** (2026-11-06), stages 1–2 on `resolved-period`, not merged yet. No
-migration. The staff-app side (spec step 2d) is next, in `staff-app/docs/design/RESOLVED-PERIOD.md`.
+**Status: done** (2026-11-06). Stages 1–2 are merged to `main` (PR #70, rebased: stage 1 is
+`602f61e`, stage 2 `f6f6d05`). No migration. The staff-app side (spec step 2d) is merged too
+(staff-app PR #106, `staff-app/docs/design/RESOLVED-PERIOD.md`). The stage sections below are kept
+as the record of how it was built; the code is the reference for the current shapes.
 
 One piece of work, in-app only:
 
@@ -32,8 +34,8 @@ database work stay plain `def`.
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. `resolvedSince` on `/report-conversations` | ✅ | `fa544e8` |
-| 2. Docs | ✅ | (this commit) |
+| 1. `resolvedSince` on `/report-conversations` | ✅ | `602f61e` |
+| 2. Docs | ✅ | `f6f6d05` |
 
 ### Decisions and deviations
 
