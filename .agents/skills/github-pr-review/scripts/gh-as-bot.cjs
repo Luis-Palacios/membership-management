@@ -59,34 +59,88 @@ function parseOwnerFromRepoSpec(spec) {
   return null;
 }
 
+const VALUE_FLAGS = new Set([
+  '-R', '--repo',
+  '-b', '--body',
+  '-F', '--body-file', '--field',
+  '-f', '--raw-field',
+  '--input',
+  '-H', '--header', '--head',
+  '-X', '--method',
+  '-q', '--jq',
+  '-t', '--template', '--title',
+  '--hostname',
+  '--cache',
+  '-l', '--label',
+  '-a', '--assignee',
+  '-m', '--milestone',
+  '-p', '--project',
+  '-r', '--reviewer',
+  '-B', '--base',
+  '--json',
+  '-L', '--limit',
+  '-S', '--search',
+  '-s', '--state',
+  '-A', '--author'
+]);
+
 function resolveTargetOwner(args) {
   if (process.env.GITHUB_APP_INSTALLATION_LOGIN) {
     return parseOwnerFromRepoSpec(process.env.GITHUB_APP_INSTALLATION_LOGIN) || process.env.GITHUB_APP_INSTALLATION_LOGIN.trim();
   }
+  const positionals = [];
+  let afterDoubleDash = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
+    if (afterDoubleDash) {
+      positionals.push(arg);
+      continue;
+    }
+    if (arg === '--') {
+      afterDoubleDash = true;
+      continue;
+    }
     if ((arg === '-R' || arg === '--repo') && args[i + 1]) {
       const owner = parseOwnerFromRepoSpec(args[i + 1]);
       if (owner) return owner;
+      i++;
+      continue;
     }
     if (arg.startsWith('--repo=') || arg.startsWith('-R=')) {
       const owner = parseOwnerFromRepoSpec(arg.slice(arg.indexOf('=') + 1));
       if (owner) return owner;
-    } else if (arg.startsWith('-R') && arg.length > 2) {
+      continue;
+    }
+    if (arg.startsWith('-R') && arg.length > 2) {
       const owner = parseOwnerFromRepoSpec(arg.slice(2));
       if (owner) return owner;
+      continue;
     }
+    if (VALUE_FLAGS.has(arg)) {
+      i++;
+      continue;
+    }
+    if (arg.startsWith('-')) {
+      continue;
+    }
+    positionals.push(arg);
   }
-  for (const arg of args) {
-    const repoMatch = /^\/?repos\/([^/]+)\/[^/]+/.exec(arg);
+
+  if (positionals[0] === 'api' && positionals[1]) {
+    const repoMatch = /^\/?repos\/([^/\s]+)\/[^/\s]+/.exec(positionals[1]);
     if (repoMatch && repoMatch[1] !== '{owner}') {
       return repoMatch[1];
     }
-    const urlMatch = /^https?:\/\/[^/]+\/([^/]+)\/[^/]+\/(?:pull|issues|discussions|commits|releases|actions)\b/.exec(arg);
+  } else if (
+    (positionals[0] === 'pr' || positionals[0] === 'issue' || positionals[0] === 'discussion') &&
+    positionals[2]
+  ) {
+    const urlMatch = /^https?:\/\/[^/\s]+\/([^/\s]+)\/[^/\s]+\/(?:pull|issues|discussions)\/\d+\/?$/.exec(positionals[2]);
     if (urlMatch && urlMatch[1] !== '{owner}') {
       return urlMatch[1];
     }
   }
+
   try {
     const remote = spawnSync('git', ['config', '--get', 'remote.origin.url'], { encoding: 'utf8' });
     if (remote.status === 0 && remote.stdout) {
