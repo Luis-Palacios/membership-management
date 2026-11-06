@@ -634,6 +634,13 @@ class InboxCounts(NamedTuple):
     unread: int
 
 
+class ConversationBadge(NamedTuple):
+    """`GET /report-conversations/counts`: the gold number and the unread dot (rule 17)."""
+
+    needs_my_reply: int
+    has_unread: bool
+
+
 class InboxPage(NamedTuple):
     items: list[InboxRow]
     counts: InboxCounts

@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from membership_management.data.small_groups.conversation_queries import (
+    badge_query,
     comment_query,
     conversation_query,
     inbox_counts_query,
@@ -15,7 +16,6 @@ from membership_management.data.small_groups.conversation_queries import (
     last_read_query,
     lock_conversation_query,
     mark_all_read_query,
-    needs_reply_count_query,
     newest_live_comment_query,
     person_on_report_query,
     report_anchor_conversation_query,
@@ -34,6 +34,7 @@ from membership_management.data.small_groups.models import (
 )
 from membership_management.data.small_groups.results import (
     CommentAuthor,
+    ConversationBadge,
     ConversationComment,
     ConversationMember,
     ConversationPerson,
@@ -549,9 +550,10 @@ def mark_all_read(
     return marked
 
 
-def count_needing_reply(
-    session: Session, *, group_ids: frozenset[int] | None, my_side: ConversationSide
-) -> int:
+def get_badge(
+    session: Session, *, group_ids: frozenset[int] | None, user_id: str, my_side: ConversationSide
+) -> ConversationBadge:
+    """The sidebar's Conversations item: the *Needs my reply* number and the unread dot (rule 17)."""
     if group_ids is not None and not group_ids:
-        return 0
-    return session.scalar(needs_reply_count_query(group_ids, my_side)) or 0
+        return ConversationBadge(needs_my_reply=0, has_unread=False)
+    return ConversationBadge(*session.execute(badge_query(group_ids, user_id, my_side)).one())

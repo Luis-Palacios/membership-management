@@ -169,8 +169,13 @@ class InboxSchema(CamelModel):
     total: int
 
 
-class NeedsMyReplyCountSchema(CamelModel):
+class ConversationBadgeSchema(CamelModel):
+    """The sidebar's Conversations item (rule 17): the gold number, and the dot staff-app shows when
+    the number is 0 and something is unread. Both over the whole inbox, no group filter."""
+
     needs_my_reply: int
+    # Rule 17, Part 1c: any thread unread for the caller (the *Unread* tab is non-empty).
+    has_unread: bool
 
 
 class MarkAllReadSchema(CamelModel):

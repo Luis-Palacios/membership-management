@@ -210,16 +210,6 @@ def inbox_counts_query(group_ids: frozenset[int] | None, user_id: str, my_side: 
     return _join_caller_read(query, read, user_id).where(*_audience_filters(group_ids))
 
 
-def needs_reply_count_query(group_ids: frozenset[int] | None, my_side: str) -> Select:
-    """The sidebar badge: only the `reply` count, so nothing else is aggregated."""
-    return (
-        select(func.count())
-        .select_from(ReportConversation)
-        .join(SmallGroupReport, SmallGroupReport.id == ReportConversation.report_id)
-        .where(_needs_reply(my_side), *_audience_filters(group_ids))
-    )
-
-
 def _tab_filter(
     tab: str, my_side: str, read: type[ReportConversationRead], user_id: str
 ) -> ColumnElement[bool]:
@@ -245,6 +235,20 @@ def _tab_threads(
     if small_group_id is not None:
         query = query.where(SmallGroupReport.small_group_id == small_group_id)
     return query
+
+
+def badge_query(group_ids: frozenset[int] | None, user_id: str, my_side: str) -> Select:
+    """The sidebar badge in one round trip: the `reply` count (nothing else aggregated) and whether any
+    thread is unread (rule 17, the dot): an `EXISTS` over the *Unread* tab's own `FROM`/`WHERE`, no
+    group filter, so it is true exactly when the inbox's `counts.unread` is above 0."""
+    needs_reply = (
+        select(func.count())
+        .select_from(ReportConversation)
+        .join(SmallGroupReport, SmallGroupReport.id == ReportConversation.report_id)
+        .where(_needs_reply(my_side), *_audience_filters(group_ids))
+    )
+    has_unread = _tab_threads(group_ids, user_id, my_side, "unread", None).add_columns(literal(1)).exists()
+    return select(needs_reply.scalar_subquery().label("needs_my_reply"), has_unread.label("has_unread"))
 
 
 def mark_all_read_query(group_ids: frozenset[int] | None, user_id: str, small_group_id: int | None) -> Select:
