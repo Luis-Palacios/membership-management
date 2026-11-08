@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      { "matcher": "Edit|Write", "hooks": [
+        { "type": "command", "command": "uv run --no-project --quiet python \"$CLAUDE_PROJECT_DIR/.claude/hooks/check.py\"", "timeout": 60 } ] }
+    ],
+    "Stop": [
+      { "hooks": [
+        { "type": "command", "command": "uv run --no-project --quiet python \"$CLAUDE_PROJECT_DIR/.claude/hooks/check.py\"", "timeout": 180 } ] }
+    ]
+  }
+}
