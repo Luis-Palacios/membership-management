@@ -9,7 +9,8 @@ disable-model-invocation: true
 `main` = commit and push straight to `main` (only when the user says so: small fixes, handoff and spec edits).
 
 1. Look: branch, `git status --short`, `git diff --stat`. On `main` without `main` in the arguments,
-   propose a branch named after the feature (`report-conversations`, `member-sex`) and ask. Changes that
+   propose a branch and ask: `feature/<spec-slug>` (the same name as in the other repos), `fix/<what>` or
+   `chore/<what>`, lowercase kebab-case ("Branch names" in the workspace CLAUDE.md). Changes that
    aren't part of this work: ask which belong.
 2. Checks (all must pass; don't ship with errors):
    - `uv run ruff check --fix .`, `uv run ruff format .`, `uv run ty check`.
