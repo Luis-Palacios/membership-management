@@ -34,6 +34,18 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/check-tools.mjs\" pyright-langserver",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   },
   "enabledPlugins": {
