@@ -1,16 +1,42 @@
 {
   "hooks": {
     "PreToolUse": [
-      { "matcher": "Bash", "hooks": [
-        { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/branch-name.mjs\"", "timeout": 10 } ] }
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/branch-name.mjs\"",
+            "timeout": 10
+          }
+        ]
+      }
     ],
     "PostToolUse": [
-      { "matcher": "Edit|Write", "hooks": [
-        { "type": "command", "command": "uv run --no-project --quiet python \"$CLAUDE_PROJECT_DIR/.claude/hooks/check.py\"", "timeout": 60 } ] }
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --no-project --quiet python \"$CLAUDE_PROJECT_DIR/.claude/hooks/check.py\"",
+            "timeout": 60
+          }
+        ]
+      }
     ],
     "Stop": [
-      { "hooks": [
-        { "type": "command", "command": "uv run --no-project --quiet python \"$CLAUDE_PROJECT_DIR/.claude/hooks/check.py\"", "timeout": 180 } ] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --no-project --quiet python \"$CLAUDE_PROJECT_DIR/.claude/hooks/check.py\"",
+            "timeout": 180
+          }
+        ]
+      }
     ]
+  },
+  "enabledPlugins": {
+    "pyright-lsp@claude-plugins-official": true
   }
 }
