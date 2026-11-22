@@ -4,6 +4,7 @@ X-Internal-Token. Never logs a payload, an address or the token: only status cod
 
 import json
 import logging
+import threading
 from collections.abc import Collection, Mapping, Sequence
 from typing import Any
 
@@ -21,6 +22,9 @@ TIMEOUT_SECONDS = 5.0
 PERMISSIONS_CHUNK = 500
 
 _client: httpx.Client | None = None
+# The API calls this from several threads at once (fast paths in the thread pool, the embedded worker):
+# without the lock, two first calls could each build a client and one would leak.
+_client_lock = threading.Lock()
 
 
 class AuthServerUnavailable(Exception):  # noqa: N818 (a condition, not a bug: the name reads better)
@@ -31,24 +35,29 @@ class AuthServerUnavailable(Exception):  # noqa: N818 (a condition, not a bug: t
 def _http() -> httpx.Client:
     """One client for the process (keeps connections to auth-server open), made on first use."""
     global _client
-    if _client is None:
-        token = notification_settings.internal_api_token
-        if token is None:
-            raise RuntimeError("INTERNAL_API_TOKEN is not set")  # settings refuse this while emails are on
-        _client = httpx.Client(
-            base_url=notification_settings.auth_server_url,
-            timeout=TIMEOUT_SECONDS,
-            headers={"X-Internal-Token": token.get_secret_value(), "Content-Type": "application/json"},
-        )
-    return _client
+    client = _client
+    if client is not None:  # the common case, no lock
+        return client
+    with _client_lock:
+        if _client is None:  # checked again: another thread may have made it while we waited
+            token = notification_settings.internal_api_token
+            if token is None:  # settings refuse this while emails are on
+                raise RuntimeError("INTERNAL_API_TOKEN is not set")
+            _client = httpx.Client(
+                base_url=notification_settings.auth_server_url,
+                timeout=TIMEOUT_SECONDS,
+                headers={"X-Internal-Token": token.get_secret_value(), "Content-Type": "application/json"},
+            )
+        return _client
 
 
 def close() -> None:
-    """For shutdown (the worker's, or the API's when the worker is embedded)."""
+    """For shutdown: the worker's, or the API's (embedded worker or not; the fast path opens it too)."""
     global _client
-    if _client is not None:
-        _client.close()
-        _client = None
+    with _client_lock:
+        if _client is not None:
+            _client.close()
+            _client = None
 
 
 def _body(data: Mapping[str, Any]) -> bytes:

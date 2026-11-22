@@ -104,6 +104,8 @@ def readers_of_group(
     """Rule 23: the users who may read this group's conversations, by the API's own rule: each one's
     scope from their linked member (as `get_current_member` resolves it) and `small_group_scope_for`,
     then `can_read_group_conversations`. A user missing from `perms_by_user` is never a reader."""
+    if not perms_by_user:
+        return frozenset()
     # A comprehension, not dict(result): a Result has .keys() (its columns), so dict() reads it as a mapping.
     member_of: dict[str, int] = {
         user_id: member_id
@@ -112,8 +114,9 @@ def readers_of_group(
         )
     }
     led: dict[int, set[int]] = defaultdict(set)
-    for member_id, group_id in session.execute(led_small_group_ids_by_member_query(member_of.values())):
-        led[member_id].add(group_id)
+    if member_of:  # nobody linked: no led groups to look up
+        for member_id, group_id in session.execute(led_small_group_ids_by_member_query(member_of.values())):
+            led[member_id].add(group_id)
     readers = set()
     for user_id, perms in perms_by_user.items():
         member_id = member_of.get(user_id)

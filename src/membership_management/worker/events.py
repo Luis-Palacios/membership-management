@@ -85,9 +85,12 @@ def process_due_events(
     if not result.claimed:
         return stats
 
-    # The candidate snapshot, read-only.
+    # The candidate snapshot, read-only. One bad event (a malformed payload, a DB error) is recorded on
+    # its own row and skipped: it must not leave the rest of the batch stuck in `processing` until the
+    # lease runs out, burning their attempts toward the poison cap with it.
     candidates: dict[int, frozenset[str]] = {}
     unknown: list[Claimed] = []
+    broken: list[tuple[Claimed, str]] = []
     with sessions() as session:
         ids = [r.id for r in result.claimed]
         events = {e.id: e for e in session.scalars(select(OutboxEvent).where(EVENTS.c.id.in_(ids)))}
@@ -96,7 +99,21 @@ def process_due_events(
             if _KNOWN.get(event.event_type) != event.schema_version:
                 unknown.append(row)
                 continue
-            candidates[row.id] = candidate_user_ids(session, event.payload, possible_watchers)
+            try:
+                candidates[row.id] = candidate_user_ids(session, event.payload, possible_watchers)
+            except Exception as exc:
+                session.rollback()  # a DB error aborts the transaction; the next event needs a fresh one
+                logger.exception("outbox event %s: reading its candidates raised", row.id)
+                broken.append((row, type(exc).__name__))
+
+    if broken:
+        with sessions() as session:
+            for row, error in broken:
+                if record_exception(session, EVENTS, row, error):
+                    stats.failed += 1
+                else:
+                    stats.lost += 1
+            session.commit()
 
     if unknown:
         with sessions() as session:

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import NamedTuple
 
-from sqlalchemy import Table, and_, delete, func, or_, select, update
+from sqlalchemy import Table, delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from membership_management.notifications.sending import DELIVERIES
@@ -38,10 +38,14 @@ def expire_overdue(session: Session, queue: Queue) -> int:
     itself. The claim expires rows too; this also catches rows that won't be due again before their
     deadline (a long backoff), so the monitoring numbers stay true."""
     c = queue.table.c
-    lease_out = and_(c.status == queue.in_progress, c.next_attempt_at <= func.now())
     rows = session.execute(
         update(queue.table)
-        .where(c.expires_at <= func.now(), or_(c.status.in_(("pending", "failed")), lease_out))
+        .where(
+            # Exactly the due-index's predicate, so the planner uses it with one scan.
+            c.status.in_(("pending", "failed", queue.in_progress)),
+            c.expires_at <= func.now(),
+            or_(c.status != queue.in_progress, c.next_attempt_at <= func.now()),
+        )
         .values(status="expired", claim_token=None)
         .returning(c.id)
     ).all()

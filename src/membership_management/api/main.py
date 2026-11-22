@@ -68,7 +68,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # between items), then returns. Before disposing the engines it's still using.
         stop_worker.set()
         await worker
-        auth_server.close()
+    # Also without the embedded worker: the comment routes' fast path opens the client too. A no-op
+    # when nothing opened it.
+    auth_server.close()
     # Release this process's pooled connections on shutdown (e.g. SIGTERM
     # during a container redeploy/scale-down) instead of relying on the OS
     # to close the sockets once the process exits.

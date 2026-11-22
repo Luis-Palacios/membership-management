@@ -27,7 +27,8 @@ def run_fast_path(event_id: int) -> None:
             watchers = users_with_permissions(WATCHER_PERMISSIONS)
         except AuthServerUnavailable:
             return  # nothing claimed; the sweep retries after the head start
-        process_due_events(MembershipSessionLocal, watchers, event_id=event_id)
-        send_due_deliveries(MembershipSessionLocal, AuthServerSender(), source_event_id=event_id)
+        stats = process_due_events(MembershipSessionLocal, watchers, event_id=event_id)
+        if stats.deliveries:  # none planned (throttled, deleted, already taken by the sweep): nothing to send
+            send_due_deliveries(MembershipSessionLocal, AuthServerSender(), source_event_id=event_id)
     except Exception:
         logger.exception("conversation email fast path failed for outbox event %s", event_id)

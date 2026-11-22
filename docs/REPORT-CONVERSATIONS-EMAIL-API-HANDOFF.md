@@ -304,6 +304,17 @@ put an email address in a command, a log line or this file: use user ids.
   `?guest=` variant is left to staff-app's Part 2 (its link handling; this repo's side, the `?guest=`
   path, was checked in Stage 2), as is the sign-in return keeping the link. Two of the test emails
   (the Stage 4 real send and the kill test) carry a placeholder link to report 1, not a real thread.
+- PR #72 review fixes: **an event whose candidates can't be read (a malformed payload, a DB error)
+  is recorded on its own row** (`record_exception`) and the rest of the batch goes on; before, it
+  aborted the batch and left the others in `processing` until the lease ran out, burning their
+  attempts toward the poison cap. The shared `httpx.Client` is created and closed under a lock (fast
+  paths and the embedded worker call it from several threads), and the API closes it on shutdown
+  whether or not the worker is embedded. `expire_overdue` states the due-index's predicate outright
+  (one index scan; EXPLAIN showed the old form already used the index, as a BitmapOr). The fast path
+  skips the send step when it planned no delivery; `readers_of_group` skips its lookups when there is
+  nobody to look up. Checked: a malformed event batched with two healthy ones → those processed, it
+  alone `failed` (`KeyError`); 20 concurrent first calls → one client; the client closed on shutdown
+  with `EMBEDDED_WORKER=false`; the expiry cases as before; the Stage 4 checks re-run.
 - Stage 6 local data left for staff-app's Part 2: the test elder linked to member 3, the test leader to
   member 6 (group 1's leader), and the run's threads on group 1's reports. The run's opt-outs for
   the other full-scope users were removed (no opt-out rows left).
