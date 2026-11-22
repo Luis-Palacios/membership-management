@@ -1,206 +1,397 @@
 # Report conversations, Part 2: email notifications (membership-management)
 
-> **Read first (added Oct 2026):** this Part 2 handoff was written before section threads.
-> **Prayer & follow-up** (`docs/specs/prayer-follow-up.md`) ships first and adds conversations about a
-> report section (prayer, praise, follow-up), not only about a person. Before starting Part 2, apply
-> that spec's *Changes for report conversations Part 2* here (stage 2: `path` with `?section=` and the `topic` field). Part 2 still comes next,
-> slowly, one change at a time, as described below.
+Handoff spec for the API side of **conversation emails**, rewritten Nov 2026 around the event-first
+design: the comment transaction writes one `outbox_events` row; a **worker** (its own entry point,
+embedded in the API by default) turns each event into notification requests through the
+**report-conversations consumer** (audience, recipients, watchers, unwatch, throttle), hands them
+to a **generic `notifications/` layer** (preferences, deliveries, `Sender`), and sends them
+through auth-server.
 
-Handoff spec for the API side of **conversation emails**: a transactional outbox written in the same
-transaction as the comment, a fast path with FastAPI `BackgroundTasks`, a sweeper loop that retries,
-and the opt-out. Cross-repo rules: `../docs/specs/report-conversations.md` (*Contracts (Part 2:
-email)*). The sender is auth-server: `auth-server/docs/REPORT-CONVERSATIONS-EMAIL-HANDOFF.md` (its
-Stage 3 must exist before this Stage 4 can send anything). Part 1 is `docs/REPORT-CONVERSATIONS-API-HANDOFF.md`.
+- Cross-repo rules: `../docs/specs/report-conversations.md`: rules 18–23 (*Watching groups*),
+  *Contracts (Part 2: email)* and *Changes to the Part 2 handoffs (Nov 2026)*. Section threads:
+  `../docs/specs/prayer-follow-up.md`, *Changes for report conversations Part 2* (applied here:
+  `?section=` paths and `topic`).
+- auth-server's side: `../auth-server/docs/REPORT-CONVERSATIONS-EMAIL-HANDOFF.md` (merged, PR #35;
+  its *Decisions and deviations* are the contract as built, summarised below).
+- staff-app's side: `../staff-app/docs/design/REPORT-CONVERSATIONS-EMAIL.md` (uses Stage 6's
+  routes).
+- Part 1: `docs/REPORT-CONVERSATIONS-API-HANDOFF.md`, plus Parts 1b–1d (`UNREAD-TAB`, `UNREAD-DOT`,
+  `RESOLVED-PERIOD` handoffs).
 
 > **How to work this handoff (learning mode).** Luis is using this part to learn the transactional
 > outbox, background work in FastAPI and the claiming pattern. Claude Code shows **one code change at
-> a time** (a column, a function, a query, a config field), explains what it does and why it's
-> written that way, and then **waits**. Luis decides per change: he writes it himself and Claude Code
-> reviews it, or Claude Code writes it. Never batch changes, never "I'll do the rest". When Luis
-> writes a change, review it like a PR comment: what's right, what's wrong, why. Commits stay one per
-> stage, when Luis says the stage is done.
+> a time** (a column, a function, a query, a config field), with the code and a short why, then
+> **waits**. Luis decides per change: he writes it himself and Claude Code reviews it like a PR
+> comment (what's right, what's wrong, why), or he says "you write it". Never batch changes, never
+> "I'll do the rest". Commits stay one per stage, made only when Luis says the stage is done, with
+> this progress log updated in the same commit. Stop after every stage and before any PR. Docs
+> changes (this file, `ARCHITECTURE.md`, `CLAUDE.md`) don't need the step-by-step review.
 
-**Decided (don't re-open):**
+**Depends on:** auth-server Stage 3 (`POST /internal/notifications`) and Stage 4 (the two user
+routes), both on its `main`. Nothing here may stub them.
 
-- **Comments never depend on email.** With `CONVERSATION_EMAILS_ENABLED=false` (the default)
-  nothing in this handoff runs: no rows, no tasks, no sweeper, no calls. With it on, a failure to
-  plan or send an email must never fail or slow down the comment request.
-- **Transactional outbox:** `conversation_notifications` rows are inserted in the **same
-  transaction** as the comment, so a comment can't exist without its notifications or the reverse.
-- **Payload snapshot:** each row stores the exact payload sent to auth-server (JSONB), built when
-  the row is inserted. Retries send it unchanged, which the Resend idempotency key requires (same
-  key + different payload = rejected).
-- **Fast path:** the comment route adds one `BackgroundTasks` task with the new row ids. The task
-  runs after the response, with its **own** DB session (the request's is closed by then).
-- **Sweeper:** an asyncio loop started in `lifespan`, on every API task, every 2 minutes with a
-  random 0–30 s start offset. DB work runs in `anyio.to_thread.run_sync` (the DB layer is sync).
-- **Claiming = lease:** a claim sets `status='sending'`, `next_attempt_at=now()+2 min`. The sweeper
-  claims with `FOR UPDATE SKIP LOCKED`; the fast path claims by id with the same conditions. Any
-  number of API tasks can run both safely.
-- **Retry schedule:** failed → retry after 1, 5, 15, 60 minutes; the 5th failure → `dead` (logged).
-  New rows start at `next_attempt_at = now() + 60 s` so the fast path has a head start.
+Branch **`feature/report-conversations-email`** (the spec's older `report-conversations-email`
+predates the branch naming rule). Each stage: `uv run ruff check .`, `uv run ty check`, and
+`uv run alembic check` plus a `downgrade -1` / `upgrade head` round trip when the schema changes.
 
-Branch **`report-conversations-email`**. Each stage: `uv run ruff check .`, `uv run ty check`,
-`alembic check` when the schema changes.
+**Testing with real email:** auth-server's local `.env` has a real send-only Resend key, so a send
+reaches a real inbox. Only send to Luis's test accounts (ask him for the next unused sign-in). Never
+put an email address in a command, a log line or this file: use user ids.
 
 ## Progress (handoff log)
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| 1. Config, tables, migration | ⬜ | |
-| 2. Recipients and planning rows in the comment transaction | ⬜ | |
-| 3. auth-server client | ⬜ | |
-| 4. Claim and send; fast path with `BackgroundTasks` | ⬜ | |
-| 5. Sweeper loop | ⬜ | |
-| 6. Opt-out endpoints | ⬜ | |
-| 7. Docs and a local end-to-end run | ⬜ | |
+| 0. Handoff rewritten to the Nov 2026 design | ✅ | (this commit) |
+| 1. Config, the five tables, migration | ⬜ | |
+| 2. Shared read check; the event in the comment transaction; the consumer; `notifications/` | ⬜ | |
+| 3. auth-server client: `with-permission`, `permissions`, the `Sender` | ⬜ | |
+| 4. Claiming, the fence, processing, sending, outcomes; the fast path | ⬜ | |
+| 5. The worker: entry point, embedded start, SIGTERM, gate, expiry, monitoring, purge | ⬜ | |
+| 6. Preference and watch routes; docs; the end-to-end hand-check | ⬜ | |
 
 ### Decisions and deviations
 
+- Stage 0: the old handoff (per-recipient `conversation_notifications` rows planned inside the
+  comment transaction, a sweeper in `lifespan`, `attempts`-only retries, 5th failure → `dead`) is
+  replaced by the spec's Nov 2026 design. Nothing from it was built.
+- Stage 0: **possible watchers** are fetched with all four permissions the full-scope audience needs
+  (`smallGroups:all`, `smallGroups:view`, `smallGroupReports:view`,
+  `smallGroupReports:viewObservations`), not only `smallGroups:all`. Still a superset: the shared
+  check (rule 23) decides who watches each group, so the rule keeps one copy.
+- Stage 0: **status codes beyond the spec's table**, from auth-server as built: 422
+  `invalid_request` → `dead` with an error logged (a bug, like `invalid_data`); 503
+  `internal_api_disabled` (token unset there) and 500 `internal_error` → transient, error logged;
+  404 `recipient_unavailable` also covers **unverified** users → `dead`.
+- Stage 0: users returned by `POST /internal/users/permissions` with `{}` (`pending` role) and users
+  absent from the response both count as "can't read".
+- Stage 0: requests are sent as ASCII-escaped JSON (`content=json.dumps(body, ensure_ascii=True)`
+  plus `Content-Type: application/json`), not httpx's `json=` (httpx 0.28 sends raw UTF-8).
+  auth-server's Stage 3 notes it expects that; names with accents stay safe either way, but the
+  escape removes the question.
+- Stage 0: `CONVERSATION_EMAILS_ENABLED=true` without `INTERNAL_API_TOKEN` is a startup error **in
+  every environment**, local included: auth-server answers 503 `internal_api_disabled` without the
+  token, so every event would retry for 24 h and expire.
 - (fill in per stage)
 
-## Stage 1: Config, tables, migration
+## Contract as built (auth-server, PR #35)
 
-**Config** (`api/config.py`): `conversation_emails_enabled: bool = False`; reuse
-`internal_api_token` (already there for the incoming calls) as the outgoing token; the auth-server
-base URL for server-to-server calls is the same internal base the JWKS fetch uses (read the
-existing `auth_server_url` / internal-URL comments and reuse, don't add a third URL). Validation: on
-with no token → startup error outside local.
+Every `/internal/*` call sends `X-Internal-Token` = this repo's existing `INTERNAL_API_TOKEN`, to
+`AUTH_SERVER_URL` (the internal origin the JWKS fetch already uses; no new URL). Error bodies are
+`{ code, message }`. Common: 401 `invalid_token`, 503 `internal_api_disabled`, 500
+`internal_error`; a **bare 404** (no `code`) = route not deployed.
 
-**`conversation_notifications`**
+- **`POST /internal/notifications`**, strict body `{ idempotencyKey (≤ 200), recipientUserId,
+  template, data, path }`; any extra key → 422.
+  - `template`: `report-conversation.new` | `report-conversation.reply`.
+  - `data`: `{ actorName, groupName (trimmed, 1–200), meetingDate "YYYY-MM-DD", reason
+    leader|participant|watcher, topic person|prayer|praise|followUp, startedBy elders|leaders }`.
+  - `path` must match `/groups/reports/{id}?person={id}` | `?guest={id}` |
+    `?section=prayer|praise|followUp`.
+  - 200 `{ sent, emailId }` (a repeat too). 404 `recipient_unavailable` (missing, unverified or
+    banned). 409 `idempotency_conflict`. 422 `invalid_request` / `unknown_template` /
+    `invalid_data` (bodies over 16 KB too). 503 `send_failed`: retry with the same key.
+  - The request hash is taken after trimming, so whitespace-only differences don't 409. Language
+    comes from `user.locale`, default `en`.
+- **`GET /internal/users/with-permission?permission=a:b&permission=c:d`** → `{ userIds }`: users
+  holding all of them, sorted, banned left out. 1–20 values, each must exist in `statements.ts`,
+  else 422 `invalid_permission`. No paging.
+- **`POST /internal/users/permissions`** `{ userIds: 1–500 }` → `{ users: { id: perms } }`, the
+  JWT's `perms` shape. Unknown and banned users are absent; `pending` users get `{}`. More than 500
+  ids, or over 64 KB → 422 `invalid_request`.
+
+### Sender outcome table (both sides agree)
+
+| auth-server answers | Delivery becomes |
+| --- | --- |
+| 2xx | `sent` (`sent_at`) |
+| 410, or 404 `recipient_unavailable` | `dead` |
+| 409 `idempotency_conflict` | `dead`, error logged (same key, other payload: a bug) |
+| 422 `invalid_request` / `unknown_template` / `invalid_data` | `dead`, error logged |
+| bare 404 | transient, error logged (deploy order, wrong base URL) |
+| 401, 403 | transient, error logged (token rotation, bad config) |
+| 408, 429, 5xx (`send_failed`, `internal_api_disabled`, `internal_error`), timeout, connection error | transient |
+
+## Decided (don't re-open)
+
+- **Comments never depend on email.** With `CONVERSATION_EMAILS_ENABLED=false` (the default):
+  no event rows, no worker, no fast path, no calls to auth-server. With it on, nothing in the
+  comment request waits on or fails because of email: the transaction only adds one row.
+- **Event first.** The comment transaction inserts the comment and one `outbox_events` row
+  (`report_conversation.comment_added`, `next_attempt_at = now() + 60 s`). Nothing else.
+- **One way across the boundary.** The consumer (domain) decides who should hear and why, and
+  hands every survivor (audience, unwatch, throttle) to `notifications/`, which drops those whose
+  preference for the category and channel is off as it inserts deliveries. The consumer never
+  reads preferences; `notifications/` never imports conversation code.
+- **One copy of the read rule** (rule 23): `small_group_scope_for` and
+  `can_read_group_conversations` in `api/access.py`, pure functions used by the API and the worker.
+- **Pinned candidate snapshot, no network call inside a transaction.** Permissions are fetched for a
+  batch's candidates before any event is processed; each event uses exactly that set.
+- **Claiming is a lease** with a claim token, `attempts` counted at claim (the poison counter),
+  `failures` driving the backoff, every later write fenced by the token, and for events the fence
+  is the first statement of the processing transaction.
+- **Numbers:** batch 10, lease 2 min, sender timeout 5 s (`lease > batch × timeout + margin`),
+  backoff 1, 5, 15, 60 min then hourly, poison cap 5, one 24 h deadline per comment (deliveries
+  inherit the event's `expires_at`), purge after 30 days (events) / 90 days (deliveries).
+- **The worker imports nothing from FastAPI.** `python -m membership_management.worker`; embedded in
+  the API by default (`EMBEDDED_WORKER=true`) through its own `anyio.CapacityLimiter(1)`.
+- **Privacy:** no comment text, section text or member/guest name of the row's person in any event,
+  delivery or log. `actorName` (the comment author) and `groupName` are the only names, and they go
+  only to auth-server.
+
+## Where things go
+
+| What | Where |
+| --- | --- |
+| Settings the worker needs (enabled, auth URL, token) | `notifications/config.py` (new, outside `api/`, so the worker doesn't import `ApiSettings`); `EMBEDDED_WORKER` in `ApiSettings` |
+| `OutboxEvent` model | `data/outbox/models/` (generic) |
+| `NotificationDelivery`, `NotificationPreference` models | `data/notifications/models/` (generic) |
+| `ReportConversationNotifyState`, `SmallGroupWatchOptOut` models | `data/small_groups/models/` (domain) |
+| Claim / fence / release / outcome helpers shared by both tables | `data/claiming.py` |
+| Report-conversations consumer | `data/small_groups/conversation_notifications.py` |
+| Preferences, delivery insert, sending, `Sender` protocol | `notifications/` (generic package) |
+| auth-server client | `notifications/auth_server.py` (the `Sender` and the two user lookups) |
+| Worker | `worker/__main__.py`, `worker/runner.py` (`run_once`, `run_forever`) |
+
+Every new model package is imported in `data/models.py`. Exact file names can move; note it here.
+
+## Stage 1: Config, the five tables, migration
+
+**Config.**
+
+- `notifications/config.py`: `NotificationSettings(BaseSettings)`, same `.env` handling as the
+  other settings (`env_file.py`): `conversation_emails_enabled: bool = False`
+  (`CONVERSATION_EMAILS_ENABLED`), `auth_server_url` (same `AUTH_SERVER_URL` the API reads),
+  `internal_api_token: SecretStr | None` (same `INTERNAL_API_TOKEN`). Validator: enabled without a
+  token → error, every environment (see *Decisions*).
+- `api/config.py`: `embedded_worker: bool = True` (`EMBEDDED_WORKER`).
+- `.env.example`: both variables with a one-line comment each.
+
+**Tables** (one migration; review the autogenerated file, then the round trip).
+
+`outbox_events` (generic, **no foreign keys**):
 
 | Column | Type | Notes |
 | --- | --- | --- |
-| `id` | identity PK | Also the idempotency key's suffix |
-| `conversation_id` | FK `report_conversations.id` ON DELETE CASCADE | |
-| `comment_id` | FK `report_conversation_comments.id` ON DELETE CASCADE | The comment that caused it |
+| `id` | identity PK | |
+| `event_type` | `VARCHAR(64) NOT NULL` | `report_conversation.comment_added` |
+| `schema_version` | `SMALLINT NOT NULL` | 1 |
+| `aggregate_type` / `aggregate_id` | `VARCHAR(64)` / `BIGINT`, NOT NULL | `report_conversation`, the conversation id |
+| `payload` | `JSONB NOT NULL` | ids and facts only |
+| claim columns | see below | statuses `pending \| processing \| processed \| failed \| dead \| expired` |
+| `created_at` / `processed_at` | `timestamptz` | `processed_at` null until processed |
+
+`notification_deliveries` (generic):
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | identity PK | the idempotency key is `mm:notification-delivery:{id}` |
+| `source_event_id` | `BIGINT NOT NULL` | **no FK** (events purged after 30 days, deliveries after 90) |
 | `recipient_user_id` | `VARCHAR NOT NULL` | auth-server user id |
-| `kind` | `VARCHAR(8)` | `new` \| `reply` (CHECK) |
-| `payload` | `JSONB NOT NULL` | Exactly what is POSTed to auth-server |
-| `status` | `VARCHAR(8) NOT NULL` | `pending` \| `sending` \| `sent` \| `failed` \| `dead` (CHECK) |
-| `attempts` | `SMALLINT NOT NULL DEFAULT 0` | |
-| `next_attempt_at` | `timestamptz NOT NULL` | |
-| `last_error` | `TEXT NULL` | Short: status code or exception class, no PII |
+| `category` / `channel` | `VARCHAR(32)` NOT NULL | `report_conversation` / `email` |
+| `template` | `VARCHAR(64) NOT NULL` | |
+| `payload` | `JSONB NOT NULL` | exactly what the `Sender` sends; never changed after insert |
+| claim columns | see below | statuses `pending \| sending \| sent \| failed \| dead \| expired \| suppressed` |
 | `created_at` / `sent_at` | `timestamptz` | |
 
-Indexes: **partial** `ix_conversation_notifications_due` on `(next_attempt_at)` `WHERE status IN
-('pending','failed','sending')` (the sweeper's only index; sent and dead rows drop out of it), and
-`(recipient_user_id, conversation_id, created_at)` for the throttle.
+Unique `(source_event_id, recipient_user_id, channel)`.
 
-**`notification_preferences`**: `user_id VARCHAR PK`, `conversation_emails BOOLEAN NOT NULL DEFAULT
-true`, `updated_at`. A missing row means the defaults.
+**Claim columns** (both tables): `status` (CHECK), `attempts SMALLINT NOT NULL DEFAULT 0`,
+`failures SMALLINT NOT NULL DEFAULT 0`, `next_attempt_at timestamptz NOT NULL`, `claim_token uuid
+NULL`, `expires_at timestamptz NOT NULL`, `last_error VARCHAR(200) NULL` (status code, error `code`
+or exception class; no PII). Partial index on `(next_attempt_at)` where status is pending, failed or
+in progress, one per table.
 
-## Stage 2: Recipients and planning rows
+`notification_preferences` (generic): PK `(user_id, category, channel)`, `enabled BOOLEAN NOT
+NULL`, `updated_at`. No row = enabled.
 
-**Files:** `data/small_groups/conversation_notifications.py` (new: planning and recipients),
-`conversation_services.add_comment`.
+`report_conversation_notify_state` (domain): PK `(user_id, conversation_id)`, `conversation_id`
+FK → `report_conversations` ON DELETE CASCADE, `last_notified_at timestamptz NOT NULL`.
 
-`plan_notifications(session, conversation, comment) -> list[int]` runs inside `add_comment` after the
-comment is flushed and before the commit, only when the setting is on. Returns the new row ids.
+`small_group_watch_opt_outs` (domain): PK `(user_id, small_group_id)`, `small_group_id` FK →
+`small_groups` ON DELETE CASCADE, `created_at`. No row = watching.
 
-Recipients (spec, Part 2):
+Check: `alembic check` clean, round trip, CHECKs reject a bad status, the partial indexes exist.
 
-- **A thread started by an elders'-side comment** (the comment created the thread): the group's
-  **current** leaders and co-leaders (active period, `left_at IS NULL`) with a linked user
-  (`members.user_id` not null). `kind='new'`, `reason='leader'`.
-- **A thread started by a leaders'-side comment:** nobody.
-- **A reply:** every other author of a non-deleted comment in the thread (`reason='participant'`),
-  plus, when the reply is on the elders' side, the group's current leaders and co-leaders
-  (`reason='leader'`). `kind='reply'`. De-duplicate by user id (participant wins).
-- Never the author. Skip users whose `notification_preferences.conversation_emails` is false.
-- **Throttle:** skip a recipient who already has a row for this conversation with `created_at` after
-  their `report_conversation_reads.last_read_at` (or any row, if they never read it). "One email per
-  thread until you open it."
+## Stage 2: Shared read check, the event, the consumer, `notifications/`
 
-Payload: `notificationId` is only known after insert: insert with the payload minus the id, flush,
-then set `payload['notificationId'] = row.id` (or build the key from the row id at send time and
-leave it out of the payload; pick one and note it). `path` =
-`/groups/reports/{report_id}?person={member_id}`; `actorName` = the author member's name;
-`groupName`, `meetingDate` from the report.
+**2a. The shared read check** (`api/access.py`), behaviour unchanged:
 
-Wrap planning in a savepoint: if planning raises, log it, roll back the savepoint, and let the
-comment commit without notifications. A bug here must not lose the comment.
+- `small_group_scope_for(perms, led_group_ids, member_id) -> SmallGroupScope | None`: today's
+  `_small_group_scope` without the claims and the DB (`None` without `smallGroups: view`; full with
+  `smallGroups: all`; otherwise the groups the member leads, or led when the group closed).
+- `can_read_group_conversations(perms, scope, small_group_id) -> bool`: `smallGroupReports: view`;
+  a full scope needs `viewObservations`; a scoped user needs the group in their scope.
+- `get_small_group_scope`, `conversation_access` and `conversation_group_ids` call them. The DB
+  part that finds the led groups becomes a helper the worker can call for many users at once.
+- Check: every Part 1 conversation route by role (admin, elder, leader, co-leader of a closed
+  group, deacon, user) answers as before.
 
-Check by hand: each recipient rule, the throttle (comment twice before the leader opens: one row),
-opt-out, a leader with no linked user (no row), an elder replying to a leader-started thread
-(leaders get `reply` rows).
+**2b. The event in the comment transaction** (`conversation_services.add_comment`, only when
+enabled): one `OutboxEvent` with payload v1 `{ conversationId, commentId, side, authorUserId,
+startsThread, occurredAt }`, `occurredAt` = the comment's `created_at` exactly (ISO 8601 with
+offset), `expires_at = created_at + 24 h`, `next_attempt_at = now() + 60 s`. Returns the event id
+for the fast path (Stage 4).
+
+**2c. The consumer** (`data/small_groups/conversation_notifications.py`), in two halves so the
+network call sits between them:
+
+- `candidates_for(session, event) -> set[str]` (read-only): the group's current leaders and
+  co-leaders with a linked user, the thread's non-deleted comment authors, and (passed in) the
+  possible watchers. Empty when the comment or conversation is gone or soft-deleted.
+- `plan(session, event, perms_by_user, now) -> list[NotificationRequest]`, inside the event's
+  transaction:
+  - Comment or conversation gone, or comment `deleted_at` set → no requests (the event still ends
+    `processed`).
+  - Recipients: elders'-side start → leaders (`leader`); leaders'-side start → watchers
+    (`watcher`); reply → other non-deleted authors (`participant`), plus leaders for an elders'-side
+    reply, plus watchers for a leaders'-side reply.
+  - Each candidate must pass `can_read_group_conversations` with their snapshot `perms` and a scope
+    built from `members.user_id` the way the API does; missing or `{}` = can't read. Watchers too.
+  - Watchers who opted out of the group are dropped **as watchers only**.
+  - De-duplicate (`participant` > `leader` > `watcher`); never the author.
+  - The throttle statement from the spec, one statement for all recipients sorted by `user_id`,
+    stamped with `occurredAt`; only the users it returns go on.
+  - `data`: `actorName` (author member's name), `groupName` (trimmed, cut to 200), `meetingDate`
+    (`YYYY-MM-DD`), `reason`, `topic` (`person` for a member or guest row, else the section key),
+    `startedBy` (side of the thread's first comment, deleted or not). `template` is `.new` when
+    `startsThread`, else `.reply`. `path` by anchor: `?person=`, `?guest=` or `?section=`.
+  - Each request carries the event's `expires_at` as its "not after".
+
+**2d. `notifications/`**: `create_deliveries(session, source_event_id, requests)`: drop users whose
+preference for `(category, channel)` is off (one query), insert the rest `ON CONFLICT DO NOTHING`
+with `next_attempt_at = now()`, `expires_at` = the request's "not after". `is_enabled(session,
+user_id, category, channel)` for the re-check before sending.
+
+Hand-checks (direct calls with fixed `perms`, no auth-server yet; the full run is in Stage 6): each
+recipient rule; an elder who unwatched gets nothing unless they commented; a leader who stepped down
+or whose `perms` lack `smallGroupReports: view` is dropped; a deleted comment → no requests; a read
+after the comment → no request; two events in one thread → one request per user.
 
 ## Stage 3: auth-server client
 
-**File:** `api/auth_server_client.py` (or `data/notifications/sender.py`; note where).
+`notifications/auth_server.py`:
 
-- Add `httpx` as a dependency (`uv add httpx`); one module-level `httpx.Client` with a 5 s timeout,
-  base URL from Stage 1, header `X-Internal-Token`.
-- `send_notification(payload) -> SendOutcome` where the outcome is `sent` / `retry` / `dead`, mapped
-  from auth-server's codes: 200 → sent; 422, 410, 409 → dead (409 also logged as an error: it means
-  the payload changed under the same key); 401 → dead and an error log (misconfigured token);
-  503, other 5xx, timeouts, connection errors → retry.
-- Never log the payload (names) or the token.
+- `httpx` as a direct dependency of the root package (`uv add httpx`; today it's only in the lock
+  through another package). One module-level `httpx.Client`: base URL `AUTH_SERVER_URL`, header
+  `X-Internal-Token`, 5 s timeout. Bodies as ASCII-escaped JSON (*Decisions*).
+- `users_with_permissions(perms: list[str]) -> list[str]`: the possible watchers.
+- `permissions_for(user_ids) -> dict[str, Perms]`: chunks of at most 500, merged; any failed chunk
+  raises a transient error for the whole lookup (no partial data).
+- `AuthServerSender.send(payload, idempotency_key) -> SendOutcome` (`sent` | `dead` |
+  `transient`, plus a short `last_error`), mapping the outcome table above. The `Sender` protocol
+  lives in `notifications/`; this is its only implementation.
+- Errors logged with the status code and the error `code`, never the token, the payload or an
+  address.
 
-## Stage 4: Claim and send; fast path
+Check (auth-server running): each call against the real routes; wrong token → 401 → transient;
+an unknown route path (temporary) → bare 404 → transient; `with-permission` returns the admins and
+the elder.
 
-**Files:** `conversation_notifications.py` (claim, send, outcome), the comment route.
+## Stage 4: Claiming, the fence, processing, sending, outcomes; the fast path
 
-- `claim(session, ids=None, limit=50) -> list[Row]` in one transaction:
-  `SELECT … WHERE status IN ('pending','failed','sending') AND next_attempt_at <= now()`
-  `[AND id = ANY(:ids)] ORDER BY next_attempt_at LIMIT :limit FOR UPDATE SKIP LOCKED`, then
-  `UPDATE … SET status='sending', next_attempt_at=now()+interval '2 minutes'`, commit, return.
-  **For the fast path, the `next_attempt_at <= now()` condition is dropped** (it claims its own
-  fresh rows by id), but `status IN ('pending')` stays, so it never takes a row the sweeper holds.
-- `deliver(row_id, payload)`: calls the client **outside any transaction**, then records the
-  outcome in a new short transaction: `sent` (`sent_at`), `failed` (`attempts+1`, backoff,
-  `last_error`) or `dead`. Retry delays: `[1, 5, 15, 60]` minutes by `attempts`; reaching 5 → `dead`.
-- `process(ids=None)`: claim, then deliver each. Both entry points call this one function.
-- Fast path: `add_comment` returns the planned ids; the route takes `background_tasks:
-  BackgroundTasks` and adds `process_in_new_session(ids)` when there are any. Plain `def` task:
-  Starlette runs it in the thread pool after the response. Exceptions are caught and logged inside
-  the task (an exception there is otherwise silent).
+`data/claiming.py` (both tables) and the processing/sending code in `worker/` and `notifications/`:
 
-Check: the response returns before the send (add a temporary sleep in the client to see it); kill
-auth-server and comment: the row ends `failed` with `attempts=1` and the comment is fine.
+- **Claim:** `SELECT … WHERE status IN (pending, failed, in progress) AND next_attempt_at <= now()
+  ORDER BY next_attempt_at LIMIT 10 FOR UPDATE SKIP LOCKED`, and in the same statement (CTE +
+  `UPDATE … RETURNING`) set the in-progress status, a new `claim_token`, `attempts + 1`,
+  `next_attempt_at = now() + 2 min`. Rows past `expires_at` → `expired`; rows claimed with
+  `attempts` already at 5 → `dead`. The fast path claims its one id with the same statement plus
+  `id = :id`, without `next_attempt_at <= now()` (its row is 60 s in the future) and only while
+  `pending`, so it never takes a row the sweep holds.
+- **Process events:** look up the batch's candidates (read-only), then their permissions (Stage 3;
+  failure = transient for every claimed event). Then per event, one transaction whose **first
+  statement is the fence** (`UPDATE outbox_events SET status='processed', processed_at=now() WHERE
+  id=:id AND claim_token=:token RETURNING id`; no row = lease lost, roll back, stop), then the
+  consumer, then `create_deliveries`, then commit. An exception rolls everything back and a
+  **second short fenced transaction** records `failed`, `failures + 1`, `last_error`, backoff.
+- **Send deliveries:** per claimed row: expired → `expired`; preference off now → `suppressed`
+  (final, throttle row left); else `Sender.send` and record the outcome, fenced.
+- **Three outcome kinds:** transient → give the attempt back (`attempts - 1`), `failures + 1`,
+  `failed`, backoff by `failures`, and while sending **stop the batch**, releasing the untried rows
+  (fenced, `pending`, `attempts - 1`, `next_attempt_at` unchanged); exception → `failures + 1`,
+  attempt kept, backoff; permanent → `dead`.
+- **Fenced writes:** zero rows updated = someone else owns the row: log and undo nothing.
+- **Fast path:** the comment route takes `BackgroundTasks` and, when an event was written, adds a
+  plain `def` task with its own session: fetch possible watchers, claim the one event, fetch its
+  candidates' permissions, process it, send its deliveries. All exceptions caught and logged inside.
 
-## Stage 5: Sweeper loop
+Hand-checks: the response returns before the send; kill the process mid-batch → no duplicate email,
+`attempts` went up, the lease releases it; a processing exception (temporary `raise`) → `failed`
+with `last_error`; Resend/auth-server 503 → retries, nothing `dead`; a wrong token or a bare 404 →
+retries with an error logged; "Conversation emails" turned off before the send → `suppressed`.
 
-**Files:** `api/main.py` (`lifespan`), `conversation_notifications.py` (`sweep_once`).
+## Stage 5: The worker
 
-```python
-async def _sweep_forever() -> None:
-    await asyncio.sleep(random.uniform(0, 30))
-    while True:
-        try:
-            await anyio.to_thread.run_sync(sweep_once)  # its own session; process(ids=None)
-        except Exception:
-            logger.exception("conversation notification sweep failed")
-        await asyncio.sleep(120)
-```
+- `worker/runner.py`: `run_once()` = expire due rows, then (if the gate passes) process due events,
+  send due deliveries, then purge; `run_forever(stop_event)` every 2 minutes after a random 0–30 s
+  start offset, catching and logging each run's exception.
+- **Reachability gate:** each sweep fetches the possible-watcher list before claiming; if that
+  fails, it claims nothing from either table this sweep (expiry and purge still run).
+- `worker/__main__.py`: `python -m membership_management.worker`; SIGTERM/SIGINT set the stop event:
+  stop claiming, finish or abandon the item in hand (leases cover it). Exits at once when emails are
+  disabled.
+- **Embedded:** with emails enabled and `EMBEDDED_WORKER=true`, `lifespan` starts `run_forever` as
+  a task, running its sync work with `anyio.to_thread.run_sync(…, limiter=CapacityLimiter(1))`;
+  on shutdown it sets the stop event and awaits the task **before** disposing the engines.
+- **Monitoring:** each run logs the age of the oldest pending row and the `dead` count per table
+  (INFO when it did something or something is dead, DEBUG otherwise).
+- **Purge:** `processed`/`expired`/`dead` events older than 30 days, `sent`/`dead`/`expired`/
+  `suppressed` deliveries older than 90 days, in bounded batches.
 
-- Started in `lifespan` only when the setting is on (`task = asyncio.create_task(...)`); on shutdown
-  `task.cancel()` and await it (suppress `CancelledError`) **before** disposing the engines.
-- `sweep_once` loops `process()` while a batch comes back full (50), so a backlog drains in one run,
-  with a cap (e.g. 10 batches) so one run can't hog the thread pool.
-- Log at INFO only when it did something ("sent 3, failed 1, dead 0"), DEBUG otherwise.
+Hand-checks: auth-server stopped for a while (two hours for the real check, Stage 6) → nothing
+claimed, nothing `dead`, everything sends once it's back; an event older than 24 h → `expired`; an
+event processed 23 h after its comment whose send keeps failing → the delivery expires at the
+comment's 24 h mark; `python -m membership_management.worker` + Ctrl+C exits cleanly; two
+processes against one DB → each email once.
 
-Check: stop auth-server, comment, start auth-server: the sweeper sends it within ~3 minutes of its
-`next_attempt_at`. Run two API processes against one DB: each row is sent once. A row stuck in
-`sending` (kill the process mid-send) is picked up after its lease.
+## Stage 6: Preference and watch routes; docs; the end-to-end hand-check
 
-## Stage 6: Opt-out endpoints
+**Routes** (`CamelModel`, default rate limit; the two `PUT`s also 20/minute):
 
-- `GET /me/notification-preferences` → `{ "conversationEmails": true, "emailsEnabled": false }`
-  (`emailsEnabled` = the server setting, so the staff app can hide the toggle while emails are off).
-- `PUT /me/notification-preferences` body `{ "conversationEmails": bool }`, upsert by `sub`. Any
-  signed-in user. Rate limit 20/minute.
+| Route | Permission | Shape |
+| --- | --- | --- |
+| `GET /me/notification-preferences` | signed in | `{ conversationEmails: bool, emailsEnabled: bool }` (`emailsEnabled` = the kill switch) |
+| `PUT /me/notification-preferences` | signed in | body `{ conversationEmails: bool }` → same shape; upsert by `sub` |
+| `GET /me/watched-groups` | full-scope audience, else 403 | `{ items: [{ smallGroupId, name, closed, watching }] }`, every group, open first then by name |
+| `PUT /small-groups/{id}/watch` | full-scope audience, else 403; unknown group 404 | body `{ watching: bool }` → `{ smallGroupId, watching }`; deletes or inserts the opt-out |
 
-## Stage 7: Docs and a local end-to-end run
+"Full-scope audience" is the same shared check: a full scope from `small_group_scope_for` and
+`can_read_group_conversations` true. The routes work while emails are off (staff-app hides them).
 
-- `docs/ARCHITECTURE.md`: the outbox, the two entry points, the lease, the retry table, the setting.
-  One line in `CLAUDE.md`.
-- End-to-end locally with the setting on, auth-server running with a Resend test key: elder comments
-  → leader's email; leader replies → elder's email; second elder comment before the leader opens →
-  no second email.
-- Mark this log done; update the cross-repo spec only where the build differs.
+**Docs:** `docs/ARCHITECTURE.md` (the outbox, the consumer/`notifications/` boundary, claiming and
+outcomes, the worker and its two ways to run, the settings, the routes), one line in `CLAUDE.md`,
+`.env.example`.
 
-## Not in this spec
+**End-to-end hand-check** (the spec's list; emails only to Luis's test accounts):
 
-- Push notifications (they'd be another consumer of the same outbox rows: a `channel` column later).
-- Digests, an admin view of dead rows (query the table for now), purging old `sent` rows.
+- [ ] An elder starts a thread → the group's leader gets the email (the main case).
+- [ ] A leader starts a thread → every watching elder gets one email; an elder who unwatched doesn't,
+      unless they commented.
+- [ ] Two leaders reply at the same moment → one email.
+- [ ] A leader who stepped down, or whose role lost `smallGroupReports: view`, gets nothing.
+- [ ] A comment deleted before processing → no email.
+- [ ] The user opens the thread before the worker runs → no email.
+- [ ] After *Mark all read*, the next leader comment → an email; the same after the newest comment
+      (the one emailed about) was deleted before *Mark all read*.
+- [ ] An email link to a guest's row opens that guest's panel (and `?person=`, `?section=`).
+- [ ] Kill the worker mid-batch → no duplicate email, `attempts` went up.
+- [ ] auth-server down for 2 hours → nothing goes `dead`, everything sends once it's back.
+- [ ] auth-server up but Resend returning 503 for 2 hours → the same.
+- [ ] A wrong internal token, or the route not deployed (bare 404) → retries, an error logged,
+      nothing `dead`.
+- [ ] An email queued, then "Conversation emails" turned off before it sends → `suppressed`.
+- [ ] A batch with more than 500 candidates → permissions fetched in chunks, nobody dropped.
+- [ ] A processing exception → `failed` with `last_error` set.
+- [ ] An event older than 24 h → `expired`.
+- [ ] An event processed 23 h after its comment whose send keeps failing → the delivery expires at
+      the comment's 24 h mark, not 24 h later.
+
+Then mark this log done and update the cross-repo spec only where the build differs.
+
+## Not in this handoff
+
+- Push notifications (another `channel` on deliveries and preferences; `outbox_events` unchanged).
+- Digests, an admin view of `dead` rows (query the tables), relaying events to SQS/EventBridge,
+  waking a separate worker with `LISTEN/NOTIFY`.
+- The ECS task definition for a separate worker and the Phase 9 alarms (`management-infra`).
