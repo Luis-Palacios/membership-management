@@ -44,8 +44,8 @@ put an email address in a command, a log line or this file: use user ids.
 | --- | --- | --- |
 | 0. Handoff rewritten to the Nov 2026 design | ✅ | `79ba508` |
 | 1. Config, the five tables, migration | ✅ | `c9ff673` |
-| 2. Shared read check; the event in the comment transaction; the consumer; `notifications/` | ✅ | (this commit) |
-| 3. auth-server client: `with-permission`, `permissions`, the `Sender` | ⬜ | |
+| 2. Shared read check; the event in the comment transaction; the consumer; `notifications/` | ✅ | `defc3b3` |
+| 3. auth-server client: `with-permission`, `permissions`, the `Sender` | ✅ | (this commit) |
 | 4. Claiming, the fence, processing, sending, outcomes; the fast path | ⬜ | |
 | 5. The worker: entry point, embedded start, SIGTERM, gate, expiry, monitoring, purge | ⬜ | |
 | 6. Preference and watch routes; docs; the end-to-end hand-check | ⬜ | |
@@ -152,6 +152,31 @@ put an email address in a command, a log line or this file: use user ids.
   the same moment* need two concurrent transactions: checked in Stage 4 with the worker.
 - Stage 2: two queries were appended to `conversation_queries.py` with a shell heredoc instead of
   Edit (the workspace rule); content as reviewed, and Edit/Write only since.
+- Stage 3: `httpx>=0.28.1` added to the root package with `uv add httpx --no-sync` then
+  `uv sync --all-packages` (a plain sync would uninstall the API member's dependencies); the lock
+  stays at 0.28.1. Luis asked to skip the per-change review from here on for this stage.
+- Stage 3 files: `notifications/sender.py` (`Sender` protocol, `SendOutcome`, `SendStatus`; generic)
+  and `notifications/auth_server.py` (the client: `users_with_permissions`, `permissions_for`,
+  `AuthServerSender`, `AuthServerUnavailable`, `close()`). One `httpx.Client` per process, made on
+  first use (so importing the module needs no token), 5 s timeout, `X-Internal-Token` header;
+  bodies as compact ASCII-escaped JSON.
+- Stage 3: **the lookups raise `AuthServerUnavailable` on any failure** (network, timeout, any
+  non-2xx): the worker treats that as transient for the whole sweep or batch. 4xx answers are
+  logged as errors (token, deploy order or a permission name: config or a bug), 5xx and network
+  errors as warnings.
+- Stage 3: the Sender maps the handoff's outcome table; **any other 4xx** (none expected) is `dead`
+  with an error logged, like 409/422: the same payload can't succeed on a retry. 503
+  `internal_api_disabled` and 500 `internal_error` are transient but logged as errors (config or a
+  bug on auth-server's side); `404 recipient_unavailable` is `dead` and not logged (a normal case).
+- Stage 3 checks (against the real auth-server; no email sent, every send had an unknown recipient
+  or was rejected before rendering): possible watchers (3); permissions for 1003 ids (2 linked
+  users, each twice, plus 1001 unknown) → 3 calls, 2 users back, unknown ones absent; empty list → no
+  call; unknown recipient → `dead 404 recipient_unavailable`; unknown template → `dead 422
+  unknown_template`; bad path → `dead 422 invalid_data`; extra key → `dead 422 invalid_request`;
+  wrong token → `transient 401 invalid_token` (and the lookup raises); bare 404 (wrong base path) →
+  `transient`; connection refused → `transient ConnectError`; unroutable host → `transient
+  ConnectTimeout` after 5 s. Log lines carry only status and error codes. Not covered here, needing
+  a real send: 200, a repeat 200, 409 and 503 `send_failed` (Stage 4, to Luis's test account).
 - (fill in per stage)
 
 ## Contract as built (auth-server, PR #35)
