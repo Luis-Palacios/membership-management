@@ -3,11 +3,13 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from membership_management.api.access import (
+    OptionalSmallGroupScopeDep,
     SmallGroupScope,
     SmallGroupScopeDep,
     ensure_caller_can_add_member,
     ensure_caller_can_change_member,
     ensure_guest_groups_enabled,
+    ensure_watch_audience,
 )
 from membership_management.api.church_time import church_today
 from membership_management.api.coded_errors import CodedHTTPError
@@ -20,6 +22,7 @@ from membership_management.api.jwt_auth import (
     require_permission,
 )
 from membership_management.api.rate_limit import default_user_rate_limit, rate_limit
+from membership_management.api.schemas.notifications import WatchSchema, WatchUpdateSchema
 from membership_management.api.schemas.person import PersonSchema
 from membership_management.api.schemas.small_groups import (
     SmallGroupClosedSchema,
@@ -75,6 +78,7 @@ from membership_management.data.small_groups.services import (
     set_small_group_leader,
     update_small_group,
 )
+from membership_management.data.small_groups.watch_services import set_watching
 
 router = APIRouter(
     prefix="/small-groups",
@@ -361,6 +365,28 @@ def patch_small_group_member(
     except LeaderAlreadyExistsError as exc:
         raise HTTPException(status_code=409, detail="This small group already has a leader.") from exc
     return _detail(db, small_group)
+
+
+@router.put(
+    "/{small_group_id}/watch",
+    name="set_small_group_watch",
+    description="Watch or unwatch a group's conversations (emails for leaders' comments; full-scope only)",
+    dependencies=[Depends(rate_limit("20/minute", scope="set_small_group_watch"))],
+)
+def put_small_group_watch(
+    small_group_id: int,
+    body: WatchUpdateSchema,
+    db: MembersSessionDep,
+    claims: CurrentClaimsDep,
+    scope: OptionalSmallGroupScopeDep,
+) -> WatchSchema:
+    # 403 before 404, so outsiders learn nothing about which groups exist. Closed groups can be
+    # watched too (their conversations stay open, rule 13). Changes nothing in the app (rule 21).
+    ensure_watch_audience(claims, scope)
+    assert scope is not None  # ensure_watch_audience refuses None  # noqa: S101
+    small_group = _get_or_404(db, small_group_id, scope)
+    set_watching(db, claims.sub, small_group.id, watching=body.watching)
+    return WatchSchema(small_group_id=small_group.id, watching=body.watching)
 
 
 @router.put(

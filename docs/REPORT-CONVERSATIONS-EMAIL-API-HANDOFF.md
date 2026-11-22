@@ -47,8 +47,8 @@ put an email address in a command, a log line or this file: use user ids.
 | 2. Shared read check; the event in the comment transaction; the consumer; `notifications/` | ✅ | `defc3b3` |
 | 3. auth-server client: `with-permission`, `permissions`, the `Sender` | ✅ | `614c3eb` |
 | 4. Claiming, the fence, processing, sending, outcomes; the fast path | ✅ | `bd9a272` |
-| 5. The worker: entry point, embedded start, SIGTERM, gate, expiry, monitoring, purge | ✅ | (this commit) |
-| 6. Preference and watch routes; docs; the end-to-end hand-check | ⬜ | |
+| 5. The worker: entry point, embedded start, SIGTERM, gate, expiry, monitoring, purge | ✅ | `f62198d` |
+| 6. Preference and watch routes; docs; the end-to-end hand-check | ✅ | (this commit) |
 
 ### Decisions and deviations
 
@@ -253,7 +253,60 @@ put an email address in a command, a log line or this file: use user ids.
   tokens borrowed, shutdown was immediate; **standalone** `python -m membership_management.worker`:
   emails off → exits 0 at once; on + SIGINT after 2 s → "stopping after the item in hand", nothing
   claimed after the flag, exit 0 in 2.4 s.
-- (fill in per stage)
+- Stage 6 files: `notifications/preferences.py` (`set_enabled`), `data/small_groups/watch_services.py`
+  (`watched_groups`, `set_watching`), `api/schemas/notifications.py`, `ensure_watch_audience` in
+  `api/access.py`, the three `/me` routes in `api/routers/me.py`, `PUT /small-groups/{id}/watch` in
+  `api/routers/small_groups.py`. Docs: `ARCHITECTURE.md` (*Report conversations, Part 2*, the
+  permissions table), `CLAUDE.md` (the Part 2 bullet replaces "no email code before Part 2"; the
+  worker command). Written whole, as Luis asked.
+- Stage 6: the watch routes are for the **full-scope audience** by the shared rule (a full scope that
+  may read every group's conversations), else 403, **checked before the group lookup** so outsiders
+  learn nothing about which groups exist. `GET /me/watched-groups` lists every group (closed ones too,
+  rule 13), open first, then by name. Both preference routes take any signed-in user and work while
+  the kill switch is off (staff-app hides them), so a choice made earlier is kept. `PUT` rate limits:
+  20/minute.
+- Stage 6: the local dev server started in this session had **stopped reloading** (no "detected
+  changes" after Stage 3), so it served old code until restarted; the Stage 4-5 checks ran as
+  scripts, so they stand. Restart `fastapi dev` if a new route 404s.
+- Stage 6 end-to-end (local, emails on, embedded worker running). **Only Luis's two N=2 test
+  accounts could be emailed**: the elder (`A793…`, linked to member 3) and the leader of group 1
+  (`Y5yW…`, linked to member 6, the group's only linked leader); the three other full-scope users
+  were opted out of watching group 1 for the run, and no delivery went to anyone else. Real
+  `add_comment`, the real fast path (watchers, permissions, consumer, throttle, `AuthServerSender`),
+  real emails (9): elder starts → the leader (`new`, `leader`); leader starts → the watching elder
+  (`new`, `watcher`); elder unwatched → no email, but after the elder commented the leader's reply
+  reached them (`participant`); **two leader replies at the same moment → one email**; leader
+  stepped down → nothing; comment deleted before processing → nothing; **leader opened the thread
+  before the worker ran → nothing**; **after Mark all read, the next leader comment → an email** (a
+  second one before opening: throttled); the same after the newest comment was deleted before Mark
+  all read → an email; queued, then the leader turned emails off → `suppressed`, not sent.
+- Stage 6 live kill: 4 deliveries (test accounts), a separate worker process with the real sender
+  force-killed right after its first send, before it could record it. All 4 stayed `sending` under
+  the lease; the embedded worker re-claimed them when it ran out: all `sent`, `attempts` 2, and
+  auth-server's `notification_sends` has **one row per key**: the delivery sent before the kill was
+  sent again with its key and produced no second email.
+- Stage 6 role pass and the HTTP fast path, through the real routes with `TestClient` and each
+  role's real `perms` from auth-server (only the JWT decode replaced, by a dependency override; no
+  sign-in was available): admin reads everything, comment 409 `Link your account` (no linked
+  member); the test elder reads, watches, comments; the test leader of group 1 reads and comments,
+  watching 403; a leader with no group 404 on the report; deacon 404 (empty scope); user 403;
+  preferences 200 for all. The comments' events were processed **0.0-0.1 s after the comment** by
+  the route's background task (head start 60 s), and the leader's comment emailed the elder. The
+  elder's comment emailed nobody, correctly: that thread (reused from the run above) had emailed the
+  leader at 05:05 UTC and the leader hadn't opened it since (throttle); the leader's read at .618 is
+  their own later comment, after processing at .504.
+- Stage 6 **not done live, decided with Luis** (covered by the simulated Stage 4-5 checks): auth-server down for 2 h,
+  Resend returning 503 for 2 h (both need Luis's auth-server stopped or misconfigured), a wrong
+  internal token / bare 404 (Stage 3, against the real auth-server).
+- Stage 6 email link (Luis, in his browser, signed in as the test leader): the "new conversation"
+  email's button opened `/groups/reports/8?person=39` with that member's panel open, showing the
+  thread from the run above (the elder's comment, the leader's replies, the deleted one). The
+  `?guest=` variant is left to staff-app's Part 2 (its link handling; this repo's side, the `?guest=`
+  path, was checked in Stage 2), as is the sign-in return keeping the link. Two of the test emails
+  (the Stage 4 real send and the kill test) carry a placeholder link to report 1, not a real thread.
+- Stage 6 local data left for staff-app's Part 2: the test elder linked to member 3, the test leader to
+  member 6 (group 1's leader), and the run's threads on group 1's reports. The run's opt-outs for
+  the other full-scope users were removed (no opt-out rows left).
 
 ## Contract as built (auth-server, PR #35)
 

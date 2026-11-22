@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 
+from membership_management.api.access import OptionalSmallGroupScopeDep, ensure_watch_audience
 from membership_management.api.config import api_settings
 from membership_management.api.current_member import CurrentMemberDep
 from membership_management.api.dependencies import MembersSessionDep
@@ -8,7 +9,19 @@ from membership_management.api.rate_limit import default_user_rate_limit, rate_l
 from membership_management.api.routers.members import member_detail
 from membership_management.api.schemas.me import MeFeaturesSchema, MeLeadSchema, MeMemberSchema, MeSchema
 from membership_management.api.schemas.members import MemberDetailSchema, MyMemberUpdateSchema
+from membership_management.api.schemas.notifications import (
+    NotificationPreferencesSchema,
+    NotificationPreferencesUpdateSchema,
+    WatchedGroupSchema,
+    WatchedGroupsSchema,
+)
 from membership_management.data.members.services import get_member_leads, update_member
+from membership_management.data.small_groups.conversation_notifications import (
+    CATEGORY as CONVERSATION_CATEGORY,
+)
+from membership_management.data.small_groups.watch_services import watched_groups
+from membership_management.notifications.config import notification_settings
+from membership_management.notifications.preferences import is_enabled, set_enabled
 
 router = APIRouter(
     prefix="/me",
@@ -51,3 +64,55 @@ def patch_my_member(
         raise HTTPException(status_code=404, detail="Your account isn't linked to a member.")
     # No email field, so no duplicate-email case to handle.
     return member_detail(db, update_member(db, member, body.model_dump(exclude_unset=True)), claims)
+
+
+def _preferences(db: MembersSessionDep, user_id: str) -> NotificationPreferencesSchema:
+    return NotificationPreferencesSchema(
+        conversation_emails=is_enabled(db, user_id, CONVERSATION_CATEGORY, "email"),
+        emails_enabled=notification_settings.conversation_emails_enabled,
+    )
+
+
+@router.get(
+    "/notification-preferences",
+    name="get_my_notification_preferences",
+    description="The caller's 'Conversation emails' switch, and whether the server sends emails at all",
+)
+def get_my_notification_preferences(
+    claims: CurrentClaimsDep, db: MembersSessionDep
+) -> NotificationPreferencesSchema:
+    return _preferences(db, claims.sub)
+
+
+@router.put(
+    "/notification-preferences",
+    name="set_my_notification_preferences",
+    description="Turn the caller's conversation emails on or off (also stops ones already queued)",
+    dependencies=[Depends(rate_limit("20/minute", scope="set_my_notification_preferences"))],
+)
+def put_my_notification_preferences(
+    body: NotificationPreferencesUpdateSchema, claims: CurrentClaimsDep, db: MembersSessionDep
+) -> NotificationPreferencesSchema:
+    # Any signed-in user: it only concerns their own inbox. Works while the kill switch is off too
+    # (staff-app hides it then), so a choice made earlier is kept.
+    set_enabled(db, claims.sub, CONVERSATION_CATEGORY, "email", enabled=body.conversation_emails)
+    return _preferences(db, claims.sub)
+
+
+@router.get(
+    "/watched-groups",
+    name="get_my_watched_groups",
+    description="Every small group with whether the caller watches it (full-scope observation audience only)",
+)
+def get_my_watched_groups(
+    claims: CurrentClaimsDep, scope: OptionalSmallGroupScopeDep, db: MembersSessionDep
+) -> WatchedGroupsSchema:
+    ensure_watch_audience(claims, scope)
+    return WatchedGroupsSchema(
+        items=[
+            WatchedGroupSchema(
+                small_group_id=g.small_group_id, name=g.name, closed=g.closed, watching=g.watching
+            )
+            for g in watched_groups(db, claims.sub)
+        ]
+    )

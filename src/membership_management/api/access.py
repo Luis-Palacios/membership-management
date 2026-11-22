@@ -251,6 +251,18 @@ def conversation_group_ids(claims: AuthClaims, scope: SmallGroupScope | None) ->
     return frozenset(g for g in scope.group_ids if can_read_group_conversations(claims.perms, scope, g))
 
 
+def ensure_watch_audience(claims: AuthClaims, scope: SmallGroupScope | None) -> None:
+    """Rules 18 and 21: only the full-scope observation audience watches groups, so only they see or
+    change watching. The same shared rule as reading (a full scope that may read every group's
+    conversations); 403 for everyone else, leaders included (they have no watch setting)."""
+    if (
+        scope is None
+        or not scope.full
+        or not can_read_group_conversations(claims.perms, scope, small_group_id=0)
+    ):
+        raise HTTPException(status_code=403, detail="You don't have permission to do this.")
+
+
 def ensure_guest_groups_enabled() -> None:
     """Rule 1: creating a guest group or a guest is 409 while the setting is off. Reading is never blocked."""
     if not api_settings.guest_groups_enabled:

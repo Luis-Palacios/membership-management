@@ -79,6 +79,8 @@ also has (`ownProfile: update`); `pending` has nothing.
 | `GET /people/{id}/events`, `/first-assistance` | `membershipApplications: view` | ✓ | — |
 | `GET /me` | none (any valid JWT) | ✓ | ✓ |
 | `PATCH /me/member` | `ownProfile: update`; own linked member only, no scope, no `email` | ✓ | ✓ |
+| `GET`, `PUT /me/notification-preferences` | none (any valid JWT): the caller's own "Conversation emails" switch | ✓ | ✓ |
+| `GET /me/watched-groups`, `PUT /small-groups/{id}/watch` | the full-scope observation audience (`smallGroups: all` + the conversation read rule), else 403 (before any 404) | ✓ (elders, admins) | ✗ (403: leaders have no watch setting) |
 
 A new role, or a change to what a role can do, is an auth-server change only; nothing here
 changes unless a new *action* needs a new check.
@@ -108,7 +110,7 @@ A group files one report per meeting date: the group's prayer, praise and follow
 
 ## Report conversations (built, Part 1: in-app only)
 
-Elders and admins start a thread about one person's attendance row in a report, or about one of its texts (a **section thread**: `prayer`, `praise`, `followUp`, added by `docs/PRAYER-FOLLOW-UP-API-HANDOFF.md`); the group's leaders reply. Rules and contracts: `docs/specs/report-conversations.md` (workspace repo) and `docs/REPORT-CONVERSATIONS-API-HANDOFF.md`. Code: `api/routers/report_conversations.py`, `data/small_groups/{conversation_queries,conversation_services}.py`, models `report_conversation*.py`. No email, outbox or auth-server call: that is Part 2.
+Elders and admins start a thread about one person's attendance row in a report, or about one of its texts (a **section thread**: `prayer`, `praise`, `followUp`, added by `docs/PRAYER-FOLLOW-UP-API-HANDOFF.md`); the group's leaders reply. Rules and contracts: `docs/specs/report-conversations.md` (workspace repo) and `docs/REPORT-CONVERSATIONS-API-HANDOFF.md`. Code: `api/routers/report_conversations.py`, `data/small_groups/{conversation_queries,conversation_services}.py`, models `report_conversation*.py`. Emails are Part 2, in the next section.
 
 - **Anchor.** A thread is about a member (`member_id`) or a section (`section`, VARCHAR + CHECK), exactly one (CHECK `one_anchor`); unique `(report_id, section)` next to `(report_id, member_id)`. The API anchor is `{ type: "attendance", memberId }` or `{ type: "section", key }`; `member` is null on section threads and inbox rows. Starting a section thread needs text in the section (422 `This section is empty.`; a no meeting has none), replying doesn't; an unknown key is 422 `Unknown section …`. In code one `ConversationAnchor` (member id or `ReportSection`) goes through the lookup and `add_comment`; a section thread can start only when the section has items (`section_has_items_query`). Everything else (audience, sides, unread, resolve, inbox, cascade) is the same for both.
 - **Guests.** The anchor can also be a guest's row (`guest_id`; CHECK `one_anchor` is `num_nonnulls(member_id, guest_id, section) = 1`, unique `(report_id, guest_id)`): API anchor `{ type: "attendance", guestId }`, routes `…/conversations/guests/{guestId}[/comments]`, `person: { type, id, name }` on summaries, threads and inbox rows (there is no `memberId`/`memberName`/`member` on them: read `person`; the inbox row's `group` has `audience`). In code `ConversationAnchor` is a `PersonKey` or a `ReportSection`. Starting needs the guest's attendance row (422 otherwise). Everything else below is shared.
@@ -118,6 +120,69 @@ Elders and admins start a thread about one person's attendance row in a report, 
 - **Status and unread.** `open`/`resolved`; a new comment reopens, and `resolve` takes `{ lastCommentId }` (the newest comment the caller saw) and answers 409 with the current thread if a newer live comment exists, so nobody resolves over a comment they never read. Unread = newest comment is someone else's and newer than your `last_read_at` (marked by `POST …/read`, never by a GET; commenting marks the author's own read). Needs my reply = open and the newest comment is on the other side. Deleting a comment recomputes `last_comment_*` from the newest remaining one (all deleted: unchanged). Writers lock the thread row, and times come from `clock_timestamp()`.
 - **Inbox.** Tabs `reply`, `unread`, `open`, `resolved`. One page query (ids first, then joins and a `LATERAL` newest-comment lookup for those rows), one `COUNT(*) FILTER` for the four tab counts (they ignore `smallGroupId` and `resolvedSince`), **`resolvedSince`** (Part 1d, rule 15, `docs/RESOLVED-PERIOD-API-HANDOFF.md`): an offset-aware instant, only with `tab=resolved` (422 otherwise), that keeps threads with `resolved_at >= resolvedSince` in `_tab_threads`, so `total` and the page agree; the staff app turns its period (*Last 30 days*, …) into the instant, and no index was added for it, and, for the sidebar badge (`GET /report-conversations/counts`), one `SELECT` of a bare `COUNT(*)` for `needsMyReply` (the gold number stays *Needs my reply* only) and **`hasUnread`** (Part 1c, rule 17, `docs/UNREAD-DOT-API-HANDOFF.md`): an `EXISTS` over the *Unread* tab's own `FROM`/`WHERE` (`_tab_threads`, no group filter), so it is true exactly when `counts.unread > 0`; the staff app shows it as a dot only while the number is 0. **Unread tab** (Part 1b, rule 17, `docs/UNREAD-TAB-API-HANDOFF.md`): threads unread for the caller, any status; the condition is SQL (`_unread` in `conversation_queries.py`, the twin of `is_unread`) against the caller's read row, shared by the count, the total and the page, so they agree. **`POST /report-conversations/read-all?smallGroupId=`** (*Mark all read*, same permission and audience as the inbox, no linked member needed) upserts a read row for every thread in the audience (and group), any status, at `greatest(existing, last_activity_at)`, never `now()`, so a comment that commits meanwhile stays unread and the mark passes a deleted newest comment. One statement (the upsert is a data-modifying CTE); returns `{ marked }`, the threads that were unread. A group outside the audience marks nothing (`marked: 0`, no 404).
 - `ReportDetailSchema.conversationCount` feeds the delete dialog.
+
+## Report conversations, Part 2: emails (built)
+
+Who hears about a comment, by email through auth-server. Rules and contracts:
+`docs/specs/report-conversations.md` (workspace repo; rules 18-23, *Contracts (Part 2: email)*) and
+`docs/REPORT-CONVERSATIONS-EMAIL-API-HANDOFF.md` (its *Decisions and deviations* hold the detail).
+auth-server's side: `auth-server/docs/REPORT-CONVERSATIONS-EMAIL-HANDOFF.md`.
+
+- **Switches.** `CONVERSATION_EMAILS_ENABLED` (default off; `notifications/config.py`, read by the
+  API and the worker): off means no outbox rows, no worker, no fast path, no auth-server calls; on
+  needs `INTERNAL_API_TOKEN` in every environment (startup error otherwise), sent as
+  `X-Internal-Token` to auth-server's `/internal/*` at `AUTH_SERVER_URL`. `EMBEDDED_WORKER` (default
+  on, `ApiSettings`): run the worker inside the API process.
+- **Event first.** `add_comment` writes the comment and one `outbox_events` row
+  (`report_conversation.comment_added`, payload v1: ids and facts, `occurredAt` = the comment's
+  `created_at`) in one transaction, due 60 s later, deadline 24 h. Nothing else in the request.
+- **One rule for reading and emailing** (rule 23). `data/small_groups/access_rules.py` holds
+  `SmallGroupScope`, `small_group_scope_for` and `can_read_group_conversations` as pure functions;
+  `api/access.py` (scope, `conversation_access`, `conversation_group_ids`, `ensure_watch_audience`)
+  and the worker both call them. It lives outside `api/` because the worker imports nothing from
+  FastAPI.
+- **Domain consumer** (`data/small_groups/conversation_notifications.py`): the candidate snapshot
+  (`candidate_user_ids`, read-only), then inside the event's transaction `process_comment_added`:
+  recipients (`choose_recipients`: elders' side → the group's leaders, a closed group's leaders when
+  it closed; leaders' side → watchers minus opt-outs; a reply → other live commenters too; never
+  the author; `participant` > `leader` > `watcher`), the read check on the pinned permissions
+  (`readers_of_group`), the atomic throttle (`pass_throttle`, one statement sorted by user id,
+  stamped with `occurredAt`: one email per thread until you open it), then the payload (`path` by
+  anchor: `?person=`, `?guest=`, `?section=`). It hands requests to `notifications/` and never reads
+  preferences.
+- **Generic `notifications/`**: `deliveries.py` (`create_deliveries`: drops users whose
+  `(category, channel)` preference is off, inserts `ON CONFLICT DO NOTHING`; `is_enabled`),
+  `preferences.py`, `sender.py` (the `Sender` protocol), `auth_server.py` (the client: watchers,
+  permissions in chunks of 500, `AuthServerSender` mapping auth-server's answers to sent / dead /
+  transient), `sending.py` (`send_due_deliveries`).
+- **Tables.** `outbox_events`, `notification_deliveries` (unique `(source_event_id,
+  recipient_user_id, channel)`, `expires_at` inherited from the event), `notification_preferences`
+  (no row = on), `report_conversation_notify_state` (throttle), `small_group_watch_opt_outs` (no
+  row = watching). The two queues share the claim columns (`data/claim_columns.py`); events and
+  deliveries have no foreign keys. Migration `b453135219c0`.
+- **Claiming** (`data/claiming.py`, both queues): one statement leases a batch of 10 with `FOR UPDATE
+  SKIP LOCKED` (new claim token, `attempts + 1`, lease 2 min) and turns rows past their deadline into
+  `expired` and rows at 5 attempts into `dead`. Every later write is fenced on the token; for events
+  the fence is the first statement of the processing transaction. Outcomes: transient (dependency
+  trouble: attempt given back, `failures + 1`, never `dead`), exception (attempt kept), permanent
+  (`dead`). Backoff by `failures`: 1, 5, 15, 60 min, then hourly. A transient send error stops the
+  batch and releases the rest.
+- **The worker** (`worker/`): `runner.run_once()` expires overdue rows, fetches the possible watchers
+  (auth-server unreachable → claims nothing from either table), drains events then deliveries (at
+  most 10 batches each), purges final rows (events after 30 days, deliveries after 90) and logs the
+  oldest not-final row's age and the `dead` count per table. `run_forever` repeats it every 2
+  minutes after a random 0-30 s start. Embedded: the API's `lifespan` runs it on one thread through
+  its own `CapacityLimiter(1)` and stops it before disposing the engines. Standalone: `python -m
+  membership_management.worker` (SIGTERM/SIGINT stop it after the item in hand). Moving it out is
+  `EMBEDDED_WORKER=false` plus a task definition. The stop flag is checked between items.
+- **Fast path.** The three comment routes queue `worker.fast_path.run_fast_path(event_id)` with
+  `BackgroundTasks`: after the response, that one event (still `pending`, head start skipped) and
+  its deliveries, through the same claim code. Best-effort; the sweep covers it.
+- **Routes.** `GET`/`PUT /me/notification-preferences` → `{ conversationEmails, emailsEnabled }`
+  (any signed-in user; `emailsEnabled` is the kill switch so staff-app can hide the switches).
+  `GET /me/watched-groups` → `{ items: [{ smallGroupId, name, closed, watching }] }` (every group,
+  open first) and `PUT /small-groups/{id}/watch` `{ watching }` → `{ smallGroupId, watching }`, both
+  for the full-scope audience only (403 first, then 404). Watching changes nothing in the app.
 
 ## Guests and guest groups (built)
 
