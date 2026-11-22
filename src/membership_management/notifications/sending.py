@@ -3,6 +3,7 @@ Generic: categories and channels, never conversations. Never holds a DB transact
 network call: read in one short session, send, record the outcome (fenced) in another."""
 
 import logging
+import threading
 from dataclasses import dataclass
 from typing import cast
 
@@ -31,6 +32,7 @@ def idempotency_key(delivery_id: int) -> str:
 
 @dataclass
 class SendStats:
+    claimed: int = 0  # every row the claim returned (a full batch means more may be due)
     sent: int = 0
     dead: int = 0
     transient: int = 0
@@ -45,18 +47,30 @@ class SendStats:
 
 
 def send_due_deliveries(
-    sessions: sessionmaker[Session], sender: Sender, *, source_event_id: int | None = None
+    sessions: sessionmaker[Session],
+    sender: Sender,
+    *,
+    source_event_id: int | None = None,
+    stop: threading.Event | None = None,
 ) -> SendStats:
     """One batch: claim, then per delivery re-check the deadline and the recipient's preference, send,
     record. A transient error stops the batch: the untried rows are released for the next run (the
-    dependency is down; hammering it helps nobody). `source_event_id` is the fast path's filter."""
+    dependency is down; hammering it helps nobody). `source_event_id` is the fast path's filter;
+    `stop` is checked between deliveries (shutdown: the rest is released)."""
     where = [DELIVERIES.c.source_event_id == source_event_id] if source_event_id is not None else []
     with sessions() as session:
         result = claim(session, DELIVERIES, "sending", where=where)
         session.commit()
-    stats = SendStats(expired=result.expired, dead=result.dead)
+    stats = SendStats(
+        claimed=len(result.claimed) + result.expired + result.dead, expired=result.expired, dead=result.dead
+    )
     rows = result.claimed
     for index, row in enumerate(rows):
+        if stop is not None and stop.is_set():
+            with sessions() as session:
+                stats.released += sum(release(session, DELIVERIES, r) for r in rows[index:])
+                session.commit()
+            break
         with sessions() as session:
             delivery = session.get(NotificationDelivery, row.id)
             past_deadline = session.scalar(

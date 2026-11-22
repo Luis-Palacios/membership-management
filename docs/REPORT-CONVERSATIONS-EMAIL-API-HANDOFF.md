@@ -46,8 +46,8 @@ put an email address in a command, a log line or this file: use user ids.
 | 1. Config, the five tables, migration | ✅ | `c9ff673` |
 | 2. Shared read check; the event in the comment transaction; the consumer; `notifications/` | ✅ | `defc3b3` |
 | 3. auth-server client: `with-permission`, `permissions`, the `Sender` | ✅ | `614c3eb` |
-| 4. Claiming, the fence, processing, sending, outcomes; the fast path | ✅ | (this commit) |
-| 5. The worker: entry point, embedded start, SIGTERM, gate, expiry, monitoring, purge | ⬜ | |
+| 4. Claiming, the fence, processing, sending, outcomes; the fast path | ✅ | `bd9a272` |
+| 5. The worker: entry point, embedded start, SIGTERM, gate, expiry, monitoring, purge | ✅ | (this commit) |
 | 6. Preference and watch routes; docs; the end-to-end hand-check | ⬜ | |
 
 ### Decisions and deviations
@@ -216,6 +216,43 @@ put an email address in a command, a log line or this file: use user ids.
   key (`sent`, one Resend id, locale `en`): no second email; the same key with other data → `dead
   409 idempotency_conflict`. **Moved to Stage 6** (needs a signed-in JWT): the fast path through the
   HTTP route (the response returns before the send).
+- Stage 5 files: `worker/runner.py` (`run_once`, `run_forever`, `RunReport`; `INTERVAL` 2 min,
+  `START_JITTER_SECONDS` 30, `MAX_BATCHES` 10 per table per run), `worker/maintenance.py` (`Queue`
+  for each table, `expire_overdue`, `purge`, `health`), `worker/__main__.py` (`python -m
+  membership_management.worker`), the embedded start in `api/main.py`'s `lifespan`. Written whole,
+  as Luis asked.
+- Stage 5: **the stop flag is checked between items, not only between batches** (beyond the spec's
+  "finishes or abandons the item in hand"): `process_due_events` and `send_due_deliveries` take
+  `stop` and release the rest of the batch when it's set. A batch can take 10 × 5 s, longer than
+  uvicorn's 30 s graceful shutdown; this way shutdown waits for one item at most.
+- Stage 5: `run_once` drains a backlog in batches until one comes back short (or a transient error),
+  at most 10 per table per run; `EventStats`/`SendStats` gained `claimed` for that (and `released`
+  on events). The gate runs right after expiry: no watcher list, no claim from either table; expiry,
+  purge and health still run.
+- Stage 5: `expire_overdue` expires rows nobody is working (`pending`/`failed`, or in progress with a
+  lease that ran out); a row under a live lease is left to its worker. The claim expires rows too;
+  this also covers rows whose next attempt is after their deadline, so the health numbers stay true.
+- Stage 5: purge keys on `created_at` (events 30 days, deliveries 90), final statuses only, 1000 rows
+  per statement, at most 10 statements per run. Health is "age of the oldest not-yet-final row" and
+  the `dead` count per table, from one aggregate query each (a full scan; fine at this size, an
+  index can come with the Phase 9 alarms). The run's line is INFO when it did something or any row
+  is dead, else DEBUG; an unreachable auth-server also logs a WARNING.
+- Stage 5: **embedded** = `asyncio.create_task(anyio.to_thread.run_sync(run_forever, stop,
+  limiter=CapacityLimiter(1)))`, only while emails are on and `EMBEDDED_WORKER` is true. One long-
+  lived thread that waits on the stop flag between runs (one loop for both ways to run, instead of
+  an async loop for embedded and a sync one standalone). Shutdown sets the flag, awaits the thread,
+  closes the HTTP client, then disposes the engines.
+- Stage 5 checks (local; fake Sender for every sweep that could send; all rows made were deleted):
+  auth-server unreachable → nothing claimed from either table, WARNING logged; back → the same
+  sweep processes and sends; a `failed` event 25 h after its comment → `expired`; an event
+  processed 23 h after its comment → its delivery expires in 60 min (the comment's 24 h mark); purge
+  removed the 31-day processed/dead events and the 91-day sent/suppressed deliveries and kept a 29-day
+  event, an unfinished 31-day one and an 89-day delivery; health = oldest not-final age and dead
+  count per table in the run's INFO line; `run_forever` stops at once even during its start delay;
+  **embedded** via the real `lifespan`: a sweep ran on its own thread, the API's thread pool had 0
+  tokens borrowed, shutdown was immediate; **standalone** `python -m membership_management.worker`:
+  emails off → exits 0 at once; on + SIGINT after 2 s → "stopping after the item in hand", nothing
+  claimed after the flag, exit 0 in 2.4 s.
 - (fill in per stage)
 
 ## Contract as built (auth-server, PR #35)

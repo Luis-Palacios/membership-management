@@ -8,6 +8,7 @@ fence included) and is recorded in a second short, fenced transaction.
 """
 
 import logging
+import threading
 from collections.abc import Collection
 from dataclasses import dataclass
 from typing import cast
@@ -21,6 +22,7 @@ from membership_management.data.claiming import (
     fenced_update,
     record_exception,
     record_transient,
+    release,
 )
 from membership_management.data.outbox.models import OutboxEvent
 from membership_management.data.small_groups.access_rules import Perms
@@ -40,12 +42,14 @@ _KNOWN = {COMMENT_ADDED: 1}
 
 @dataclass
 class EventStats:
+    claimed: int = 0  # every row the claim returned (a full batch means more may be due)
     processed: int = 0
     deliveries: int = 0
     transient: int = 0
     failed: int = 0  # exceptions in our code
     dead: int = 0
     expired: int = 0
+    released: int = 0  # handed back unworked on shutdown
     lost: int = 0
 
     def did_something(self) -> bool:
@@ -53,10 +57,15 @@ class EventStats:
 
 
 def process_due_events(
-    sessions: sessionmaker[Session], possible_watchers: Collection[str], *, event_id: int | None = None
+    sessions: sessionmaker[Session],
+    possible_watchers: Collection[str],
+    *,
+    event_id: int | None = None,
+    stop: threading.Event | None = None,
 ) -> EventStats:
     """One batch of due events. `event_id` is the fast path: that one event, only while still
-    `pending` and ignoring its head start, so it never takes a row the sweep holds."""
+    `pending` and ignoring its head start, so it never takes a row the sweep holds. `stop` is
+    checked between events: once set, the rest of the batch is released (shutdown)."""
     with sessions() as session:
         if event_id is None:
             result = claim(session, EVENTS, "processing")
@@ -70,7 +79,9 @@ def process_due_events(
                 statuses=("pending",),
             )
         session.commit()
-    stats = EventStats(expired=result.expired, dead=result.dead)
+    stats = EventStats(
+        claimed=len(result.claimed) + result.expired + result.dead, expired=result.expired, dead=result.dead
+    )
     if not result.claimed:
         return stats
 
@@ -106,7 +117,12 @@ def process_due_events(
             session.commit()
         return stats
 
-    for row in known:
+    for index, row in enumerate(known):
+        if stop is not None and stop.is_set():
+            with sessions() as session:
+                stats.released += sum(release(session, EVENTS, r) for r in known[index:])
+                session.commit()
+            break
         # Exactly this event's candidates: nobody else's permissions can reach its rules.
         event_perms = {u: perms[u] for u in candidates[row.id] if u in perms}
         _process_one(sessions, row, event_perms, possible_watchers, stats)

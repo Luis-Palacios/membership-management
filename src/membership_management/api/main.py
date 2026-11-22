@@ -1,7 +1,10 @@
+import asyncio
 import logging
+import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import anyio
 import anyio.to_thread
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,6 +38,9 @@ from membership_management.api.routers import (
 from membership_management.data.assimilation.config import settings
 from membership_management.data.assimilation.database import engine
 from membership_management.data.database import engine as members_engine
+from membership_management.notifications import auth_server
+from membership_management.notifications.config import notification_settings
+from membership_management.worker.runner import run_forever
 
 configure_logging()
 
@@ -48,7 +54,21 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # Bounds concurrent sync (`def`) route handlers/dependencies; see the
     # thread_pool_size comment in config.py.
     anyio.to_thread.current_default_thread_limiter().total_tokens = api_settings.thread_pool_size
+    # The conversation email worker, embedded (EMBEDDED_WORKER, default on): one thread through its own
+    # limiter, so it never takes a token from the pool above. Off = it runs as its own process.
+    stop_worker = threading.Event()
+    worker: asyncio.Task[None] | None = None
+    if notification_settings.conversation_emails_enabled and api_settings.embedded_worker:
+        worker = asyncio.create_task(
+            anyio.to_thread.run_sync(run_forever, stop_worker, limiter=anyio.CapacityLimiter(1))
+        )
     yield
+    if worker is not None:
+        # Stops claiming; the thread finishes or releases the item in hand (the stop flag is checked
+        # between items), then returns. Before disposing the engines it's still using.
+        stop_worker.set()
+        await worker
+        auth_server.close()
     # Release this process's pooled connections on shutdown (e.g. SIGTERM
     # during a container redeploy/scale-down) instead of relying on the OS
     # to close the sockets once the process exits.
