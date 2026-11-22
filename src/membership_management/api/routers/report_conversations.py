@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query, Response, status
 from pydantic import AwareDatetime
 
 from membership_management.api.access import (
@@ -80,6 +80,7 @@ from membership_management.data.small_groups.models import (
 )
 from membership_management.data.small_groups.results import ConversationPerson, ConversationThread
 from membership_management.data.small_groups.services import get_report
+from membership_management.worker.fast_path import run_fast_path
 
 # No prefix: the routes live under both /small-group-reports/{id}/... and /report-conversations.
 # Everyone in the report's observation audience can use them (no new permission, spec rule 4):
@@ -262,13 +263,14 @@ def _add_anchor_comment(
     claims: AuthClaims,
     scope: SmallGroupScope,
     member: Member | None,
+    background_tasks: BackgroundTasks,
 ) -> ConversationThreadSchema:
     report = _report_or_404(db, report_id, claims, scope)
     if report.status == ReportStatus.DRAFT:
         raise HTTPException(status_code=409, detail="Conversations can't start on a draft.")
     author = _linked_member(member)
     try:
-        conversation = add_comment(
+        conversation, event_id = add_comment(
             db,
             report.id,
             anchor,
@@ -279,6 +281,9 @@ def _add_anchor_comment(
         )
     except (MemberNotOnReportError, SectionEmptyError, ConversationRaceError) as exc:
         raise _http_error(exc) from exc
+    if event_id is not None:
+        # Conversation emails, best-effort, after the response (Part 2, *Fast path*).
+        background_tasks.add_task(run_fast_path, event_id)
     return _thread_schema(build_thread(db, conversation, claims.sub))
 
 
@@ -318,9 +323,10 @@ def post_report_section_conversation_comment(
     claims: CurrentClaimsDep,
     scope: SmallGroupScopeDep,
     member: CurrentMemberDep,
+    background_tasks: BackgroundTasks,
 ) -> ConversationThreadSchema:
     section = _section_or_422(key)
-    return _add_anchor_comment(db, report_id, section, body, claims, scope, member)
+    return _add_anchor_comment(db, report_id, section, body, claims, scope, member, background_tasks)
 
 
 @router.get(
@@ -375,8 +381,10 @@ def post_report_conversation_comment(
     claims: CurrentClaimsDep,
     scope: SmallGroupScopeDep,
     member: CurrentMemberDep,
+    background_tasks: BackgroundTasks,
 ) -> ConversationThreadSchema:
-    return _add_anchor_comment(db, report_id, ("member", member_id), body, claims, scope, member)
+    anchor: ConversationAnchor = ("member", member_id)
+    return _add_anchor_comment(db, report_id, anchor, body, claims, scope, member, background_tasks)
 
 
 @router.get(
@@ -413,8 +421,10 @@ def post_report_guest_conversation_comment(
     claims: CurrentClaimsDep,
     scope: SmallGroupScopeDep,
     member: CurrentMemberDep,
+    background_tasks: BackgroundTasks,
 ) -> ConversationThreadSchema:
-    return _add_anchor_comment(db, report_id, ("guest", guest_id), body, claims, scope, member)
+    anchor: ConversationAnchor = ("guest", guest_id)
+    return _add_anchor_comment(db, report_id, anchor, body, claims, scope, member, background_tasks)
 
 
 def _comment_or_404(

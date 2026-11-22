@@ -40,6 +40,14 @@ _TEMPLATE_NEW = "report-conversation.new"
 _TEMPLATE_REPLY = "report-conversation.reply"
 # auth-server's limit on groupName (trimmed, 1-200); actorName gets the same cut to be safe.
 _NAME_LIMIT = 200
+# The possible watchers (rule 18): everyone holding what the full-scope observation audience needs. A
+# superset by design; `readers_of_group` (the shared rule) decides who really reads each group.
+WATCHER_PERMISSIONS = (
+    "smallGroups:all",
+    "smallGroups:view",
+    "smallGroupReports:view",
+    "smallGroupReports:viewObservations",
+)
 # The fast path's head start: the sweep leaves a new event alone this long.
 _HEAD_START = timedelta(seconds=60)
 # One deadline per comment (spec, *Expiry*); its deliveries inherit it.

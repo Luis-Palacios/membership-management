@@ -45,8 +45,8 @@ put an email address in a command, a log line or this file: use user ids.
 | 0. Handoff rewritten to the Nov 2026 design | ✅ | `79ba508` |
 | 1. Config, the five tables, migration | ✅ | `c9ff673` |
 | 2. Shared read check; the event in the comment transaction; the consumer; `notifications/` | ✅ | `defc3b3` |
-| 3. auth-server client: `with-permission`, `permissions`, the `Sender` | ✅ | (this commit) |
-| 4. Claiming, the fence, processing, sending, outcomes; the fast path | ⬜ | |
+| 3. auth-server client: `with-permission`, `permissions`, the `Sender` | ✅ | `614c3eb` |
+| 4. Claiming, the fence, processing, sending, outcomes; the fast path | ✅ | (this commit) |
 | 5. The worker: entry point, embedded start, SIGTERM, gate, expiry, monitoring, purge | ⬜ | |
 | 6. Preference and watch routes; docs; the end-to-end hand-check | ⬜ | |
 
@@ -177,6 +177,45 @@ put an email address in a command, a log line or this file: use user ids.
   `transient`; connection refused → `transient ConnectError`; unroutable host → `transient
   ConnectTimeout` after 5 s. Log lines carry only status and error codes. Not covered here, needing
   a real send: 200, a repeat 200, 409 and 503 `send_failed` (Stage 4, to Luis's test account).
+- Stage 4 files: `data/claiming.py` (generic: `claim`, `fenced_update`, `record_transient`,
+  `record_exception`, `release`, `backoff`, `BATCH_SIZE` 10, `LEASE` 2 min, `MAX_ATTEMPTS` 5; takes
+  the `Table`, so one copy serves both tables), `notifications/sending.py` (`send_due_deliveries`,
+  `idempotency_key`, `SendStats`), `worker/events.py` (`process_due_events`, `EventStats`),
+  `worker/fast_path.py` (`run_fast_path`). `WATCHER_PERMISSIONS` lives in
+  `conversation_notifications.py`. `add_comment` now returns `(conversation, event_id | None)`; the
+  three comment routes (member, guest, section) take `BackgroundTasks` and `_add_anchor_comment`
+  queues `run_fast_path(event_id)` when there is one. Luis asked to write the whole stage at once.
+- Stage 4: **the claim is one statement**: a `FOR UPDATE SKIP LOCKED` CTE picks the due rows and an
+  `UPDATE … FROM` leases them (`gen_random_uuid()` per row, `attempts + 1`, `next_attempt_at = now()
+  + lease`), turning rows past `expires_at` into `expired` and rows already at 5 attempts into `dead`
+  (`last_error = 'poison cap'`) in the same statement. "Due" includes the in-progress status, so a
+  lease that ran out is found by the same scan. The fast path claims its one event with
+  `due_only=False, statuses=("pending",)`: it skips the head start but never takes a row the sweep
+  holds.
+- Stage 4: **every write after a claim clears the token** (`fenced_update`), so a worker that lost its
+  lease can't write later. A success also clears `last_error` (so it only ever describes a row that
+  isn't done). `suppressed` keeps it.
+- Stage 4: **releasing untried rows leaves `next_attempt_at` as the claim set it** (now + lease): due
+  again around the next sweep, not at once (the spec's "unchanged", read literally).
+- Stage 4: events with an unknown `event_type` or `schema_version` go `dead` (`unknown event type`)
+  without a lookup. Each event's rules see only its own candidates' permissions (sliced from the
+  batch lookup). The fast path catches and logs everything; a failed watcher lookup there just
+  returns (nothing claimed, the sweep retries after the head start).
+- Stage 4 checks (local; a fake Sender, so no email; every row the script made deleted after):
+  head start respected by the sweep, taken by the fast path, repeat is a no-op, the send used
+  `mm:notification-delivery:{id}`; a processing exception → `failed`, attempt kept, `failures` 1, no
+  deliveries and no throttle rows (rolled back); a failed permissions lookup → transient, attempt
+  given back; a lost lease → nothing processed; a crash mid-batch (lease left to run out) →
+  re-claimed, `attempts` up, processed once; poison cap → `dead`, deadline → `expired` at claim;
+  a sending batch: `dead`, `expired` right before sending, a transient that stopped the batch and
+  released the 6 untried rows (attempts given back); `suppressed` when the preference was turned off
+  after queuing, no send; **two events in one thread processed at the same moment → one delivery**;
+  two concurrent claims → disjoint batches.
+- Stage 4 real send (to Luis's N=2 test account, by user id, one email): `AuthServerSender` → `sent`;
+  the same key and body again → `sent`, and auth-server's `notification_sends` holds one row for the
+  key (`sent`, one Resend id, locale `en`): no second email; the same key with other data → `dead
+  409 idempotency_conflict`. **Moved to Stage 6** (needs a signed-in JWT): the fast path through the
+  HTTP route (the response returns before the send).
 - (fill in per stage)
 
 ## Contract as built (auth-server, PR #35)

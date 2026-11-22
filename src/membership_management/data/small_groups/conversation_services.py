@@ -355,9 +355,10 @@ def add_comment(
     author_member_id: int,
     side: ConversationSide,
     body: str,
-) -> ReportConversation:
+) -> tuple[ReportConversation, int | None]:
     """Rule 1, 5, 6, 10: create the thread if needed, reopen it if resolved, add the comment and mark
-    the thread read for the author, in one transaction."""
+    the thread read for the author, in one transaction. Also returns the outbox event's id while
+    conversation emails are on (for the fast path), else None."""
     conversation = _get_or_create(session, report_id, anchor, user_id, side, _db_now(session))
     session.flush()
     _lock_and_refresh(session, conversation)
@@ -381,11 +382,15 @@ def add_comment(
     conversation.last_activity_at = now
     _reopen(conversation)
     _upsert_read(session, conversation.id, user_id, now)
+    event_id = None
     if notification_settings.conversation_emails_enabled:
         session.flush()  # comment.id, for the payload
-        session.add(comment_added_event(comment, starts_thread=starts_thread))
+        event = comment_added_event(comment, starts_thread=starts_thread)
+        session.add(event)
+        session.flush()  # event.id, for the fast path
+        event_id = event.id
     session.commit()
-    return conversation
+    return conversation, event_id
 
 
 def get_comment(session: Session, comment_id: int) -> ReportConversationComment | None:
