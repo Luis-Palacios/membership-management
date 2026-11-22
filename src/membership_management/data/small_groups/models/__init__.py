@@ -10,6 +10,9 @@ from membership_management.data.small_groups.models.report_conversation_comment 
 from membership_management.data.small_groups.models.report_conversation_comment_revision import (
     ReportConversationCommentRevision,
 )
+from membership_management.data.small_groups.models.report_conversation_notify_state import (
+    ReportConversationNotifyState,
+)
 from membership_management.data.small_groups.models.report_conversation_read import ReportConversationRead
 from membership_management.data.small_groups.models.small_group import GroupAudience, SmallGroup, Weekday
 from membership_management.data.small_groups.models.small_group_member import (
@@ -26,6 +29,7 @@ from membership_management.data.small_groups.models.small_group_report_item impo
 from membership_management.data.small_groups.models.small_group_report_item_person import (
     SmallGroupReportItemPerson,
 )
+from membership_management.data.small_groups.models.small_group_watch_opt_out import SmallGroupWatchOptOut
 
 __all__ = [
     "ConversationSide",
@@ -35,6 +39,7 @@ __all__ = [
     "ReportConversation",
     "ReportConversationComment",
     "ReportConversationCommentRevision",
+    "ReportConversationNotifyState",
     "ReportConversationRead",
     "ReportSection",
     "ReportStatus",
@@ -46,5 +51,6 @@ __all__ = [
     "SmallGroupReportItem",
     "SmallGroupReportItemPerson",
     "SmallGroupRole",
+    "SmallGroupWatchOptOut",
     "Weekday",
 ]

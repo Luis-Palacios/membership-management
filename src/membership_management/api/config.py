@@ -113,6 +113,12 @@ class ApiSettings(BaseSettings):
     # one value per deployment for now; it moves onto the church once multi-tenancy lands.
     guest_groups_enabled: bool = False
 
+    # Run the email worker inside this API process (lifespan task, one thread via its own
+    # CapacityLimiter). false = the worker runs as its own process/ECS service
+    # (python -m membership_management.worker). Ignored while CONVERSATION_EMAILS_ENABLED is off
+    # (that switch lives in notifications/config.py, so the worker can read it without the API).
+    embedded_worker: bool = True
+
     # Same .env handling as the data layer's Settings (see env_file.py).
     model_config = SettingsConfigDict(env_file=ENV_FILE, env_file_encoding="utf-8", extra="ignore")
 
