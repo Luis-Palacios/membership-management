@@ -43,8 +43,8 @@ put an email address in a command, a log line or this file: use user ids.
 | Stage | Status | Commit |
 | --- | --- | --- |
 | 0. Handoff rewritten to the Nov 2026 design | ✅ | `79ba508` |
-| 1. Config, the five tables, migration | ✅ | (this commit) |
-| 2. Shared read check; the event in the comment transaction; the consumer; `notifications/` | ⬜ | |
+| 1. Config, the five tables, migration | ✅ | `c9ff673` |
+| 2. Shared read check; the event in the comment transaction; the consumer; `notifications/` | ✅ | (this commit) |
 | 3. auth-server client: `with-permission`, `permissions`, the `Sender` | ⬜ | |
 | 4. Claiming, the fence, processing, sending, outcomes; the fast path | ⬜ | |
 | 5. The worker: entry point, embedded start, SIGTERM, gate, expiry, monitoring, purge | ⬜ | |
@@ -99,6 +99,59 @@ put an email address in a command, a log line or this file: use user ids.
 - Stage 1: `uv run ruff check .` reports 3 errors in `.claude/hooks/check.py`, unchanged from
   `main` (commit `a1daac1`); `ruff check src` and `ty check` are clean. Left alone here (not this
   feature); worth a `chore/` fix.
+- Stage 2: **the shared rule lives in `data/small_groups/access_rules.py`, not `api/access.py`**
+  (deviation from the spec's wording): `api/access.py` imports FastAPI and `api_settings`, and the
+  worker must import nothing from the API. `SmallGroupScope` moved there too (re-imported by
+  `access.py`, so the routers' imports didn't change), with `Perms`, `holds`,
+  `small_group_scope_for` and `can_read_group_conversations`. Still one copy: `_small_group_scope`,
+  `conversation_access` and `conversation_group_ids` call it. `Perms` is a plain alias, not a `type`
+  statement (`ruff.toml` targets py310).
+- Stage 2: `_small_group_scope` only queries the led groups when the rule can use them (a member,
+  `smallGroups: view`, not `all`), so full-scope requests cost what they did. `conversation_group_ids`
+  asks the rule once with a placeholder id `0` for a full scope (the rule ignores the id there).
+- Stage 2 check (2a): the old and new helpers compared in a scratch script over every combination of
+  the four permissions × member or not × in or out of scope (64 cases): same scope, same list filter,
+  same 404/403/allowed. The live role pass is in Stage 6's end-to-end run (decided with Luis).
+- Stage 2: **"starts the thread" is decided under the thread lock** by "no comment yet, deleted ones
+  included", not by "this request created the row": two first comments at once → one `new`, one
+  `reply`; a thread whose first comment was deleted stays a reply. `startedBy` is the side of the
+  thread's first comment, deleted or not (`first_comment_side_query`).
+- Stage 2: the event is added in `add_comment` only while the switch is on (with a `flush` for the
+  comment id); `add_comment`'s return value is unchanged until Stage 4 needs the event id.
+- Stage 2: **leaders of a closed group get `leader` emails** (decided with Luis, beyond the spec's
+  "current leaders"): `group_leader_user_ids_query` uses `leads_in_scope_condition`, the periods the
+  scope uses, so for a closed group it's the leaders when it closed, who can still open its threads
+  (rule 13). For an open group it's the active leaders, as before.
+- Stage 2: the candidate snapshot (`candidate_user_ids`) is only a set of user ids: the
+  leader/participant/watcher split is redone inside the transaction from fresh rows and kept to the
+  users present in `perms_by_user`, so "nobody is added inside the transaction" needs no second
+  list. Watchers join the snapshot only for leaders'-side comments; the author never does.
+- Stage 2: the read check for many users (`readers_of_group`) is two queries per event (linked
+  members, then their led groups with `led_small_group_ids_by_member_query`, the batch form of the
+  scope query) and the shared rule in memory. Full-scope users need no linked member to watch (they
+  read through `viewObservations`, as in the app); locally two of the three are unlinked and got
+  watcher deliveries.
+- Stage 2: the recipient rules are a pure function (`choose_recipients`); the consumer's entry point
+  is `process_comment_added`, which calls `notifications.deliveries.create_deliveries` itself (domain
+  → notifications, one way). `notifications/deliveries.py` holds `NotificationRequest`,
+  `create_deliveries` (one preferences query per event, `ON CONFLICT DO NOTHING` on the unique key,
+  `next_attempt_at = now()`, `expires_at` = the request's `not_after`) and `is_enabled`.
+- Stage 2: `actorName` is trimmed and cut to 200 like `groupName`; auth-server didn't state a limit
+  for it, so the cut is ours, to be safe.
+- Stage 2: `dict(session.execute(...))` doesn't work (a `Result` has `.keys()`, so `dict()` reads it
+  as a mapping); comprehensions instead.
+- Stage 2 checks (local, every write in a rolled-back transaction): the event's payload, head start
+  and deadline; `startsThread` true then false; the throttle's eight cases (first email, held until
+  opened, already read, read exactly at the comment, out of order doesn't move the stamp back);
+  readers of an open and a closed group against real `perms` from auth-server; then
+  `process_comment_added` on real comments: elder starts → the leader (`new`, `leader`); leader
+  replies → the elder (`participant`) and the watchers; again before opening → nothing; after
+  opening → the elder; leader starts → every watcher; after unwatching → not that elder; perms
+  missing → nothing; the leader's emails off → nothing; comment deleted first → no candidates, no
+  deliveries; `?section=` / `?guest=` / `?person=` paths and topics. Two events in one thread *at
+  the same moment* need two concurrent transactions: checked in Stage 4 with the worker.
+- Stage 2: two queries were appended to `conversation_queries.py` with a shell heredoc instead of
+  Edit (the workspace rule); content as reviewed, and Edit/Write only since.
 - (fill in per stage)
 
 ## Contract as built (auth-server, PR #35)

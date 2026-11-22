@@ -1,11 +1,12 @@
 from datetime import datetime
 from typing import Literal
 
-from sqlalchemy import Row, func, select
+from sqlalchemy import Row, exists, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from membership_management.data.small_groups.conversation_notifications import comment_added_event
 from membership_management.data.small_groups.conversation_queries import (
     badge_query,
     comment_query,
@@ -49,6 +50,7 @@ from membership_management.data.small_groups.results import (
     InboxRow,
     PersonKey,
 )
+from membership_management.notifications.config import notification_settings
 
 # What a thread is about: a member's or a guest's attendance row (`("member"|"guest", id)`) or a report
 # section.
@@ -359,23 +361,29 @@ def add_comment(
     conversation = _get_or_create(session, report_id, anchor, user_id, side, _db_now(session))
     session.flush()
     _lock_and_refresh(session, conversation)
-    now = _db_now(session)
-    session.add(
-        ReportConversationComment(
-            conversation_id=conversation.id,
-            author_user_id=user_id,
-            author_member_id=author_member_id,
-            side=side,
-            body=body,
-            created_at=now,
-        )
+    # Under the thread lock: is this the first comment ever written to the thread (deleted ones count)?
+    starts_thread = not session.scalar(
+        select(exists().where(ReportConversationComment.conversation_id == conversation.id))
     )
+    now = _db_now(session)
+    comment = ReportConversationComment(
+        conversation_id=conversation.id,
+        author_user_id=user_id,
+        author_member_id=author_member_id,
+        side=side,
+        body=body,
+        created_at=now,
+    )
+    session.add(comment)
     conversation.last_comment_at = now
     conversation.last_comment_side = side
     conversation.last_comment_user_id = user_id
     conversation.last_activity_at = now
     _reopen(conversation)
     _upsert_read(session, conversation.id, user_id, now)
+    if notification_settings.conversation_emails_enabled:
+        session.flush()  # comment.id, for the payload
+        session.add(comment_added_event(comment, starts_thread=starts_thread))
     session.commit()
     return conversation
 

@@ -19,6 +19,11 @@ from membership_management.data.members.services import (
     is_member_active_in_open_groups,
     members_active_in_open_groups,
 )
+from membership_management.data.small_groups.access_rules import (
+    SmallGroupScope,
+    can_read_group_conversations,
+    small_group_scope_for,
+)
 from membership_management.data.small_groups.models import (
     ConversationSide,
     ReportStatus,
@@ -30,35 +35,20 @@ from membership_management.data.small_groups.services import (
     can_see_draft,
     get_active_membership,
     get_led_small_group_ids,
-    observations_visible_to,
 )
 
 
-@dataclass(frozen=True)
-class SmallGroupScope:
-    """Which small groups the caller may touch: all of them (`full`) or just `group_ids`.
-
-    `full` is `smallGroups: all`; without it the scope is the groups the caller's member leads, or
-    co-led when they closed. Permissions say what the caller may do, this says on which groups.
-    """
-
-    full: bool
-    group_ids: frozenset[int]
-    member_id: int | None
-
-    def includes(self, small_group_id: int) -> bool:
-        return self.full or small_group_id in self.group_ids
-
-
 def _small_group_scope(claims: AuthClaims, member: Member | None, db: Session) -> SmallGroupScope | None:
-    """None without `smallGroups: view`: leading a group grants nothing by itself."""
-    if not has_permission(claims, "smallGroups", "view"):
-        return None
+    """The caller's scope by the shared rule (`small_group_scope_for`). The led groups are only looked up
+    when they matter: a full scope, or no `smallGroups: view`, needs no query, as before."""
     member_id = member.id if member is not None else None
-    if has_permission(claims, "smallGroups", "all"):
-        return SmallGroupScope(full=True, group_ids=frozenset(), member_id=member_id)
-    group_ids = get_led_small_group_ids(db, member_id) if member_id is not None else frozenset()
-    return SmallGroupScope(full=False, group_ids=group_ids, member_id=member_id)
+    needs_led = (
+        member_id is not None
+        and has_permission(claims, "smallGroups", "view")
+        and not has_permission(claims, "smallGroups", "all")
+    )
+    led = get_led_small_group_ids(db, member_id) if needs_led else frozenset()
+    return small_group_scope_for(claims.perms, led, member_id)
 
 
 def get_small_group_scope(
@@ -242,28 +232,23 @@ def comment_side(claims: AuthClaims) -> ConversationSide:
 
 
 def conversation_access(report: SmallGroupReport, claims: AuthClaims, scope: SmallGroupScope) -> None:
-    """Rule 3: the audience of the report's observations. 404 outside the scope, 403 outside the audience."""
+    """Rule 3 by the shared rule (`can_read_group_conversations`). 404 outside the scope, 403 outside
+    the audience."""
     if not scope.includes(report.small_group_id):
         raise HTTPException(status_code=404, detail=f"Small group report with ID {report.id} not found.")
-    # A full scope is not "leading the group": it needs `viewObservations`, as in `conversation_group_ids`.
-    if not observations_visible_to(
-        sees_all_observations=sees_all_observations(claims),
-        leads_group=not scope.full and leads_group(scope, report.small_group_id),
-    ):
+    if not can_read_group_conversations(claims.perms, scope, report.small_group_id):
         raise HTTPException(status_code=403, detail="You don't have permission to do this.")
 
 
 def conversation_group_ids(claims: AuthClaims, scope: SmallGroupScope | None) -> frozenset[int] | None:
-    """The groups whose conversations the caller may see: None = every group, else exactly these ids.
-
-    The same audience as `conversation_access`, for lists: a full scope needs `viewObservations`
-    (without it, no group), a scoped caller gets the groups they lead (or led when it closed).
-    """
-    if scope is None or not has_permission(claims, "smallGroupReports", "view"):
+    """The groups whose conversations the caller may see, by the same rule as `conversation_access`:
+    None = every group, else exactly these ids."""
+    if scope is None:
         return frozenset()
     if scope.full:
-        return None if sees_all_observations(claims) else frozenset()
-    return scope.group_ids
+        # A full scope reads every group or none (the rule doesn't look at the id): ask once.
+        return None if can_read_group_conversations(claims.perms, scope, small_group_id=0) else frozenset()
+    return frozenset(g for g in scope.group_ids if can_read_group_conversations(claims.perms, scope, g))
 
 
 def ensure_guest_groups_enabled() -> None:

@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import date
 
 from sqlalchemy import (
@@ -126,6 +126,17 @@ def led_small_group_ids_query(member_id: int) -> Select:
         select(SmallGroup.id)
         .join(SmallGroupMember, SmallGroupMember.small_group_id == SmallGroup.id)
         .where(SmallGroupMember.member_id == member_id, leads_in_scope_condition())
+        .distinct()
+    )
+
+
+def led_small_group_ids_by_member_query(member_ids: Collection[int]) -> Select:
+    """(member_id, small_group_id) for each group in each member's scope: led now, or led when the
+    group closed. The batch form of `led_small_group_ids_query`, same condition."""
+    return (
+        select(SmallGroupMember.member_id, SmallGroup.id)
+        .join(SmallGroupMember, SmallGroupMember.small_group_id == SmallGroup.id)
+        .where(SmallGroupMember.member_id.in_(member_ids), leads_in_scope_condition())
         .distinct()
     )
 

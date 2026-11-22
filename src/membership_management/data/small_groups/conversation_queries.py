@@ -1,3 +1,4 @@
+from collections.abc import Collection
 from datetime import datetime
 
 from sqlalchemy import ColumnElement, Select, String, and_, exists, func, literal, or_, select, true
@@ -12,11 +13,16 @@ from membership_management.data.small_groups.models import (
     ReportConversationRead,
     ReportSection,
     SmallGroup,
+    SmallGroupMember,
     SmallGroupReport,
     SmallGroupReportAttendance,
     SmallGroupReportItem,
+    SmallGroupWatchOptOut,
 )
-from membership_management.data.small_groups.queries import submitted_report_condition
+from membership_management.data.small_groups.queries import (
+    leads_in_scope_condition,
+    submitted_report_condition,
+)
 from membership_management.data.small_groups.results import PersonKey
 
 
@@ -409,3 +415,49 @@ def inbox_rows_query(
         .order_by(ReportConversation.last_comment_at.desc(), ReportConversation.id.desc())
     )
     return query
+
+
+def group_leader_user_ids_query(small_group_id: int) -> Select:
+    """Linked users of the group's leaders and co-leaders: the active ones, or for a closed group the
+    ones leading when it closed (the same periods as the access scope, `leads_in_scope_condition`)."""
+    return (
+        select(Member.user_id)
+        .join(SmallGroupMember, SmallGroupMember.member_id == Member.id)
+        .join(SmallGroup, SmallGroup.id == SmallGroupMember.small_group_id)
+        .where(
+            SmallGroup.id == small_group_id,
+            leads_in_scope_condition(),
+            Member.user_id.is_not(None),
+        )
+        .distinct()
+    )
+
+
+def participant_user_ids_query(conversation_id: int) -> Select:
+    """Everyone with a live (not deleted) comment in the thread."""
+    return (
+        select(ReportConversationComment.author_user_id)
+        .where(
+            ReportConversationComment.conversation_id == conversation_id,
+            ReportConversationComment.deleted_at.is_(None),
+        )
+        .distinct()
+    )
+
+
+def first_comment_side_query(conversation_id: int) -> Select:
+    """The side of the comment that started the thread, deleted or not (the "new" email's title)."""
+    return (
+        select(ReportConversationComment.side)
+        .where(ReportConversationComment.conversation_id == conversation_id)
+        .order_by(ReportConversationComment.created_at, ReportConversationComment.id)
+        .limit(1)
+    )
+
+
+def watch_opt_out_user_ids_query(small_group_id: int, user_ids: Collection[str]) -> Select:
+    """Those among `user_ids` who stopped watching the group (rule 21)."""
+    return select(SmallGroupWatchOptOut.user_id).where(
+        SmallGroupWatchOptOut.small_group_id == small_group_id,
+        SmallGroupWatchOptOut.user_id.in_(user_ids),
+    )
