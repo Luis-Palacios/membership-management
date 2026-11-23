@@ -26,7 +26,17 @@ Branch **`feature/report-reminder-emails`**. Each stage: `uv run ruff check src`
 | 2. Weekly trigger in the worker loop (`run_once`); worker gates on any of the three switches | ✅ | `fcffcac` |
 | 3. Consumer `small_group_report.reminder_due` → `report.reminder` deliveries | ✅ | `91aed3c` |
 | 4. Preferences GET/PUT + schema (`reportReminder`), docs | ✅ | `11dba16` |
-| Handoff written (by the workspace session; the subagent's write was refused) | ✅ | see `git log` |
+| Handoff written (by the workspace session; the subagent's write was refused) | ✅ | `f9c2d24` |
+| Review fixes: case-insensitive group order, UTF-16-safe name cut (`clip_name`, also used by report submitted), stale comments, Postgres checks recorded | ✅ | commit after `f9c2d24` |
+
+**Postgres checks (workspace session, local `my-postgres`, after the review):** `alembic upgrade
+head` applies `7e1a4c9b2d58`; `alembic check` → no new operations; `downgrade -1` + `upgrade head`
+round-trip clean. `trigger_report_reminder` against the real DB on a 2019-12-29 week (Saturday
+08:00 America/Managua = 14:00Z): before the window → no event; inside → one
+`small_group_report.reminder_due` event (`weekStart` 2019-12-29, `scheduledAt`
+2020-01-04T08:00:00-06:00, `expires_at` 20:00Z); a second sweep → nothing, and the session stays
+usable after the conflict rollback. `candidate_user_ids` runs on Postgres (3 candidates in the seed
+data). Test rows deleted afterwards.
 
 ## Decisions and deviations
 
@@ -35,7 +45,8 @@ Branch **`feature/report-reminder-emails`**. Each stage: `uv run ruff check src`
   migrations and matches the spec (`week_start DATE PK`, `triggered_at TIMESTAMPTZ NOT NULL DEFAULT
   now()`, no check constraint). `alembic check` and the `downgrade -1` / `upgrade head` round trip
   were NOT run: run them once the DB is up. `alembic upgrade b453135219c0:7e1a4c9b2d58 --sql` and the
-  matching downgrade emit exactly the CREATE / DROP TABLE.
+  matching downgrade emit exactly the CREATE / DROP TABLE. (All since run against Postgres; see
+  *Postgres checks* above.)
 - `ReportReminderRun` lives in `data/small_groups/models/` (the spec doesn't say where).
 - `NotificationSettings`: `church_timezone` is validated with `ZoneInfo` like `ApiSettings`; the
   reminder day must be 1-7; the reminder time must be a plain `HH:MM` (a UTC offset is rejected: it is

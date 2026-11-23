@@ -25,7 +25,7 @@ from membership_management.data.small_groups.models import (
     SmallGroupReport,
     SmallGroupRole,
 )
-from membership_management.notifications.deliveries import NotificationRequest, create_deliveries
+from membership_management.notifications.deliveries import NotificationRequest, clip_name, create_deliveries
 
 REMINDER_DUE = "small_group_report.reminder_due"
 # The notifications/ category: the "Weekly report reminders" switch in My profile.
@@ -167,15 +167,16 @@ def process_report_reminder(
         by_user[item.user_id][item.group_id] = item
     requests = []
     for user_id, groups_by_id in sorted(by_user.items()):
-        ordered = sorted(groups_by_id.values(), key=lambda item: (item.group_name, item.group_id))
+        # Rule 11: by group name (case-insensitive, like the groups list), then id.
+        ordered = sorted(groups_by_id.values(), key=lambda item: (item.group_name.casefold(), item.group_id))
         ordered = ordered[:_MAX_GROUPS]
         # Rule 16: names and whether a draft exists, no report content.
         groups = [
-            {"name": item.group_name.strip()[:_NAME_LIMIT], "hasDraft": item.group_id in draft_ids}
+            {"name": clip_name(item.group_name, _NAME_LIMIT), "hasDraft": item.group_id in draft_ids}
             for item in ordered
         ]
         data = {
-            "recipientName": ordered[0].member_name.strip()[:_NAME_LIMIT],
+            "recipientName": clip_name(ordered[0].member_name, _NAME_LIMIT),
             "groups": groups,
             "weekStart": week_start.isoformat(),
         }

@@ -19,7 +19,7 @@ from membership_management.data.small_groups.conversation_notifications import (
 )
 from membership_management.data.small_groups.conversation_queries import watch_opt_out_user_ids_query
 from membership_management.data.small_groups.models import ReportStatus, SmallGroupReport
-from membership_management.notifications.deliveries import NotificationRequest, create_deliveries
+from membership_management.notifications.deliveries import NotificationRequest, clip_name, create_deliveries
 
 REPORT_SUBMITTED = "small_group_report.submitted"
 # The notifications/ category: the "Submitted reports" switch in My profile.
@@ -120,8 +120,8 @@ def process_report_submitted(
         return 0
     # Rule 12: no free text from the report, no member names; only these facts.
     data: dict[str, Any] = {
-        "submitterName": submitter.name.strip()[:_NAME_LIMIT],
-        "groupName": report.small_group.name.strip()[:_NAME_LIMIT],
+        "submitterName": clip_name(submitter.name, _NAME_LIMIT),
+        "groupName": clip_name(report.small_group.name, _NAME_LIMIT),
         "meetingDate": report.meeting_date.isoformat(),
         "held": report.held,
         "reason": "watcher",

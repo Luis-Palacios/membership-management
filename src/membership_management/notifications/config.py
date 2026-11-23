@@ -19,7 +19,8 @@ class NotificationSettings(BaseSettings):
     environment: Literal["local", "staging", "production"] = Field(validation_alias="ENVIRONMENT")
 
     # Kill switches, one per kind of email. Off: that kind writes no outbox rows (so its emails and
-    # its fast path never happen). With both off: no worker and no calls to auth-server at all.
+    # its fast path never happen). With all three off (these two and the reminder below): no worker
+    # and no calls to auth-server at all.
     conversation_emails_enabled: bool = False
     report_submitted_emails_enabled: bool = False
     # Weekly reminder to leaders whose group hasn't submitted this week's report. Off: the worker

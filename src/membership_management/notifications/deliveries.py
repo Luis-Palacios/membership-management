@@ -26,6 +26,19 @@ class NotificationRequest:
     not_after: datetime
 
 
+def clip_name(text: str, limit: int = 200) -> str:
+    """Trim `text` and cut it to `limit` UTF-16 code units, the way auth-server's Zod `max()` counts
+    (a code point above U+FFFF, such as an emoji, is two). Never splits a surrogate pair."""
+    out: list[str] = []
+    units = 0
+    for char in text.strip():
+        units += 2 if ord(char) > 0xFFFF else 1
+        if units > limit:
+            break
+        out.append(char)
+    return "".join(out)
+
+
 def create_deliveries(session: Session, source_event_id: int, requests: Sequence[NotificationRequest]) -> int:
     """Store the requests whose recipient hasn't turned their (category, channel) off. Inside the
     event's transaction; a retried event inserts nothing twice (unique per event, user, channel).
