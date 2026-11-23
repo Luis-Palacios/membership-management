@@ -11,8 +11,9 @@ __all__ = ["is_enabled", "set_enabled"]
 
 
 def set_enabled(session: Session, user_id: str, category: str, channel: str, *, enabled: bool) -> None:
-    """Upsert, also when turning it back on (the row keeps `updated_at` as the last change). Committed
-    here; turning it off also stops what is already queued (re-checked right before each send)."""
+    """Upsert, also when turning it back on (the row keeps `updated_at` as the last change). The caller
+    commits, so several switches change in one transaction; turning one off also stops what is
+    already queued (re-checked right before each send)."""
     statement = insert(NotificationPreference).values(
         user_id=user_id, category=category, channel=channel, enabled=enabled, updated_at=func.now()
     )
@@ -22,4 +23,3 @@ def set_enabled(session: Session, user_id: str, category: str, channel: str, *, 
             set_={"enabled": statement.excluded.enabled, "updated_at": statement.excluded.updated_at},
         )
     )
-    session.commit()

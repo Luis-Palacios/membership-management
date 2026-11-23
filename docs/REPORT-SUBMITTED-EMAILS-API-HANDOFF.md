@@ -51,5 +51,7 @@ Branch **`feature/report-submitted-emails`**. Each stage: `uv run ruff check .`,
   excluded); held vs not-held payloads; deleted report; per-category preference; head start; unknown
   type → dead; and the routes through `TestClient` (preferences GET/PUT shapes and 422s, fast path
   queued from both submit routes, nothing queued with the switch off).
+- PR #73 review: `set_enabled` no longer commits; `PUT /me/notification-preferences` commits once
+  after every key, so a request changing both switches is one transaction.
 - Production: turn on `REPORT_SUBMITTED_EMAILS_ENABLED` only once auth-server's `report.submitted`
   template is deployed.

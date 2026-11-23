@@ -113,8 +113,10 @@ def put_my_notification_preferences(
     # Any signed-in user, for every kind: it only concerns their own inbox (staff-app shows Submitted
     # reports only to the watch audience). Works while a kill switch is off too (staff-app hides the
     # switch then), so a choice made earlier is kept.
+    # One transaction for every key sent: both switches change, or neither does.
     for key, enabled in body.email.model_dump(exclude_unset=True).items():
         set_enabled(db, claims.sub, _EMAIL_CATEGORIES[key], "email", enabled=enabled)
+    db.commit()
     return _preferences(db, claims.sub)
 
 
