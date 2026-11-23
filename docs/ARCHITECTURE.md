@@ -234,7 +234,8 @@ keys (events live 30 days, entries 90).
   generic like `create_deliveries`) in the event's transaction, for exactly the recipients it decided
   (audience, Watching, throttle, never the submitter, reminder eligibility) and **before** any email
   preference: in-app has no switch. A kind writes entries only while its own flag AND
-  `IN_APP_NOTIFICATIONS_ENABLED` are on (default off). The flag keeps no worker running by itself.
+  `IN_APP_NOTIFICATIONS_ENABLED` are on (default off). On its own, the flag keeps the worker running
+  only for maintenance (the 90-day purge), with no calls to auth-server (`worker_enabled`).
 - **Routes** (all `/me`, any signed-in user, camelCase). `GET /me/notifications?limit=20&before={id}`
   → `{ items: [{ id, category, template, data, path, createdAt, readAt }], nextBefore }` (`limit`
   1-50, newest first, `nextBefore` null on the last page). `GET /me/notifications/unread-count` →

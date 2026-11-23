@@ -28,7 +28,8 @@ class NotificationSettings(BaseSettings):
     report_reminder_emails_enabled: bool = False
     # The in-app list (notifications spec, rule 3). A kind writes entries only when its own switch above
     # AND this one are on. Off: no entries, and staff-app hides the bell. It needs no INTERNAL_API_TOKEN
-    # and keeps no worker running by itself: entries ride on the kinds' events.
+    # Entries ride on the kinds' events; on its own it keeps the worker running only for the 90-day purge
+    # (`worker_enabled`), with no calls to auth-server.
     in_app_notifications_enabled: bool = False
 
     # The reminder's schedule, one per deployment for now (report-reminder-emails spec, rule 1).
@@ -63,7 +64,8 @@ class NotificationSettings(BaseSettings):
 
     @property
     def any_emails_enabled(self) -> bool:
-        """Whether the worker has anything to do: it runs (embedded or on its own) while any is on."""
+        """Whether any email kind is on: the worker then processes events and sends deliveries (and
+        calls auth-server). Whether the worker runs at all is `worker_enabled`."""
         return (
             self.conversation_emails_enabled
             or self.report_submitted_emails_enabled

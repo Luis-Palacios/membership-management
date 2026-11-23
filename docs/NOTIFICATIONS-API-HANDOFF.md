@@ -58,6 +58,9 @@ Branch **`feature/notifications`**. Each stage: `uv run ruff check .`, `uv run r
 - Worker gate (review fix): the worker runs while `worker_enabled` (any email switch **or** the in-app
   flag), so rule 16's purge keeps running with every kind off. In that case `run_once` skips the
   auth-server part (watchers, events, deliveries) and does only expiry and maintenance, as before.
+- PR #77 bot review: approved, with two stale comments (the `in_app_notifications_enabled` comment in
+  `notifications/config.py` and `docs/ARCHITECTURE.md`) still saying the flag keeps no worker running;
+  both updated to match `worker_enabled`.
 - The reminder entry's `small_group_ids` holds **every** group the person owes (sorted by id), not only
   the at most 50 the email lists, so rule 14 clears it only when all of them have submitted.
 - Rule 7: no backend change. The Watching switches' "disabled when every email switch is off" logic is
