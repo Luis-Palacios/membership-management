@@ -108,3 +108,18 @@ def mark_all_entries_read(session: Session, user_id: str) -> int:
     marked = len(result.all())
     session.commit()
     return marked
+
+
+def mark_subjects_read(session: Session, user_id: str, subject_keys: Sequence[str]) -> int:
+    """Rules 13 and 14: set `read_at` on the user's unread entries about these subjects, in the caller's
+    transaction (never commits). Returns how many were marked."""
+    if not subject_keys:
+        return 0
+    n = UserNotification
+    result = session.execute(
+        update(n)
+        .where(n.user_id == user_id, n.subject_key.in_(subject_keys), n.read_at.is_(None))
+        .values(read_at=func.now())
+        .returning(n.id)
+    )
+    return len(result.all())

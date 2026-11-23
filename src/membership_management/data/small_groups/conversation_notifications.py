@@ -19,6 +19,7 @@ from membership_management.data.small_groups.access_rules import (
     small_group_scope_for,
 )
 from membership_management.data.small_groups.conversation_queries import (
+    conversation_subject_key,
     first_comment_side_query,
     group_leader_user_ids_query,
     participant_user_ids_query,
@@ -262,7 +263,7 @@ def process_comment_added(
                     template=template,
                     data=data,
                     path=path,
-                    subject_key=f"report_conversation:{conversation.id}",
+                    subject_key=conversation_subject_key(conversation.id),
                 )
                 for user_id, data in data_by_user.items()
             ],

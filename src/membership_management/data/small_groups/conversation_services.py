@@ -11,6 +11,7 @@ from membership_management.data.small_groups.conversation_queries import (
     badge_query,
     comment_query,
     conversation_query,
+    conversation_subject_key,
     inbox_counts_query,
     inbox_rows_query,
     inbox_total_query,
@@ -51,6 +52,7 @@ from membership_management.data.small_groups.results import (
     PersonKey,
 )
 from membership_management.notifications.config import notification_settings
+from membership_management.notifications.entries import mark_subjects_read
 
 # What a thread is about: a member's or a guest's attendance row (`("member"|"guest", id)`) or a report
 # section.
@@ -266,8 +268,11 @@ def _upsert_read(session: Session, conversation_id: int, user_id: str, at: datet
 
 
 def mark_read(session: Session, conversation_id: int, user_id: str) -> None:
-    """Upsert the caller's `last_read_at` to now."""
+    """Upsert the caller's `last_read_at` to now. While the in-app list is on, also marks the caller's
+    entries about this thread read, in the same transaction (notifications spec, rule 13)."""
     _upsert_read(session, conversation_id, user_id, _db_now(session))
+    if notification_settings.in_app_notifications_enabled:
+        mark_subjects_read(session, user_id, [conversation_subject_key(conversation_id)])
     session.commit()
 
 
@@ -563,7 +568,10 @@ def mark_all_read(
     its `last_activity_at`. Returns how many were unread (what leaves the *Unread* tab)."""
     if group_ids is not None and not group_ids:
         return 0
-    marked = session.scalar(mark_all_read_query(group_ids, user_id, small_group_id)) or 0
+    query = mark_all_read_query(
+        group_ids, user_id, small_group_id, mark_entries=notification_settings.in_app_notifications_enabled
+    )
+    marked = session.scalar(query) or 0
     session.commit()
     return marked
 

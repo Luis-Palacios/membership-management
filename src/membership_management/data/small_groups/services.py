@@ -73,6 +73,7 @@ from membership_management.data.small_groups.report_items import (
     tagged_people,
     text_to_segments,
 )
+from membership_management.data.small_groups.report_reminder_notifications import clear_reminder_entries
 from membership_management.data.small_groups.report_submitted_notifications import report_submitted_event
 from membership_management.data.small_groups.results import (
     ActiveLeaderRow,
@@ -774,7 +775,7 @@ def submit_report(
     report.submitted_by_member_id = caller_member_id
     report.submitted_at = func.now()
     report.version += 1
-    event_id = _add_submitted_event(session, report)
+    event_id = _on_report_submitted(session, report)
     session.commit()
     return report, event_id
 
@@ -1504,6 +1505,15 @@ def _add_submitted_event(session: Session, report: SmallGroupReport) -> int | No
     return event.id
 
 
+def _on_report_submitted(session: Session, report: SmallGroupReport) -> int | None:
+    """What a report becoming submitted does in its own transaction: clears the reminder entries it
+    completes (notifications spec, rule 14, while the in-app list is on), then writes the submitted
+    event. Returns the event's id, if one was written."""
+    if notification_settings.in_app_notifications_enabled:
+        clear_reminder_entries(session, report.small_group_id, church_sunday(report.meeting_date))
+    return _add_submitted_event(session, report)
+
+
 def _commit_report_or_raise_conflict(
     session: Session,
     small_group_id: int,
@@ -1517,7 +1527,7 @@ def _commit_report_or_raise_conflict(
     transaction; its flush is inside the `try`, since that's where the race can show. Returns the
     event's id, if one was written."""
     try:
-        event_id = _add_submitted_event(session, submitted) if submitted is not None else None
+        event_id = _on_report_submitted(session, submitted) if submitted is not None else None
         session.commit()
     except IntegrityError as exc:
         session.rollback()

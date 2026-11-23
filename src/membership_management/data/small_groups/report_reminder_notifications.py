@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
 
-from sqlalchemy import Select, exists, select
+from sqlalchemy import Select, exists, select, text
 from sqlalchemy.orm import Session
 
 from membership_management.data.members.models import Member, MemberStatus
@@ -219,3 +219,40 @@ def process_report_reminder(
     ):
         create_entries(session, event.id, entries)
     return create_deliveries(session, event.id, requests)
+
+
+# Rule 14, as one statement: the reminder entries for this church week that name this group and whose
+# groups have now ALL got a submitted report dated in the week (the same test as `_leaders_to_remind_query`).
+_CLEAR_REMINDERS = text("""
+    UPDATE user_notifications n SET read_at = now()
+    WHERE n.subject_key = :subject_key
+      AND n.read_at IS NULL
+      AND :group_id = ANY (n.small_group_ids)
+      AND NOT EXISTS (
+          SELECT 1 FROM unnest(n.small_group_ids) AS owed(group_id)
+          WHERE NOT EXISTS (
+              SELECT 1 FROM small_group_reports r
+              WHERE r.small_group_id = owed.group_id
+                AND r.status = 'submitted'
+                AND r.meeting_date BETWEEN :week_start AND :week_end
+          )
+      )
+    RETURNING n.id
+""")
+
+
+def clear_reminder_entries(session: Session, small_group_id: int, week_start: date) -> int:
+    """Rule 14, in the submit transaction: a report for `small_group_id` was just submitted in the church
+    week starting `week_start`. Marks read any reminder entry for that week whose groups have now all
+    submitted. Flushes first, so the new report counts. Doesn't commit. Returns how many were marked."""
+    session.flush()
+    result = session.execute(
+        _CLEAR_REMINDERS,
+        {
+            "subject_key": reminder_subject_key(week_start),
+            "group_id": small_group_id,
+            "week_start": week_start,
+            "week_end": week_start + timedelta(days=6),
+        },
+    )
+    return len(result.all())

@@ -1,12 +1,13 @@
 from collections.abc import Collection
 from datetime import datetime
 
-from sqlalchemy import ColumnElement, Select, String, and_, exists, func, literal, or_, select, true
+from sqlalchemy import ColumnElement, Select, String, and_, exists, func, literal, or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import aliased, joinedload
 
 from membership_management.data.guests.models import Guest
 from membership_management.data.members.models import Member
+from membership_management.data.notifications.models import UserNotification
 from membership_management.data.small_groups.models import (
     ReportConversation,
     ReportConversationComment,
@@ -267,10 +268,26 @@ def badge_query(group_ids: frozenset[int] | None, user_id: str, my_side: str) ->
     return select(needs_reply.scalar_subquery().label("needs_my_reply"), has_unread.label("has_unread"))
 
 
-def mark_all_read_query(group_ids: frozenset[int] | None, user_id: str, small_group_id: int | None) -> Select:
+CONVERSATION_SUBJECT_PREFIX = "report_conversation:"
+
+
+def conversation_subject_key(conversation_id: int) -> str:
+    """The `user_notifications.subject_key` of a thread's entries (notifications spec, rule 13)."""
+    return f"{CONVERSATION_SUBJECT_PREFIX}{conversation_id}"
+
+
+def mark_all_read_query(
+    group_ids: frozenset[int] | None,
+    user_id: str,
+    small_group_id: int | None,
+    *,
+    mark_entries: bool = False,
+) -> Select:
     """Rule 17, *Mark all read*, as one statement: every thread in the caller's audience (and group),
     any status, read up to its `last_activity_at` (never `now()`, never backwards). Selects how many
     of them were unread before (the CTEs see the same snapshot, so the count and the write agree).
+    With `mark_entries` (the in-app list is on), the caller's unread in-app entries about those same
+    threads are marked read in the same statement (notifications spec, rule 13).
 
     Every thread is marked, not only the unread ones: a thread whose newest comment was deleted isn't
     unread but its mark still has to pass that comment (Part 2's throttle reads it).
@@ -304,7 +321,24 @@ def mark_all_read_query(group_ids: frozenset[int] | None, user_id: str, small_gr
     )
     # A data-modifying CTE always runs to completion, whether or not the outer query reads it.
     marked = upsert.returning(ReportConversationRead.conversation_id).cte("marked")
-    return select(func.count()).select_from(target_cte).where(target_cte.c.was_unread).add_cte(marked)
+    statement = select(func.count()).select_from(target_cte).where(target_cte.c.was_unread).add_cte(marked)
+    if mark_entries:
+        entry = UserNotification
+        entries_read = (
+            update(entry)
+            .where(
+                entry.user_id == user_id,
+                entry.read_at.is_(None),
+                entry.subject_key.in_(
+                    select(func.concat(CONVERSATION_SUBJECT_PREFIX, target_cte.c.conversation_id))
+                ),
+            )
+            .values(read_at=func.now())
+            .returning(entry.id)
+            .cte("entries_read")
+        )
+        statement = statement.add_cte(entries_read)
+    return statement
 
 
 def inbox_total_query(
