@@ -27,7 +27,7 @@ Branch **`feature/notifications-push`**. Each stage: `uv run ruff check .`, `uv 
 | 2. `create_entries` returns the id and unread count per user | ✅ | `fdb503b` |
 | 3. A `push` request per recipient in the three consumers | ✅ | `bbbf237` |
 | 4. Sender: 404 `no_push_subscription` → `dead` (info) | ✅ | `7b78622` |
-| 5. Preferences routes (`push`, `availablePush`); `docs/ARCHITECTURE.md`, `CLAUDE.md` | ⬜ | |
+| 5. Preferences routes (`push`, `availablePush`); `docs/ARCHITECTURE.md`, `CLAUDE.md` | ✅ | `719d42f` |
 
 ## Plan per stage
 
