@@ -14,6 +14,6 @@ class NotificationPreference(MemberManagementBase):
 
     user_id: Mapped[str] = mapped_column(String, primary_key=True)  # auth-server user id, no FK
     category: Mapped[str] = mapped_column(String(32), primary_key=True)  # report_conversation
-    channel: Mapped[str] = mapped_column(String(16), primary_key=True)  # email
+    channel: Mapped[str] = mapped_column(String(16), primary_key=True)  # email | push
     enabled: Mapped[bool] = mapped_column(Boolean)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

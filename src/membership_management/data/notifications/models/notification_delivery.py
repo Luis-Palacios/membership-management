@@ -46,7 +46,7 @@ class NotificationDelivery(ClaimColumns, MemberManagementBase):
     source_event_id: Mapped[int] = mapped_column(BigInteger)
     recipient_user_id: Mapped[str] = mapped_column(String)  # auth-server user id, no FK
     category: Mapped[str] = mapped_column(String(32))  # report_conversation
-    channel: Mapped[str] = mapped_column(String(16))  # email
+    channel: Mapped[str] = mapped_column(String(16))  # email | push
     template: Mapped[str] = mapped_column(String(64))
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

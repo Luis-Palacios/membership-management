@@ -215,7 +215,8 @@ auth-server's side: `auth-server/docs/REPORT-CONVERSATIONS-EMAIL-HANDOFF.md`,
 - **Routes.** `GET /me/notification-preferences` → `{ email: { reportConversation, reportSubmitted, reportReminder },
   available: { reportConversation, reportSubmitted, reportReminder } }` (any signed-in user;
   `available` is each kill switch, so staff-app can hide a switch). `PUT` takes `{ email: { …any
-  subset } }` (unknown keys and null 422) and returns the same shape; Part 2 adds `push` and
+  subset } }` (unknown keys and a null value inside a channel are 422; a null or missing channel is
+  left as it is) and returns the same shape; Part 2 adds `push` and
   `availablePush` (below). Watching is shared by the
   first two kinds only; the reminder switch is independent of it.
   `GET /me/watched-groups` → `{ items: [{ smallGroupId, name, closed, watching }] }` (every group,

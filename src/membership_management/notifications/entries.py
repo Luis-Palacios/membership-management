@@ -78,7 +78,9 @@ def create_entries(
     ).all()
     ids = {user_id: entry_id for user_id, entry_id in id_rows}
     unread_rows = session.execute(
-        select(n.user_id, func.count()).where(n.user_id.in_(ids), n.read_at.is_(None)).group_by(n.user_id)
+        select(n.user_id, func.count())
+        .where(n.user_id.in_(list(ids)), n.read_at.is_(None))
+        .group_by(n.user_id)
     ).all()
     unread = {user_id: count for user_id, count in unread_rows}
     return {user_id: EntryResult(entry_id, unread.get(user_id, 0)) for user_id, entry_id in ids.items()}

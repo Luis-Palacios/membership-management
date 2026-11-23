@@ -83,3 +83,20 @@ Branch **`feature/notifications-push`**. Each stage: `uv run ruff check .`, `uv 
   404 `no_push_subscription` (info) / 503 `send_failed` / 404 `recipient_unavailable` / 422, and the
   preferences routes through `TestClient` (GET shape, PUT email only, PUT push only, null and unknown
   key 422, `{}`, `availablePush` all false with the push flag off). Rows created were deleted.
+
+### Review (spec-reviewer, Opus): no blockers. Fixed on the branch
+
+- **A flaky push service stalled the whole send batch.** A transient stopped the batch (built for
+  "auth-server is down"), but for push, 503 `send_failed` means one person's push service failed. Now
+  `_one_recipient_only` (`notifications/sending.py`): a push delivery answered 503 `send_failed` is
+  recorded as transient and the batch goes on. Any other transient (auth-server unreachable or its
+  own 5xx, Resend for email) still stops the batch.
+- `docs/ARCHITECTURE.md`: a null channel in the PUT is left as it is; only a null inside a channel is
+  422. Comments on `channel` now say `email | push`; `in_(list(ids))`; the `availablePush` comment
+  points the *This device* row at auth-server's `GET /api/push/config` (rule 22).
+- Kept: `badgeCount: 0` while in-app is off (the contract is an int ≥ 0, and the unread-count route
+  says 0 then too).
+- For auth-server (Part 2 step 3): any 404 other than `no_push_subscription` / `recipient_unavailable`
+  is logged as "route not deployed" and retried, so the push branch must not answer 404
+  `push_disabled`. And this side gives up after 5 s (`TIMEOUT_SECONDS`): the whole fan-out over a
+  person's devices must answer within that.

@@ -19,7 +19,7 @@ from membership_management.data.claiming import (
 )
 from membership_management.data.notifications.models import NotificationDelivery
 from membership_management.notifications.deliveries import is_enabled
-from membership_management.notifications.sender import Sender
+from membership_management.notifications.sender import Sender, SendOutcome
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +87,7 @@ def send_due_deliveries(
                 session.commit()
                 continue
             payload = dict(delivery.payload)
+            channel = delivery.channel
         try:
             outcome = sender.send(payload, idempotency_key(row.id))
         except Exception as exc:
@@ -104,13 +105,22 @@ def send_due_deliveries(
                 ok = fenced_update(session, DELIVERIES, row, status="dead", last_error=error)
             else:
                 ok = record_transient(session, DELIVERIES, row, outcome.error or "transient")
-                untried = rows[index + 1 :]
-                stats.released += sum(release(session, DELIVERIES, r) for r in untried)
+                if not _one_recipient_only(channel, outcome):
+                    untried = rows[index + 1 :]
+                    stats.released += sum(release(session, DELIVERIES, r) for r in untried)
             _count(stats, outcome.status, ok)
             session.commit()
-        if outcome.status == "transient":
+        if outcome.status == "transient" and not _one_recipient_only(channel, outcome):
             break
     return stats
+
+
+def _one_recipient_only(channel: str, outcome: SendOutcome) -> bool:
+    """A transient that only concerns this delivery's recipient, so the rest of the batch goes on: for
+    push, auth-server answered 503 send_failed because one of that person's push services (FCM, Mozilla,
+    Apple, ...) was down or slow. Any other transient (auth-server unreachable, 5xx of its own, Resend
+    failing for email) is the dependency being down, which stops the batch as before."""
+    return channel == "push" and outcome.error == "503 send_failed"
 
 
 def _count(stats: SendStats, field: str, ok: bool) -> None:

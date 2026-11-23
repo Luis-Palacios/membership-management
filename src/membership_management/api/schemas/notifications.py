@@ -34,7 +34,8 @@ class NotificationPreferencesSchema(CamelModel):
     # The caller's push switches (rule 19: default on, no stored row = enabled).
     push: PushSwitchesSchema
     # Per kind: the kind's switch above AND PUSH_NOTIFICATIONS_ENABLED. staff-app hides a push switch
-    # (and the *This device* row, when all three are false) while its value is false.
+    # while its value is false. The *This device* row follows auth-server's `GET /api/push/config`
+    # (notifications spec, rule 22), not this.
     available_push: PushSwitchesSchema
 
 
