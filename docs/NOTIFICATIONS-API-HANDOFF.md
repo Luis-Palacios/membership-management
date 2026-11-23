@@ -54,9 +54,10 @@ Branch **`feature/notifications`**. Each stage: `uv run ruff check .`, `uv run r
   index really is descending in the database.
 - Gating (rule 3): entries are written only when the kind's flag AND `IN_APP_NOTIFICATIONS_ENABLED` are
   on, checked inside each consumer (an event written while the kind was on but processed after it was
-  turned off writes no entry, though its emails still go). The worker gate `any_emails_enabled` needed
-  no change: a kind on with in-app on already keeps the worker running; in-app on with every kind off
-  writes nothing and runs no worker. The flag needs no `INTERNAL_API_TOKEN`.
+  turned off writes no entry, though its emails still go). The flag needs no `INTERNAL_API_TOKEN`.
+- Worker gate (review fix): the worker runs while `worker_enabled` (any email switch **or** the in-app
+  flag), so rule 16's purge keeps running with every kind off. In that case `run_once` skips the
+  auth-server part (watchers, events, deliveries) and does only expiry and maintenance, as before.
 - The reminder entry's `small_group_ids` holds **every** group the person owes (sorted by id), not only
   the at most 50 the email lists, so rule 14 clears it only when all of them have submitted.
 - Rule 7: no backend change. The Watching switches' "disabled when every email switch is off" logic is
@@ -73,12 +74,18 @@ Branch **`feature/notifications`**. Each stage: `uv run ruff check .`, `uv run r
   `meeting_date` in the week, held or not). A **church-wide no meeting** creates its reports outside
   this path, so a reminder entry is not auto-cleared by one (spec rule 14 says "when a report is
   submitted"; the reminder isn't sent for such a week anyway). Not done: say so if it should be.
+  Also accepted (rare): editing an already-submitted report's `meeting_date` into an owed week, and a
+  group closed after the reminder, leave that reminder unread until the 90-day purge.
+- Rule 14 race (review fix): `clear_reminder_entries` locks the matching entries `FOR UPDATE` (id
+  order) before the check, so two of one person's groups submitted at the same moment can't each miss
+  the other's report under READ COMMITTED; the second waits and its check sees both.
 - `POST /me/notifications/{id}/read` and `read-all` use one UPDATE (idempotent, `read_at` never moves
   once set). Rate limits: the router default on the list and the count; `120/minute` on
   `{id}/read`, `30/minute` on `read-all`.
 - Purge: `purge_entries` (`worker/maintenance.py`) deletes by `created_at` older than 90 days in
   batches of 1000 (at most 10 per run), oldest id first; reported as `purged["notifications"]`. It
-  runs every sweep whatever the flag says. No extra index on `created_at`: ids follow it.
+  runs every sweep whatever the flag says. No index on `created_at`: a sweep with fewer than a batch
+  of old rows scans the table, fine at this size.
 - No tests directory pattern exists for the API (only `tests/test_check_hook.py`), so none were added.
   Checks were scratch scripts (not committed) against the local Postgres with `TestClient` and a claims
   override: flag off (count `{enabled:false,unread:0}`, the others 404 `notifications_disabled`), paging

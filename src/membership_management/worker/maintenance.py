@@ -72,7 +72,8 @@ ENTRIES_RETENTION = timedelta(days=90)
 
 def purge_entries(session: Session) -> int:
     """In-app entries older than the retention, one bounded batch (committed by the caller). Oldest
-    first by id, which follows `created_at`, so the scan stops at the first young row."""
+    first by id. There is no index on `created_at`, so a sweep with fewer than a batch of old rows
+    walks the whole table; fine at this size (90 days of entries), add the index if it grows."""
     n = UserNotification
     old = (
         select(n.id)

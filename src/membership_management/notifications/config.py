@@ -70,6 +70,12 @@ class NotificationSettings(BaseSettings):
             or self.report_reminder_emails_enabled
         )
 
+    @property
+    def worker_enabled(self) -> bool:
+        """Whether the worker runs (embedded or on its own): while any email switch is on, or the in-app
+        list is, since its maintenance purges entries after 90 days (notifications spec, rule 16)."""
+        return self.any_emails_enabled or self.in_app_notifications_enabled
+
     @field_validator("church_timezone", mode="after")
     @classmethod
     def validate_church_timezone(cls, value: str) -> str:

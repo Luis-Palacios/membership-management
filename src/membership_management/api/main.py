@@ -59,7 +59,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # its own process.
     stop_worker = threading.Event()
     worker: asyncio.Task[None] | None = None
-    if notification_settings.any_emails_enabled and api_settings.embedded_worker:
+    if notification_settings.worker_enabled and api_settings.embedded_worker:
         worker = asyncio.create_task(
             anyio.to_thread.run_sync(run_forever, stop_worker, limiter=anyio.CapacityLimiter(1))
         )

@@ -21,6 +21,7 @@ from membership_management.notifications.auth_server import (
     AuthServerUnavailable,
     users_with_permissions,
 )
+from membership_management.notifications.config import notification_settings
 from membership_management.notifications.sender import Sender
 from membership_management.notifications.sending import SendStats, send_due_deliveries
 from membership_management.worker.events import EventStats, process_due_events
@@ -95,12 +96,15 @@ def run_once(
         logger.exception("emails: the report reminder trigger failed")
 
     # Dependencies first, then claim: the possible watchers are needed to process anything, and if
-    # auth-server can't be reached, nothing is claimed from either table this sweep.
-    try:
-        watchers = users_with_permissions(WATCHER_PERMISSIONS)
-    except AuthServerUnavailable:
-        report.reachable = False
-        watchers = None
+    # auth-server can't be reached, nothing is claimed from either table this sweep. With every email
+    # switch off (the worker runs only for the in-app purge), there is no token and nothing to send:
+    # skip straight to maintenance, as before the in-app list existed.
+    watchers = None
+    if notification_settings.any_emails_enabled:
+        try:
+            watchers = users_with_permissions(WATCHER_PERMISSIONS)
+        except AuthServerUnavailable:
+            report.reachable = False
 
     if watchers is not None:
         for _ in range(MAX_BATCHES):

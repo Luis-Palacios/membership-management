@@ -241,18 +241,33 @@ _CLEAR_REMINDERS = text("""
 """)
 
 
+# Locks the entries `_CLEAR_REMINDERS` may touch, in id order, before it runs. Without it, two reports
+# of the same person's groups submitted at once each see only their own report under READ COMMITTED,
+# and the entry is never cleared. With it, the second transaction waits for the first to commit, and its
+# next statement (a fresh snapshot) sees both reports.
+_LOCK_REMINDERS = text("""
+    SELECT n.id FROM user_notifications n
+    WHERE n.subject_key = :subject_key
+      AND n.read_at IS NULL
+      AND :group_id = ANY (n.small_group_ids)
+    ORDER BY n.id
+    FOR UPDATE
+""")
+
+
 def clear_reminder_entries(session: Session, small_group_id: int, week_start: date) -> int:
     """Rule 14, in the submit transaction: a report for `small_group_id` was just submitted in the church
     week starting `week_start`. Marks read any reminder entry for that week whose groups have now all
-    submitted. Flushes first, so the new report counts. Doesn't commit. Returns how many were marked."""
+    submitted. Flushes first, so the new report counts, and locks the entries first (see
+    `_LOCK_REMINDERS`). Doesn't commit. Returns how many were marked."""
     session.flush()
-    result = session.execute(
-        _CLEAR_REMINDERS,
-        {
-            "subject_key": reminder_subject_key(week_start),
-            "group_id": small_group_id,
-            "week_start": week_start,
-            "week_end": week_start + timedelta(days=6),
-        },
-    )
-    return len(result.all())
+    params = {
+        "subject_key": reminder_subject_key(week_start),
+        "group_id": small_group_id,
+        "week_start": week_start,
+        "week_end": week_start + timedelta(days=6),
+    }
+    locked = session.execute(_LOCK_REMINDERS, {k: params[k] for k in ("subject_key", "group_id")}).all()
+    if not locked:
+        return 0
+    return len(session.execute(_CLEAR_REMINDERS, params).all())
