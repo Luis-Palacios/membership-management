@@ -71,18 +71,16 @@ def create_entries(
     )
     # One read for new and already-stored rows alike (our own insert is visible in this transaction).
     n = UserNotification
-    ids = dict(
-        session.execute(
-            select(n.user_id, n.id).where(
-                n.source_event_id == source_event_id, n.user_id.in_({r.user_id for r in requests})
-            )
-        ).tuples()
-    )
-    unread = dict(
-        session.execute(
-            select(n.user_id, func.count()).where(n.user_id.in_(ids), n.read_at.is_(None)).group_by(n.user_id)
-        ).tuples()
-    )
+    id_rows = session.execute(
+        select(n.user_id, n.id).where(
+            n.source_event_id == source_event_id, n.user_id.in_({r.user_id for r in requests})
+        )
+    ).all()
+    ids = {user_id: entry_id for user_id, entry_id in id_rows}
+    unread_rows = session.execute(
+        select(n.user_id, func.count()).where(n.user_id.in_(ids), n.read_at.is_(None)).group_by(n.user_id)
+    ).all()
+    unread = {user_id: count for user_id, count in unread_rows}
     return {user_id: EntryResult(entry_id, unread.get(user_id, 0)) for user_id, entry_id in ids.items()}
 
 

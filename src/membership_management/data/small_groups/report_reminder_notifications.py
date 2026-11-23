@@ -27,7 +27,8 @@ from membership_management.data.small_groups.models import (
 )
 from membership_management.notifications.config import notification_settings
 from membership_management.notifications.deliveries import NotificationRequest, clip_name, create_deliveries
-from membership_management.notifications.entries import EntryRequest, create_entries
+from membership_management.notifications.entries import EntryRequest, EntryResult, create_entries
+from membership_management.notifications.push import push_requests
 
 REMINDER_DUE = "small_group_report.reminder_due"
 # The notifications/ category: the "Weekly report reminders" switch in My profile.
@@ -213,11 +214,15 @@ def process_report_reminder(
                 small_group_ids=sorted(groups_by_id),
             )
         )
+    stored: dict[str, EntryResult] = {}
     if (
         notification_settings.in_app_notifications_enabled
         and notification_settings.report_reminder_emails_enabled
     ):
-        create_entries(session, event.id, entries)
+        stored = create_entries(session, event.id, entries)
+    # Push (rule 5): one more delivery per recipient, same template, data and path.
+    if notification_settings.push_enabled_for(notification_settings.report_reminder_emails_enabled):
+        requests += push_requests(requests, stored)
     return create_deliveries(session, event.id, requests)
 
 
