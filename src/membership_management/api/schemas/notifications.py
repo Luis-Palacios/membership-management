@@ -19,6 +19,11 @@ class EmailSwitchesSchema(CamelModel):
     report_reminder: bool
 
 
+class PushSwitchesSchema(EmailSwitchesSchema):
+    """One value per kind of push, same keys and categories as the email switches (notifications spec,
+    rule 24). Its own class so the generated API types name it."""
+
+
 class NotificationPreferencesSchema(CamelModel):
     # The caller's switches (default on: no stored row = enabled).
     email: EmailSwitchesSchema
@@ -26,6 +31,11 @@ class NotificationPreferencesSchema(CamelModel):
     # REPORT_REMINDER_EMAILS_ENABLED): staff-app hides a switch while its value is false, and the
     # Watching switches while both of the first two are.
     available: EmailSwitchesSchema
+    # The caller's push switches (rule 19: default on, no stored row = enabled).
+    push: PushSwitchesSchema
+    # Per kind: the kind's switch above AND PUSH_NOTIFICATIONS_ENABLED. staff-app hides a push switch
+    # (and the *This device* row, when all three are false) while its value is false.
+    available_push: PushSwitchesSchema
 
 
 class EmailSwitchesUpdateSchema(CamelModel):
@@ -46,10 +56,18 @@ class EmailSwitchesUpdateSchema(CamelModel):
         return value
 
 
+class PushSwitchesUpdateSchema(EmailSwitchesUpdateSchema):
+    """Any subset of the push switches, with the email ones' rules."""
+
+
 class NotificationPreferencesUpdateSchema(CamelModel):
+    """Any subset of either channel, so a staff-app that only knows `email` keeps working. A channel left
+    out (or null) keeps its values."""
+
     model_config = ConfigDict(extra="forbid")
 
-    email: EmailSwitchesUpdateSchema
+    email: EmailSwitchesUpdateSchema | SkipJsonSchema[None] = None
+    push: PushSwitchesUpdateSchema | SkipJsonSchema[None] = None
 
 
 class WatchedGroupSchema(CamelModel):

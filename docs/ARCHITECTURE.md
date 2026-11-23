@@ -215,7 +215,8 @@ auth-server's side: `auth-server/docs/REPORT-CONVERSATIONS-EMAIL-HANDOFF.md`,
 - **Routes.** `GET /me/notification-preferences` → `{ email: { reportConversation, reportSubmitted, reportReminder },
   available: { reportConversation, reportSubmitted, reportReminder } }` (any signed-in user;
   `available` is each kill switch, so staff-app can hide a switch). `PUT` takes `{ email: { …any
-  subset } }` (unknown keys and null 422) and returns the same shape. Watching is shared by the
+  subset } }` (unknown keys and null 422) and returns the same shape; Part 2 adds `push` and
+  `availablePush` (below). Watching is shared by the
   first two kinds only; the reminder switch is independent of it.
   `GET /me/watched-groups` → `{ items: [{ smallGroupId, name, closed, watching }] }` (every group,
   open first) and `PUT /small-groups/{id}/watch` `{ watching }` → `{ smallGroupId, watching }`, both
@@ -249,6 +250,30 @@ keys (events live 30 days, entries 90).
   week whose groups have now all submitted (rule 14, `clear_reminder_entries`).
 - **Purge.** The worker's maintenance deletes entries older than 90 days by `created_at`, in bounded
   batches (`purge_entries`, `purged["notifications"]` in the log line).
+
+## Notifications, Part 2: push (built)
+
+Spec `docs/specs/notifications.md` (workspace repo, Part 2, step 4); this side:
+`docs/PUSH-NOTIFICATIONS-API-HANDOFF.md`. auth-server owns subscriptions and the fan-out to devices.
+
+- **Flag.** `PUSH_NOTIFICATIONS_ENABLED` (default off, needs `INTERNAL_API_TOKEN`). A kind sends push
+  only while its own flag AND this one are on (`NotificationSettings.push_enabled_for`). No worker
+  change: push only exists while a kind flag is on, which already runs the worker.
+- **One more delivery per recipient.** Each consumer decides recipients once; `notifications/push.py`
+  (`push_requests`) turns its email requests into `channel = "push"` ones (same template, data, path),
+  and `create_deliveries` applies the per-`(user, category, channel)` preference (no row = enabled) and
+  stores them next to the email rows (unique per event, user and channel). The stored payload is the
+  envelope auth-server receives: `{ recipientUserId, template, data, path, channel: "push",
+  notificationId, badgeCount }`.
+- **`notificationId` and `badgeCount`.** `create_entries` returns each recipient's entry id and unread
+  count in the event's transaction (a retried event reads the existing rows back). `notificationId` is
+  null and `badgeCount` 0 while in-app is off (no entries exist).
+- **Sender.** 404 `no_push_subscription` → `dead`, logged at info (no device left is normal); 503
+  `send_failed` is a transient like any 5xx. The sender and the claim path are channel-agnostic.
+- **Preferences.** `GET /me/notification-preferences` also returns `push: { reportConversation,
+  reportSubmitted, reportReminder }` (same categories as email, `channel = "push"`) and
+  `availablePush` (each kind's flag AND the push flag). `PUT` takes any subset under `email` and/or
+  `push`; an older client sending only `email` works. No migration (`channel` is a plain string).
 
 ## Guests and guest groups (built)
 

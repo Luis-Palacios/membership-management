@@ -20,6 +20,7 @@ from membership_management.api.schemas.notifications import (
     NotificationSchema,
     NotificationsMarkedSchema,
     NotificationsPageSchema,
+    PushSwitchesSchema,
     UnreadCountSchema,
     WatchedGroupSchema,
     WatchedGroupsSchema,
@@ -96,14 +97,24 @@ _EMAIL_CATEGORIES = {
 
 
 def _preferences(db: MembersSessionDep, user_id: str) -> NotificationPreferencesSchema:
+    s = notification_settings
     return NotificationPreferencesSchema(
         email=EmailSwitchesSchema(
             **{key: is_enabled(db, user_id, category, "email") for key, category in _EMAIL_CATEGORIES.items()}
         ),
         available=EmailSwitchesSchema(
-            report_conversation=notification_settings.conversation_emails_enabled,
-            report_submitted=notification_settings.report_submitted_emails_enabled,
-            report_reminder=notification_settings.report_reminder_emails_enabled,
+            report_conversation=s.conversation_emails_enabled,
+            report_submitted=s.report_submitted_emails_enabled,
+            report_reminder=s.report_reminder_emails_enabled,
+        ),
+        push=PushSwitchesSchema(
+            **{key: is_enabled(db, user_id, category, "push") for key, category in _EMAIL_CATEGORIES.items()}
+        ),
+        # Rule 3: a kind sends push only while its own flag and the push flag are both on.
+        available_push=PushSwitchesSchema(
+            report_conversation=s.push_enabled_for(s.conversation_emails_enabled),
+            report_submitted=s.push_enabled_for(s.report_submitted_emails_enabled),
+            report_reminder=s.push_enabled_for(s.report_reminder_emails_enabled),
         ),
     )
 
@@ -111,7 +122,8 @@ def _preferences(db: MembersSessionDep, user_id: str) -> NotificationPreferences
 @router.get(
     "/notification-preferences",
     name="get_my_notification_preferences",
-    description="The caller's email switch per kind of email, and which kinds the server sends at all",
+    description="The caller's email and push switch per kind, and which kinds the server sends at all "
+    "(available, availablePush)",
 )
 def get_my_notification_preferences(
     claims: CurrentClaimsDep, db: MembersSessionDep
@@ -122,7 +134,7 @@ def get_my_notification_preferences(
 @router.put(
     "/notification-preferences",
     name="set_my_notification_preferences",
-    description="Turn any of the caller's email switches on or off (also stops ones already queued); "
+    description="Turn any of the caller's email or push switches on or off (also stops ones already queued); "
     "keys left out keep their value",
     dependencies=[Depends(rate_limit("20/minute", scope="set_my_notification_preferences"))],
 )
@@ -133,8 +145,11 @@ def put_my_notification_preferences(
     # reports only to the watch audience, Weekly report reminders only to leaders). Works while a kill
     # switch is off too (staff-app hides the switch then), so a choice made earlier is kept.
     # One transaction for every key sent: every switch changes, or none does.
-    for key, enabled in body.email.model_dump(exclude_unset=True).items():
-        set_enabled(db, claims.sub, _EMAIL_CATEGORIES[key], "email", enabled=enabled)
+    for channel, switches in (("email", body.email), ("push", body.push)):
+        if switches is None:
+            continue
+        for key, enabled in switches.model_dump(exclude_unset=True).items():
+            set_enabled(db, claims.sub, _EMAIL_CATEGORIES[key], channel, enabled=enabled)
     db.commit()
     return _preferences(db, claims.sub)
 
