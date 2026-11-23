@@ -31,6 +31,11 @@ class NotificationSettings(BaseSettings):
     # Entries ride on the kinds' events; on its own it keeps the worker running only for the 90-day purge
     # (`worker_enabled`), with no calls to auth-server.
     in_app_notifications_enabled: bool = False
+    # Web Push (notifications spec, rule 3, Part 2). A kind sends push only when its own switch above AND
+    # this one are on. Off: no push deliveries, and staff-app hides the push switches and the *This
+    # device* row. Like the kind switches it calls auth-server, so it needs INTERNAL_API_TOKEN. It needs
+    # no worker change: push only exists while a kind switch is on, and that already runs the worker.
+    push_notifications_enabled: bool = False
 
     # The reminder's schedule, one per deployment for now (report-reminder-emails spec, rule 1).
     # Same CHURCH_TIMEZONE as ApiSettings, read here too so the worker never imports the api package.
@@ -60,7 +65,13 @@ class NotificationSettings(BaseSettings):
             raise ValueError("REPORT_SUBMITTED_EMAILS_ENABLED needs INTERNAL_API_TOKEN")
         if self.report_reminder_emails_enabled:
             raise ValueError("REPORT_REMINDER_EMAILS_ENABLED needs INTERNAL_API_TOKEN")
+        if self.push_notifications_enabled:
+            raise ValueError("PUSH_NOTIFICATIONS_ENABLED needs INTERNAL_API_TOKEN")
         return self
+
+    def push_enabled_for(self, kind_enabled: bool) -> bool:
+        """Rule 3: a kind sends push only while its own switch and the push switch are both on."""
+        return kind_enabled and self.push_notifications_enabled
 
     @property
     def any_emails_enabled(self) -> bool:
