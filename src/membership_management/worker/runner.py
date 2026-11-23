@@ -129,7 +129,7 @@ def _log(report: RunReport) -> None:
     e, d = report.events, report.deliveries
     logger.log(
         level,
-        "conversation emails: reachable=%s | events processed=%d deliveries=%d failed=%d transient=%d "
+        "emails: reachable=%s | events processed=%d deliveries=%d failed=%d transient=%d "
         "dead=%d expired=%d | sends sent=%d dead=%d failed=%d transient=%d suppressed=%d expired=%d "
         "released=%d | "
         "expired overdue=%s purged=%s | oldest pending s=%s dead rows=%s",
@@ -153,7 +153,7 @@ def _log(report: RunReport) -> None:
         {name: h.dead for name, h in report.health.items()},
     )
     if not report.reachable:
-        logger.warning("conversation emails: auth-server unreachable, nothing claimed this sweep")
+        logger.warning("emails: auth-server unreachable, nothing claimed this sweep")
 
 
 def run_forever(stop: threading.Event) -> None:
@@ -161,11 +161,11 @@ def run_forever(stop: threading.Event) -> None:
     is set. Waits on `stop`, so shutdown never waits out the interval. One failed run never ends it."""
     if stop.wait(random.uniform(0, START_JITTER_SECONDS)):  # noqa: S311 (jitter, not security)
         return
-    logger.info("conversation email worker started")
+    logger.info("email worker started")
     while not stop.is_set():
         try:
             run_once(stop)
         except Exception:
-            logger.exception("conversation email worker: run failed")
+            logger.exception("email worker: run failed")
         stop.wait(INTERVAL.total_seconds())
-    logger.info("conversation email worker stopped")
+    logger.info("email worker stopped")

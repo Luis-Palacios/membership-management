@@ -9,9 +9,9 @@ fence included) and is recorded in a second short, fenced transaction.
 
 import logging
 import threading
-from collections.abc import Collection
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
-from typing import cast
+from typing import Any, cast
 
 from sqlalchemy import Table, func, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -25,19 +25,44 @@ from membership_management.data.claiming import (
     release,
 )
 from membership_management.data.outbox.models import OutboxEvent
+from membership_management.data.small_groups import conversation_notifications as conversations
+from membership_management.data.small_groups import report_submitted_notifications as submitted
 from membership_management.data.small_groups.access_rules import Perms
-from membership_management.data.small_groups.conversation_notifications import (
-    COMMENT_ADDED,
-    candidate_user_ids,
-    process_comment_added,
-)
 from membership_management.notifications.auth_server import AuthServerUnavailable, permissions_for
 
 logger = logging.getLogger(__name__)
 
 EVENTS = cast("Table", OutboxEvent.__table__)
-# The event types this worker understands, with the payload version each was written in.
-_KNOWN = {COMMENT_ADDED: 1}
+
+
+@dataclass(frozen=True)
+class _Consumer:
+    """A domain consumer: the payload version it reads, its candidate snapshot (read-only, before the
+    permissions lookup) and its processing step (inside the event's fenced transaction)."""
+
+    schema_version: int
+    candidates: Callable[[Session, Mapping[str, Any], Collection[str]], frozenset[str]]
+    process: Callable[[Session, OutboxEvent, Mapping[str, Perms], Collection[str]], int]
+
+
+# The event types this worker understands: each one's consumer, picked by `event_type`.
+_KNOWN = {
+    conversations.COMMENT_ADDED: _Consumer(
+        schema_version=1,
+        candidates=conversations.candidate_user_ids,
+        process=conversations.process_comment_added,
+    ),
+    submitted.REPORT_SUBMITTED: _Consumer(
+        schema_version=1,
+        candidates=submitted.candidate_user_ids,
+        process=submitted.process_report_submitted,
+    ),
+}
+
+
+def _consumer(event: OutboxEvent) -> _Consumer | None:
+    consumer = _KNOWN.get(event.event_type)
+    return consumer if consumer is not None and consumer.schema_version == event.schema_version else None
 
 
 @dataclass
@@ -96,11 +121,12 @@ def process_due_events(
         events = {e.id: e for e in session.scalars(select(OutboxEvent).where(EVENTS.c.id.in_(ids)))}
         for row in result.claimed:
             event = events[row.id]
-            if _KNOWN.get(event.event_type) != event.schema_version:
+            consumer = _consumer(event)
+            if consumer is None:
                 unknown.append(row)
                 continue
             try:
-                candidates[row.id] = candidate_user_ids(session, event.payload, possible_watchers)
+                candidates[row.id] = consumer.candidates(session, event.payload, possible_watchers)
             except Exception as exc:
                 session.rollback()  # a DB error aborts the transaction; the next event needs a fresh one
                 logger.exception("outbox event %s: reading its candidates raised", row.id)
@@ -164,7 +190,10 @@ def _process_one(
                 logger.warning("outbox event %s: lease lost before processing", row.id)
                 return
             event = session.get_one(OutboxEvent, row.id)
-            stats.deliveries += process_comment_added(session, event, perms, possible_watchers)
+            consumer = _consumer(event)
+            if consumer is None:  # checked before the lookup; the row's type can't change since
+                raise ValueError("unknown event type")
+            stats.deliveries += consumer.process(session, event, perms, possible_watchers)
             session.commit()
             stats.processed += 1
         except Exception as exc:

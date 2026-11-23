@@ -1,7 +1,7 @@
-"""The best-effort fast path (spec, *The worker*): right after a comment's response, process that one
-event and send its deliveries, with its own DB sessions and through the same claim code as the sweep
-(so they never race). Nothing depends on it: if it fails or never runs, the sweep picks the event up
-after its 60 s head start."""
+"""The best-effort fast path (spec, *The worker*): right after a comment's (or a report submit's)
+response, process that one event and send its deliveries, with its own DB sessions and through the
+same claim code as the sweep (so they never race). Nothing depends on it: if it fails or never runs,
+the sweep picks the event up after its 60 s head start."""
 
 import logging
 
@@ -31,4 +31,4 @@ def run_fast_path(event_id: int) -> None:
         if stats.deliveries:  # none planned (throttled, deleted, already taken by the sweep): nothing to send
             send_due_deliveries(MembershipSessionLocal, AuthServerSender(), source_event_id=event_id)
     except Exception:
-        logger.exception("conversation email fast path failed for outbox event %s", event_id)
+        logger.exception("email fast path failed for outbox event %s", event_id)

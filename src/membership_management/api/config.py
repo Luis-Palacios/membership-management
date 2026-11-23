@@ -115,8 +115,9 @@ class ApiSettings(BaseSettings):
 
     # Run the email worker inside this API process (lifespan task, one thread via its own
     # CapacityLimiter). false = the worker runs as its own process/ECS service
-    # (python -m membership_management.worker). Ignored while CONVERSATION_EMAILS_ENABLED is off
-    # (that switch lives in notifications/config.py, so the worker can read it without the API).
+    # (python -m membership_management.worker). Ignored while CONVERSATION_EMAILS_ENABLED and
+    # REPORT_SUBMITTED_EMAILS_ENABLED are both off (those switches live in notifications/config.py, so
+    # the worker can read them without the API).
     embedded_worker: bool = True
 
     # Same .env handling as the data layer's Settings (see env_file.py).

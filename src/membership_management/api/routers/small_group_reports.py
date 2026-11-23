@@ -1,7 +1,7 @@
 from datetime import date, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
 from fastapi.exceptions import RequestValidationError
 
 from membership_management.api.access import (
@@ -128,6 +128,7 @@ from membership_management.data.small_groups.services import (
     update_no_meeting_week_reason,
     update_report,
 )
+from membership_management.worker.fast_path import run_fast_path
 
 # No prefix: report routes live under both /small-groups/{id}/... and /small-group-reports.
 router = APIRouter(
@@ -794,12 +795,13 @@ def post_small_group_report(
     member: CurrentMemberDep,
     member_scope: MemberScopeDep,
     guest_scope: GuestScopeDep,
+    background_tasks: BackgroundTasks,
 ) -> ReportDetailSchema:
     small_group = _small_group_or_404(db, small_group_id, scope)
     try:
         if member is None:
             raise MemberRequiredToSubmitError
-        report, _event_id = create_report(
+        report, event_id = create_report(
             db,
             small_group,
             _to_input(body),
@@ -820,6 +822,9 @@ def post_small_group_report(
         *_ITEM_ERRORS,
     ) as exc:
         raise _http_error(exc) from exc
+    if event_id is not None:
+        # Report submitted emails, best-effort, after the response (same fast path as comments).
+        background_tasks.add_task(run_fast_path, event_id)
     return _report_detail_or_404(db, report.id, scope, claims, member_scope, guest_scope)
 
 
@@ -914,10 +919,11 @@ def post_submit_small_group_report(
     scope: SmallGroupScopeDep,
     member_scope: MemberScopeDep,
     guest_scope: GuestScopeDep,
+    background_tasks: BackgroundTasks,
 ) -> ReportDetailSchema:
     report = _report_or_404(db, report_id, scope)
     try:
-        _report, _event_id = submit_report(
+        _report, event_id = submit_report(
             db,
             report,
             version=body.version,
@@ -936,6 +942,9 @@ def post_submit_small_group_report(
         raise _http_error(exc) from exc
     except ReportGoneError as exc:
         raise _report_not_found(report_id) from exc
+    if event_id is not None:
+        # Report submitted emails, best-effort, after the response (same fast path as comments).
+        background_tasks.add_task(run_fast_path, event_id)
     # Not through the visibility check: someone who started the draft and no longer leads the group loses
     # sight of the report the moment it is submitted, and still gets back what they just submitted.
     return _detail_of(db, report, scope, claims, member_scope, guest_scope)

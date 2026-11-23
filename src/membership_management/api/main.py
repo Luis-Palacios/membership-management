@@ -54,11 +54,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # Bounds concurrent sync (`def`) route handlers/dependencies; see the
     # thread_pool_size comment in config.py.
     anyio.to_thread.current_default_thread_limiter().total_tokens = api_settings.thread_pool_size
-    # The conversation email worker, embedded (EMBEDDED_WORKER, default on): one thread through its own
-    # limiter, so it never takes a token from the pool above. Off = it runs as its own process.
+    # The email worker, embedded (EMBEDDED_WORKER, default on) while either email switch is on: one
+    # thread through its own limiter, so it never takes a token from the pool above. Off = it runs as
+    # its own process.
     stop_worker = threading.Event()
     worker: asyncio.Task[None] | None = None
-    if notification_settings.conversation_emails_enabled and api_settings.embedded_worker:
+    if notification_settings.any_emails_enabled and api_settings.embedded_worker:
         worker = asyncio.create_task(
             anyio.to_thread.run_sync(run_forever, stop_worker, limiter=anyio.CapacityLimiter(1))
         )
@@ -68,7 +69,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # between items), then returns. Before disposing the engines it's still using.
         stop_worker.set()
         await worker
-    # Also without the embedded worker: the comment routes' fast path opens the client too. A no-op
+    # Also without the embedded worker: the comment and submit routes' fast path opens the client too. A no-op
     # when nothing opened it.
     auth_server.close()
     # Release this process's pooled connections on shutdown (e.g. SIGTERM
