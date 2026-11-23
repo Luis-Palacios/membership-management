@@ -1,0 +1,8 @@
+{
+  "entries": [
+    {
+      "path": ".claude/skills",
+      "exclude": ["library-skills"]
+    }
+  ]
+}
