@@ -32,6 +32,7 @@ from membership_management.worker.maintenance import (
     health,
     purge,
 )
+from membership_management.worker.reminder_trigger import trigger_report_reminder
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ MAX_BATCHES = 10
 class RunReport:
     reachable: bool = True
     expired: dict[str, int] = field(default_factory=dict)
+    reminder_triggered: bool = False  # this sweep wrote the week's report reminder event
     events: EventStats = field(default_factory=EventStats)
     deliveries: SendStats = field(default_factory=SendStats)
     purged: dict[str, int] = field(default_factory=dict)
@@ -54,6 +56,7 @@ class RunReport:
         return (
             not self.reachable
             or any(self.expired.values())
+            or self.reminder_triggered
             or any(self.purged.values())
             or self.events.did_something()
             or self.deliveries.did_something()
@@ -80,6 +83,14 @@ def run_once(
     with sessions() as session:
         report.expired = {q.name: expire_overdue(session, q) for q in QUEUES}
         session.commit()
+
+    # The weekly report reminder (spec, rule 2): its event is written before the claim below, so a
+    # sweep that triggers it can process it right away. A failure here never stops the rest of the sweep.
+    try:
+        with sessions() as session:
+            report.reminder_triggered = trigger_report_reminder(session)
+    except Exception:
+        logger.exception("emails: the report reminder trigger failed")
 
     # Dependencies first, then claim: the possible watchers are needed to process anything, and if
     # auth-server can't be reached, nothing is claimed from either table this sweep.
@@ -129,11 +140,12 @@ def _log(report: RunReport) -> None:
     e, d = report.events, report.deliveries
     logger.log(
         level,
-        "emails: reachable=%s | events processed=%d deliveries=%d failed=%d transient=%d "
-        "dead=%d expired=%d | sends sent=%d dead=%d failed=%d transient=%d suppressed=%d expired=%d "
-        "released=%d | "
+        "emails: reachable=%s reminder_triggered=%s | events processed=%d deliveries=%d failed=%d "
+        "transient=%d dead=%d expired=%d | sends sent=%d dead=%d failed=%d transient=%d suppressed=%d "
+        "expired=%d released=%d | "
         "expired overdue=%s purged=%s | oldest pending s=%s dead rows=%s",
         report.reachable,
+        report.reminder_triggered,
         e.processed,
         e.deliveries,
         e.failed,
