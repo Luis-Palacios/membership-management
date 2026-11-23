@@ -1,5 +1,5 @@
 {
-  "hooks": {
+  "branch-name": {
     "PreToolUse": [
       {
         "matcher": "run_command",
@@ -11,7 +11,9 @@
           }
         ]
       }
-    ],
+    ]
+  },
+  "lint-and-typecheck": {
     "Stop": [
       {
         "type": "command",
