@@ -1,3 +1,6 @@
+from datetime import datetime
+from typing import Any
+
 from pydantic import ConfigDict, field_validator
 from pydantic.json_schema import SkipJsonSchema
 
@@ -67,3 +70,36 @@ class WatchUpdateSchema(CamelModel):
 class WatchSchema(CamelModel):
     small_group_id: int
     watching: bool
+
+
+class NotificationSchema(CamelModel):
+    """One entry of the in-app list (notifications spec, rule 1). `template` + `data` are the email's;
+    staff-app renders its own text from them and skips a template it doesn't know."""
+
+    id: int
+    category: str
+    template: str
+    data: dict[str, Any]
+    path: str
+    created_at: datetime
+    read_at: datetime | None
+
+
+class NotificationsPageSchema(CamelModel):
+    items: list[NotificationSchema]
+    # The id to send as `before` for the next page; null on the last one.
+    next_before: int | None
+
+
+class UnreadCountSchema(CamelModel):
+    # IN_APP_NOTIFICATIONS_ENABLED: false hides the bell (and `unread` is 0).
+    enabled: bool
+    unread: int
+
+
+class NotificationOpenedSchema(CamelModel):
+    path: str
+
+
+class NotificationsMarkedSchema(CamelModel):
+    marked: int

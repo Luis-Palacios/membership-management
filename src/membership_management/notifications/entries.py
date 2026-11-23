@@ -9,6 +9,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -54,3 +55,56 @@ def create_entries(session: Session, source_event_id: int, requests: Sequence[En
         .returning(UserNotification.id)
     )
     return len(inserted.all())
+
+
+@dataclass(frozen=True)
+class EntryPage:
+    """One page of a person's list: newest first. `next_before` is the id to pass as `before` for the
+    next page, None on the last one."""
+
+    items: Sequence[UserNotification]
+    next_before: int | None
+
+
+def list_entries(session: Session, user_id: str, *, limit: int, before: int | None) -> EntryPage:
+    """The caller's entries, newest first, `limit` at a time, those with an id below `before`. Reads one
+    row more than asked, to know whether there is another page without a count."""
+    n = UserNotification
+    query = select(n).where(n.user_id == user_id).order_by(n.id.desc()).limit(limit + 1)
+    if before is not None:
+        query = query.where(n.id < before)
+    rows = list(session.scalars(query))
+    page = rows[:limit]
+    return EntryPage(items=page, next_before=page[-1].id if len(rows) > limit else None)
+
+
+def unread_count(session: Session, user_id: str) -> int:
+    """How many of the caller's kept entries are unread. Called on every page: it only touches the
+    partial index on unread rows."""
+    n = UserNotification
+    return session.scalar(select(func.count()).where(n.user_id == user_id, n.read_at.is_(None))) or 0
+
+
+def mark_entry_read(session: Session, user_id: str, entry_id: int) -> str | None:
+    """Rule 13, opening an entry: read now (unchanged when it already was), and the entry's `path`.
+    None when it isn't the caller's or is gone. One statement, so it is idempotent."""
+    n = UserNotification
+    path = session.scalar(
+        update(n)
+        .where(n.id == entry_id, n.user_id == user_id)
+        .values(read_at=func.coalesce(n.read_at, func.now()))
+        .returning(n.path)
+    )
+    session.commit()
+    return path
+
+
+def mark_all_entries_read(session: Session, user_id: str) -> int:
+    """Rule 13, *Mark all read*: every unread entry of the caller. Returns how many were marked."""
+    n = UserNotification
+    result = session.execute(
+        update(n).where(n.user_id == user_id, n.read_at.is_(None)).values(read_at=func.now()).returning(n.id)
+    )
+    marked = len(result.all())
+    session.commit()
+    return marked
