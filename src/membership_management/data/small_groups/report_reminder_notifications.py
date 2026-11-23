@@ -25,7 +25,9 @@ from membership_management.data.small_groups.models import (
     SmallGroupReport,
     SmallGroupRole,
 )
+from membership_management.notifications.config import notification_settings
 from membership_management.notifications.deliveries import NotificationRequest, clip_name, create_deliveries
+from membership_management.notifications.entries import EntryRequest, create_entries
 
 REMINDER_DUE = "small_group_report.reminder_due"
 # The notifications/ category: the "Weekly report reminders" switch in My profile.
@@ -44,6 +46,11 @@ class _Leading:
     member_name: str
     group_id: int
     group_name: str
+
+
+def reminder_subject_key(week_start: date) -> str:
+    """The `subject_key` of a reminder entry: one per church week (the week's Sunday)."""
+    return f"report_reminder:{week_start.isoformat()}"
 
 
 def _week_start(payload: Mapping[str, Any]) -> date:
@@ -166,6 +173,7 @@ def process_report_reminder(
     for item in leading:
         by_user[item.user_id][item.group_id] = item
     requests = []
+    entries = []
     for user_id, groups_by_id in sorted(by_user.items()):
         # Rule 11: by group name (case-insensitive, like the groups list), then id.
         ordered = sorted(groups_by_id.values(), key=lambda item: (item.group_name.casefold(), item.group_id))
@@ -191,4 +199,23 @@ def process_report_reminder(
                 not_after=event.expires_at,
             )
         )
+        # The in-app entry (notifications spec, rule 5): the same recipients, before any email
+        # preference. Every group the person owes, not just the 50 the email names (rule 14 clears it
+        # once all of them have submitted).
+        entries.append(
+            EntryRequest(
+                user_id=user_id,
+                category=CATEGORY,
+                template=_TEMPLATE,
+                data=data,
+                path=path,
+                subject_key=reminder_subject_key(week_start),
+                small_group_ids=sorted(groups_by_id),
+            )
+        )
+    if (
+        notification_settings.in_app_notifications_enabled
+        and notification_settings.report_reminder_emails_enabled
+    ):
+        create_entries(session, event.id, entries)
     return create_deliveries(session, event.id, requests)

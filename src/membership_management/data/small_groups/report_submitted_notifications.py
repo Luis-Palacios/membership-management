@@ -19,7 +19,9 @@ from membership_management.data.small_groups.conversation_notifications import (
 )
 from membership_management.data.small_groups.conversation_queries import watch_opt_out_user_ids_query
 from membership_management.data.small_groups.models import ReportStatus, SmallGroupReport
+from membership_management.notifications.config import notification_settings
 from membership_management.notifications.deliveries import NotificationRequest, clip_name, create_deliveries
+from membership_management.notifications.entries import EntryRequest, create_entries
 
 REPORT_SUBMITTED = "small_group_report.submitted"
 # The notifications/ category: the "Submitted reports" switch in My profile.
@@ -131,6 +133,26 @@ def process_report_submitted(
         data["attendedCount"] = sum(1 for a in report.attendances if a.attended_group)
         data["peopleCount"] = len(report.attendances)
     path = f"/groups/reports/{report.id}"
+    # The in-app entry (notifications spec, rule 5): the same recipients, before any email preference.
+    if (
+        notification_settings.in_app_notifications_enabled
+        and notification_settings.report_submitted_emails_enabled
+    ):
+        create_entries(
+            session,
+            event.id,
+            [
+                EntryRequest(
+                    user_id=user_id,
+                    category=CATEGORY,
+                    template=_TEMPLATE,
+                    data=data,
+                    path=path,
+                    subject_key=f"small_group_report:{report.id}",
+                )
+                for user_id in sorted(chosen)
+            ],
+        )
     requests = [
         NotificationRequest(
             recipient_user_id=user_id,

@@ -21,8 +21,8 @@ Branch **`feature/notifications`**. Each stage: `uv run ruff check .`, `uv run r
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| Handoff written | ✅ | (first commit) |
-| 1. `user_notifications` table + model + migration; `IN_APP_NOTIFICATIONS_ENABLED` flag | ⬜ | |
+| Handoff written | ✅ | `cc87bd2` |
+| 1. `user_notifications` table + model + migration `ea20b44459b8`; `IN_APP_NOTIFICATIONS_ENABLED` flag | ✅ | `6d76fa2` |
 | 2. `create_entries` in `notifications/`; the three consumers write entries | ⬜ | |
 | 3. Routes + schemas (`GET /me/notifications`, `/unread-count`, `POST /{id}/read`, `/read-all`) | ⬜ | |
 | 4. Rule 13 and rule 14 read side effects | ⬜ | |

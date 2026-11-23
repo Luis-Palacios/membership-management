@@ -31,7 +31,9 @@ from membership_management.data.small_groups.models import (
     ReportSection,
 )
 from membership_management.data.small_groups.queries import led_small_group_ids_by_member_query
+from membership_management.notifications.config import notification_settings
 from membership_management.notifications.deliveries import NotificationRequest, create_deliveries
+from membership_management.notifications.entries import EntryRequest, create_entries
 
 COMMENT_ADDED = "report_conversation.comment_added"
 # The notifications/ category: one preference ("Conversation emails") covers every template below.
@@ -244,20 +246,36 @@ def process_comment_added(
         "topic": topic,
         "startedBy": started_by,
     }
+    data_by_user = {user_id: {**common, "reason": chosen[user_id]} for user_id in sorted(allowed)}
+    # The in-app entry (notifications spec, rule 5): the same recipients, before any email preference.
+    if (
+        notification_settings.in_app_notifications_enabled
+        and notification_settings.conversation_emails_enabled
+    ):
+        create_entries(
+            session,
+            event.id,
+            [
+                EntryRequest(
+                    user_id=user_id,
+                    category=CATEGORY,
+                    template=template,
+                    data=data,
+                    path=path,
+                    subject_key=f"report_conversation:{conversation.id}",
+                )
+                for user_id, data in data_by_user.items()
+            ],
+        )
     requests = [
         NotificationRequest(
             recipient_user_id=user_id,
             category=CATEGORY,
             channel="email",
             template=template,
-            payload={
-                "recipientUserId": user_id,
-                "template": template,
-                "data": {**common, "reason": chosen[user_id]},
-                "path": path,
-            },
+            payload={"recipientUserId": user_id, "template": template, "data": data, "path": path},
             not_after=event.expires_at,
         )
-        for user_id in sorted(allowed)
+        for user_id, data in data_by_user.items()
     ]
     return create_deliveries(session, event.id, requests)
