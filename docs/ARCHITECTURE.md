@@ -79,7 +79,7 @@ also has (`ownProfile: update`); `pending` has nothing.
 | `GET /people/{id}/events`, `/first-assistance` | `membershipApplications: view` | ✓ | — |
 | `GET /me` | none (any valid JWT) | ✓ | ✓ |
 | `PATCH /me/member` | `ownProfile: update`; own linked member only, no scope, no `email` | ✓ | ✓ |
-| `GET`, `PUT /me/notification-preferences` | none (any valid JWT): the caller's own "Conversation emails" switch | ✓ | ✓ |
+| `GET`, `PUT /me/notification-preferences` | none (any valid JWT): the caller's own email switches (Conversations, Submitted reports) | ✓ | ✓ |
 | `GET /me/watched-groups`, `PUT /small-groups/{id}/watch` | the full-scope observation audience (`smallGroups: all` + the conversation read rule), else 403 (before any 404) | ✓ (elders, admins) | ✗ (403: leaders have no watch setting) |
 
 A new role, or a change to what a role can do, is an auth-server change only; nothing here
@@ -101,7 +101,7 @@ A group files one report per meeting date: the group's prayer, praise and follow
 - **Person timeline** (`docs/specs/report-tags.md` rules 19-23, `docs/REPORT-TAGS-API-HANDOFF.md`, Part 2). `GET /members/{id}/timeline` and `GET /guests/{id}/timeline` list, newest first, the **held** reports where the person has an attendance row or is tagged in an item (one row even when both), with `groups` (every group with a visible row, any date, for the filter), `earliestDate`, and `counts` (`notes`, `prayer`, `praise`, `followUp`) over the rows returned. Query: `from` / `to` (default: `to` is church today, `from` is three months before it plus a day; 422 with `range` when `to` is in the future, `from` is after `to` or the range is over 731 days), `smallGroupId` (a group with no rows is empty, not 404) or `latest` (1-10, the newest N rows of any date and group; 422 with any of the others). Visibility is per row (rule 23): **attendance, the observation and follow-up items** only for reports of groups in the caller's observation audience (`conversation_group_ids`: every group with `smallGroups: all` + `viewObservations`, else the groups they lead or co-led when closed), **prayer and praise items** that tag the person for any group; a row with nothing visible is dropped and never counted. Items are only those tagging this person, by section then position, as the report detail's segments (`viewable` per rule 12; the person's own is always true). `role` is the person's role on the meeting date from their membership periods (null if none covers it). Code: `api/person_timeline.py` (params, response), `data/small_groups/timeline_{services,queries}.py`. No new permission; the person-keyed indexes already exist.
   - **Typed entries and sources** (`docs/specs/inactive-guests.md` rules 12-15, `docs/INACTIVE-GUESTS-API-HANDOFF.md`). The response's `entries` lists every kind newest first, each with `kind` and `date`: `report` (`report` is the row above) and `status` (`status`, `reason`, `note`, `changedBy` `{ memberId, name }` or null). Status entries come from `member_status_changes` / `guest_status_changes` on `effective_date`, follow the range, are hidden with `smallGroupId`, and show reason and note to everyone who can open the timeline, unlike the detail fields. `latest` cuts across kinds, `earliestDate` is the oldest entry of any kind whatever the range, `groups` and `counts` are reports only (`counts` over the report entries returned).
   - **Adding a kind.** Write a source in `timeline_services.py`, a function of the session and the `_TimelineRequest` (person, caller's access, range or `latest`) returning a `_SourceResult`: its entries filtered for that caller and by date **in the query**, newest first, at most `latest`, plus its own `earliest_date` and `groups` whatever the range. Add it to `_SOURCES`, whose order breaks ties on a date, add the entry to `TimelineEntry` and its schema to `TimelineEntrySchema`. No source knows about the others; staff-app skips a `kind` it doesn't know, so the API can ship one first.
-- **Report status and drafts** (`docs/specs/report-autosave.md`, `docs/REPORT-AUTOSAVE-API-HANDOFF.md`). A report is `draft` or `submitted`, on the same `small_group_reports` row, so a draft holds its date like any report. A draft may have null attendance answers and has no submitter; `POST /small-group-reports/{id}/submit` is the one-way way out, and the only place the future submit email hooks in. Every write bumps `version`; a save or submit must send the `version` it is based on (422 without it) and is 409 `changed since` when that is older, checked under a row lock. A create without `status` is a draft. **A draft exists only for the group's current leaders and co-leaders and whoever started it** (`can_see_draft`, `report_visible_to`): no role sees other people's, and for everyone else it is a 404, and 409 `draft is in progress` on its date. They get a label only (`hasDraft`, `existingReport` without an id) and the date stays due / not filed. A read of reports that isn't one of the draft routes filters on `submitted_report_condition()`; a new read must too. The one exception is `reported_group_ids_in_week_query`: a church-wide no meeting skips a group with a draft that week.
+- **Report status and drafts** (`docs/specs/report-autosave.md`, `docs/REPORT-AUTOSAVE-API-HANDOFF.md`). A report is `draft` or `submitted`, on the same `small_group_reports` row, so a draft holds its date like any report. A draft may have null attendance answers and has no submitter; `POST /small-group-reports/{id}/submit` is the one-way way out. It and a create with `status = submitted` are where the report submitted email's event is written (*Report conversations, Part 2: emails*). Every write bumps `version`; a save or submit must send the `version` it is based on (422 without it) and is 409 `changed since` when that is older, checked under a row lock. A create without `status` is a draft. **A draft exists only for the group's current leaders and co-leaders and whoever started it** (`can_see_draft`, `report_visible_to`): no role sees other people's, and for everyone else it is a 404, and 409 `draft is in progress` on its date. They get a label only (`hasDraft`, `existingReport` without an id) and the date stays due / not filed. A read of reports that isn't one of the draft routes filters on `submitted_report_condition()`; a new read must too. The one exception is `reported_group_ids_in_week_query`: a church-wide no meeting skips a group with a draft that week.
 - Names in these routes are the member's single stored `name` (members have no first/last name columns).
 
 ## Default rate limit
@@ -123,19 +123,28 @@ Elders and admins start a thread about one person's attendance row in a report, 
 
 ## Report conversations, Part 2: emails (built)
 
-Who hears about a comment, by email through auth-server. Rules and contracts:
-`docs/specs/report-conversations.md` (workspace repo; rules 18-23, *Contracts (Part 2: email)*) and
-`docs/REPORT-CONVERSATIONS-EMAIL-API-HANDOFF.md` (its *Decisions and deviations* hold the detail).
-auth-server's side: `auth-server/docs/REPORT-CONVERSATIONS-EMAIL-HANDOFF.md`.
+Two kinds of email, both by email through auth-server and the same outbox, worker and
+`notifications/` layer: **conversation emails** (who hears about a comment) and **report submitted
+emails** (a group's watchers hear that its report was submitted). Rules and contracts:
+`docs/specs/report-conversations.md` (workspace repo; rules 18-23, *Contracts (Part 2: email)*),
+`docs/specs/report-submitted-emails.md`, and the handoffs `docs/REPORT-CONVERSATIONS-EMAIL-API-HANDOFF.md`
+and `docs/REPORT-SUBMITTED-EMAILS-API-HANDOFF.md` (their *Decisions and deviations* hold the detail).
+auth-server's side: `auth-server/docs/REPORT-CONVERSATIONS-EMAIL-HANDOFF.md`,
+`auth-server/docs/REPORT-SUBMITTED-EMAILS-HANDOFF.md`.
 
-- **Switches.** `CONVERSATION_EMAILS_ENABLED` (default off; `notifications/config.py`, read by the
-  API and the worker): off means no outbox rows, no worker, no fast path, no auth-server calls; on
-  needs `INTERNAL_API_TOKEN` in every environment (startup error otherwise), sent as
-  `X-Internal-Token` to auth-server's `/internal/*` at `AUTH_SERVER_URL`. `EMBEDDED_WORKER` (default
-  on, `ApiSettings`): run the worker inside the API process.
+- **Switches.** One per kind, in `notifications/config.py` (read by the API and the worker):
+  `CONVERSATION_EMAILS_ENABLED` and `REPORT_SUBMITTED_EMAILS_ENABLED`, both default off. Off means
+  that kind writes no outbox rows (so no emails, no fast path); with both off there is no worker and
+  no auth-server call. Either on needs `INTERNAL_API_TOKEN` in every environment (startup error
+  otherwise), sent as `X-Internal-Token` to auth-server's `/internal/*` at `AUTH_SERVER_URL`.
+  `EMBEDDED_WORKER` (default on, `ApiSettings`): run the worker inside the API process.
 - **Event first.** `add_comment` writes the comment and one `outbox_events` row
   (`report_conversation.comment_added`, payload v1: ids and facts, `occurredAt` = the comment's
   `created_at`) in one transaction, due 60 s later, deadline 24 h. Nothing else in the request.
+  Likewise `create_report` (status `submitted`, held or no meeting) and `submit_report` write
+  `small_group_report.submitted` (payload v1: `reportId`, `smallGroupId`, `submittedByMemberId`,
+  `occurredAt` = `submitted_at`) in the submit's transaction. Drafts, saves, edits, deletes and
+  church-wide no meetings (`_mark_no_meeting_week`) write none.
 - **One rule for reading and emailing** (rule 23). `data/small_groups/access_rules.py` holds
   `SmallGroupScope`, `small_group_scope_for` and `can_read_group_conversations` as pure functions;
   `api/access.py` (scope, `conversation_access`, `conversation_group_ids`, `ensure_watch_audience`)
@@ -149,7 +158,16 @@ auth-server's side: `auth-server/docs/REPORT-CONVERSATIONS-EMAIL-HANDOFF.md`.
   (`readers_of_group`), the atomic throttle (`pass_throttle`, one statement sorted by user id,
   stamped with `occurredAt`: one email per thread until you open it), then the payload (`path` by
   anchor: `?person=`, `?guest=`, `?section=`). It hands requests to `notifications/` and never reads
-  preferences.
+  preferences. Category `report_conversation`.
+- **Report submitted consumer** (`data/small_groups/report_submitted_notifications.py`): candidates
+  are the possible watchers minus the submitter's linked user; `process_report_submitted` keeps the
+  readers of the group (`readers_of_group`, the same rule 23 check), drops watch opt-outs and queues
+  `report.submitted` (category `report_submitted`, `reason: watcher`, path `/groups/reports/{id}`).
+  Names and counts are read at processing time (`attendedCount`/`peopleCount` only for a held
+  meeting; no free text, no member names). A report gone or not submitted: processed, no
+  deliveries. No throttle. Leaders are never possible watchers, so they never get one.
+- **Dispatch.** `worker/events.py` picks each event's consumer (`candidates`, `process`) from
+  `_KNOWN` by `event_type` and `schema_version`; anything else goes `dead`.
 - **Generic `notifications/`**: `deliveries.py` (`create_deliveries`: drops users whose
   `(category, channel)` preference is off, inserts `ON CONFLICT DO NOTHING`; `is_enabled`),
   `preferences.py`, `sender.py` (the `Sender` protocol), `auth_server.py` (the client: watchers,
@@ -167,7 +185,7 @@ auth-server's side: `auth-server/docs/REPORT-CONVERSATIONS-EMAIL-HANDOFF.md`.
   trouble: attempt given back, `failures + 1`, never `dead`), exception (attempt kept), permanent
   (`dead`). Backoff by `failures`: 1, 5, 15, 60 min, then hourly. A transient send error stops the
   batch and releases the rest.
-- **The worker** (`worker/`): `runner.run_once()` expires overdue rows, fetches the possible watchers
+- **The worker** (`worker/`, runs while either switch is on): `runner.run_once()` expires overdue rows, fetches the possible watchers
   (auth-server unreachable → claims nothing from either table), drains events then deliveries (at
   most 10 batches each), purges final rows (events after 30 days, deliveries after 90) and logs the
   oldest not-final row's age and the `dead` count per table. `run_forever` repeats it every 2
@@ -175,11 +193,15 @@ auth-server's side: `auth-server/docs/REPORT-CONVERSATIONS-EMAIL-HANDOFF.md`.
   its own `CapacityLimiter(1)` and stops it before disposing the engines. Standalone: `python -m
   membership_management.worker` (SIGTERM/SIGINT stop it after the item in hand). Moving it out is
   `EMBEDDED_WORKER=false` plus a task definition. The stop flag is checked between items.
-- **Fast path.** The three comment routes queue `worker.fast_path.run_fast_path(event_id)` with
-  `BackgroundTasks`: after the response, that one event (still `pending`, head start skipped) and
-  its deliveries, through the same claim code. Best-effort; the sweep covers it.
-- **Routes.** `GET`/`PUT /me/notification-preferences` → `{ conversationEmails, emailsEnabled }`
-  (any signed-in user; `emailsEnabled` is the kill switch so staff-app can hide the switches).
+- **Fast path.** The three comment routes and the two submit routes (`POST
+  /small-groups/{id}/reports` when it submits, `POST /small-group-reports/{id}/submit`) queue
+  `worker.fast_path.run_fast_path(event_id)` with `BackgroundTasks`: after the response, that one
+  event (still `pending`, head start skipped) and its deliveries, through the same claim code.
+  Best-effort; the sweep covers it.
+- **Routes.** `GET /me/notification-preferences` → `{ email: { reportConversation, reportSubmitted },
+  available: { reportConversation, reportSubmitted } }` (any signed-in user; `available` is each
+  kill switch, so staff-app can hide a switch). `PUT` takes `{ email: { …any subset } }` (unknown
+  keys and null 422) and returns the same shape. Watching is shared by both kinds.
   `GET /me/watched-groups` → `{ items: [{ smallGroupId, name, closed, watching }] }` (every group,
   open first) and `PUT /small-groups/{id}/watch` `{ watching }` → `{ smallGroupId, watching }`, both
   for the full-scope audience only (403 first, then 404). Watching changes nothing in the app.

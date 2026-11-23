@@ -370,7 +370,7 @@ def patch_small_group_member(
 @router.put(
     "/{small_group_id}/watch",
     name="set_small_group_watch",
-    description="Watch or unwatch a group's conversations (emails for leaders' comments; full-scope only)",
+    description="Watch or unwatch a group's emails: leaders' comments, submitted reports (full scope only)",
     dependencies=[Depends(rate_limit("20/minute", scope="set_small_group_watch"))],
 )
 def put_small_group_watch(

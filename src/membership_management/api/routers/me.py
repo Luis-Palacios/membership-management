@@ -10,6 +10,7 @@ from membership_management.api.routers.members import member_detail
 from membership_management.api.schemas.me import MeFeaturesSchema, MeLeadSchema, MeMemberSchema, MeSchema
 from membership_management.api.schemas.members import MemberDetailSchema, MyMemberUpdateSchema
 from membership_management.api.schemas.notifications import (
+    EmailSwitchesSchema,
     NotificationPreferencesSchema,
     NotificationPreferencesUpdateSchema,
     WatchedGroupSchema,
@@ -18,6 +19,9 @@ from membership_management.api.schemas.notifications import (
 from membership_management.data.members.services import get_member_leads, update_member
 from membership_management.data.small_groups.conversation_notifications import (
     CATEGORY as CONVERSATION_CATEGORY,
+)
+from membership_management.data.small_groups.report_submitted_notifications import (
+    CATEGORY as SUBMITTED_CATEGORY,
 )
 from membership_management.data.small_groups.watch_services import watched_groups
 from membership_management.notifications.config import notification_settings
@@ -66,17 +70,29 @@ def patch_my_member(
     return member_detail(db, update_member(db, member, body.model_dump(exclude_unset=True)), claims)
 
 
+# The schema's keys → the notifications/ categories (one switch per kind of email).
+_EMAIL_CATEGORIES = {
+    "report_conversation": CONVERSATION_CATEGORY,
+    "report_submitted": SUBMITTED_CATEGORY,
+}
+
+
 def _preferences(db: MembersSessionDep, user_id: str) -> NotificationPreferencesSchema:
     return NotificationPreferencesSchema(
-        conversation_emails=is_enabled(db, user_id, CONVERSATION_CATEGORY, "email"),
-        emails_enabled=notification_settings.conversation_emails_enabled,
+        email=EmailSwitchesSchema(
+            **{key: is_enabled(db, user_id, category, "email") for key, category in _EMAIL_CATEGORIES.items()}
+        ),
+        available=EmailSwitchesSchema(
+            report_conversation=notification_settings.conversation_emails_enabled,
+            report_submitted=notification_settings.report_submitted_emails_enabled,
+        ),
     )
 
 
 @router.get(
     "/notification-preferences",
     name="get_my_notification_preferences",
-    description="The caller's 'Conversation emails' switch, and whether the server sends emails at all",
+    description="The caller's email switch per kind of email, and which kinds the server sends at all",
 )
 def get_my_notification_preferences(
     claims: CurrentClaimsDep, db: MembersSessionDep
@@ -87,15 +103,18 @@ def get_my_notification_preferences(
 @router.put(
     "/notification-preferences",
     name="set_my_notification_preferences",
-    description="Turn the caller's conversation emails on or off (also stops ones already queued)",
+    description="Turn any of the caller's email switches on or off (also stops ones already queued); "
+    "keys left out keep their value",
     dependencies=[Depends(rate_limit("20/minute", scope="set_my_notification_preferences"))],
 )
 def put_my_notification_preferences(
     body: NotificationPreferencesUpdateSchema, claims: CurrentClaimsDep, db: MembersSessionDep
 ) -> NotificationPreferencesSchema:
-    # Any signed-in user: it only concerns their own inbox. Works while the kill switch is off too
-    # (staff-app hides it then), so a choice made earlier is kept.
-    set_enabled(db, claims.sub, CONVERSATION_CATEGORY, "email", enabled=body.conversation_emails)
+    # Any signed-in user, for every kind: it only concerns their own inbox (staff-app shows Submitted
+    # reports only to the watch audience). Works while a kill switch is off too (staff-app hides the
+    # switch then), so a choice made earlier is kept.
+    for key, enabled in body.email.model_dump(exclude_unset=True).items():
+        set_enabled(db, claims.sub, _EMAIL_CATEGORIES[key], "email", enabled=enabled)
     return _preferences(db, claims.sub)
 
 
