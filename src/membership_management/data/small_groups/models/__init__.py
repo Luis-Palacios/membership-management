@@ -14,6 +14,7 @@ from membership_management.data.small_groups.models.report_conversation_notify_s
     ReportConversationNotifyState,
 )
 from membership_management.data.small_groups.models.report_conversation_read import ReportConversationRead
+from membership_management.data.small_groups.models.report_reminder_run import ReportReminderRun
 from membership_management.data.small_groups.models.small_group import GroupAudience, SmallGroup, Weekday
 from membership_management.data.small_groups.models.small_group_member import (
     LeftReason,
@@ -41,6 +42,7 @@ __all__ = [
     "ReportConversationCommentRevision",
     "ReportConversationNotifyState",
     "ReportConversationRead",
+    "ReportReminderRun",
     "ReportSection",
     "ReportStatus",
     "SmallGroup",

@@ -19,7 +19,7 @@ logger = logging.getLogger("membership_management.worker")
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     if not notification_settings.any_emails_enabled:
-        logger.info("both email switches are off: nothing to do, exiting")
+        logger.info("every email switch is off: nothing to do, exiting")
         return 0
     stop = threading.Event()
 

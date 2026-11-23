@@ -54,7 +54,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # Bounds concurrent sync (`def`) route handlers/dependencies; see the
     # thread_pool_size comment in config.py.
     anyio.to_thread.current_default_thread_limiter().total_tokens = api_settings.thread_pool_size
-    # The email worker, embedded (EMBEDDED_WORKER, default on) while either email switch is on: one
+    # The email worker, embedded (EMBEDDED_WORKER, default on) while any email switch is on: one
     # thread through its own limiter, so it never takes a token from the pool above. Off = it runs as
     # its own process.
     stop_worker = threading.Event()
