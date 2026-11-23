@@ -17,10 +17,14 @@ for (const re of patterns) {
   for (const m of command.matchAll(re)) if (!valid.test(m[1])) bad.push(m[1]);
 }
 if (bad.length) {
-  process.stderr.write(
+  const reason =
     `Branch name ${bad.map((b) => `"${b}"`).join(', ')} doesn't follow the convention: feature/, fix/ or chore/ ` +
       `+ lowercase kebab-case, e.g. feature/<spec-slug> (the docs/specs/<slug>.md name, the same in every repo). ` +
-      `See "Branch names" in the workspace CLAUDE.md.`,
-  );
-  process.exit(2);
+      `See "Branch names" in the workspace CLAUDE.md.`;
+  process.stdout.write(JSON.stringify({
+    permissionDecision: 'deny',
+    permissionDecisionReason: reason,
+    hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason },
+  }));
+  process.exit(0);
 }
