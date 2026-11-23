@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/branch-name.mjs\"",
+            "command": "node -e \"import(require('node:url').pathToFileURL(require('node:path').resolve(process.env.CLAUDE_PROJECT_DIR || '.', '.claude/hooks/branch-name.mjs')))\"",
             "timeout": 10
           }
         ]
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --no-project --quiet python \"$CLAUDE_PROJECT_DIR/.claude/hooks/check.py\"",
+            "command": "uv run --no-project --quiet python -c \"import os,runpy; runpy.run_path(os.path.join(os.environ.get('CLAUDE_PROJECT_DIR') or '.', '.claude/hooks/check.py'),run_name='__main__')\"",
             "timeout": 60
           }
         ]
@@ -29,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --no-project --quiet python \"$CLAUDE_PROJECT_DIR/.claude/hooks/check.py\"",
+            "command": "uv run --no-project --quiet python -c \"import os,runpy; runpy.run_path(os.path.join(os.environ.get('CLAUDE_PROJECT_DIR') or '.', '.claude/hooks/check.py'),run_name='__main__')\"",
             "timeout": 180
           }
         ]
@@ -41,7 +41,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/check-tools.mjs\" pyright-langserver",
+            "command": "node -e \"process.argv.splice(1,0,'hook'); import(require('node:url').pathToFileURL(require('node:path').resolve(process.env.CLAUDE_PROJECT_DIR || '.', '.claude/hooks/check-tools.mjs')))\" pyright-langserver",
             "timeout": 10
           }
         ]
