@@ -191,7 +191,7 @@ auth-server's side: `auth-server/docs/REPORT-CONVERSATIONS-EMAIL-HANDOFF.md`,
   recipient_user_id, channel)`, `expires_at` inherited from the event), `notification_preferences`
   (no row = on), `report_conversation_notify_state` (throttle), `small_group_watch_opt_outs` (no
   row = watching), `report_reminder_runs` (one row per church week triggered). The two queues share the claim columns (`data/claim_columns.py`); events and
-  deliveries have no foreign keys. Migration `b453135219c0`.
+  deliveries have no foreign keys. Migration `b453135219c0`; `report_reminder_runs` is `7e1a4c9b2d58`.
 - **Claiming** (`data/claiming.py`, both queues): one statement leases a batch of 10 with `FOR UPDATE
   SKIP LOCKED` (new claim token, `attempts + 1`, lease 2 min) and turns rows past their deadline into
   `expired` and rows at 5 attempts into `dead`. Every later write is fenced on the token; for events

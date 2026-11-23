@@ -27,7 +27,8 @@ Branch **`feature/report-reminder-emails`**. Each stage: `uv run ruff check src`
 | 3. Consumer `small_group_report.reminder_due` → `report.reminder` deliveries | ✅ | `91aed3c` |
 | 4. Preferences GET/PUT + schema (`reportReminder`), docs | ✅ | `11dba16` |
 | Handoff written (by the workspace session; the subagent's write was refused) | ✅ | `f9c2d24` |
-| Review fixes: case-insensitive group order, UTF-16-safe name cut (`clip_name`, also used by report submitted), stale comments, Postgres checks recorded | ✅ | commit after `f9c2d24` |
+| Review fixes: case-insensitive group order, UTF-16-safe name cut (`clip_name`, also used by report submitted), stale comments, Postgres checks recorded | ✅ | `91b2878` |
+| PR #75 bot review (approved): one nit, `docs/ARCHITECTURE.md` *Tables* names migration `7e1a4c9b2d58` | ✅ | commit after `91b2878` |
 
 **Postgres checks (workspace session, local `my-postgres`, after the review):** `alembic upgrade
 head` applies `7e1a4c9b2d58`; `alembic check` → no new operations; `downgrade -1` + `upgrade head`
