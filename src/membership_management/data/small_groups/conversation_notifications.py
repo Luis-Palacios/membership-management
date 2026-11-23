@@ -48,9 +48,9 @@ WATCHER_PERMISSIONS = (
     "smallGroupReports:view",
     "smallGroupReports:viewObservations",
 )
-# The fast path's head start: the sweep leaves a new event alone this long.
-_HEAD_START = timedelta(seconds=60)
-# One deadline per comment (spec, *Expiry*); its deliveries inherit it.
+# The fast path's head start: the sweep leaves a new event alone this long (the submit event too).
+HEAD_START = timedelta(seconds=60)
+# One deadline per comment (spec, *Expiry*), and per submit; its deliveries inherit it.
 EMAIL_DEADLINE = timedelta(hours=24)
 
 Reason = Literal["leader", "participant", "watcher"]
@@ -76,7 +76,7 @@ def comment_added_event(comment: ReportConversationComment, *, starts_thread: bo
             "occurredAt": occurred_at.isoformat(),
         },
         created_at=occurred_at,
-        next_attempt_at=occurred_at + _HEAD_START,
+        next_attempt_at=occurred_at + HEAD_START,
         expires_at=occurred_at + EMAIL_DEADLINE,
     )
 

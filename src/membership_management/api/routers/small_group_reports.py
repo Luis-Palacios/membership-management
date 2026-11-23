@@ -799,7 +799,7 @@ def post_small_group_report(
     try:
         if member is None:
             raise MemberRequiredToSubmitError
-        report = create_report(
+        report, _event_id = create_report(
             db,
             small_group,
             _to_input(body),
@@ -917,7 +917,7 @@ def post_submit_small_group_report(
 ) -> ReportDetailSchema:
     report = _report_or_404(db, report_id, scope)
     try:
-        submit_report(
+        _report, _event_id = submit_report(
             db,
             report,
             version=body.version,

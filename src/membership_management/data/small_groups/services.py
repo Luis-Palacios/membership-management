@@ -73,6 +73,7 @@ from membership_management.data.small_groups.report_items import (
     tagged_people,
     text_to_segments,
 )
+from membership_management.data.small_groups.report_submitted_notifications import report_submitted_event
 from membership_management.data.small_groups.results import (
     ActiveLeaderRow,
     AttendanceMark,
@@ -124,6 +125,7 @@ from membership_management.data.small_groups.results import (
     WeekStatus,
     person_key,
 )
+from membership_management.notifications.config import notification_settings
 
 # Report tags rule 3.
 MAX_ITEMS_PER_SECTION = 20
@@ -555,10 +557,11 @@ def create_report(
     caller_is_scoped: bool,
     viewer: DraftViewer,
     today: date,
-) -> SmallGroupReport:
+) -> tuple[SmallGroupReport, int | None]:
     """File a report, or start a draft with `body.status` (answers may be missing, report auto-save rule 4).
     Reports rule 5 applies to both: the caller's member is who started it, and who submitted it unless
-    it's a draft."""
+    it's a draft. Also returns the id of the report submitted event it wrote, if any (for the fast
+    path): only a submitted report, only while that switch is on."""
     is_draft = body.status == ReportStatus.DRAFT
     replaced = _validate_date(
         session,
@@ -605,8 +608,10 @@ def create_report(
         session.delete(replaced)
         session.flush()
     session.add(report)
-    _commit_report_or_raise_conflict(session, small_group.id, body.meeting_date, viewer)
-    return report
+    event_id = _commit_report_or_raise_conflict(
+        session, small_group.id, body.meeting_date, viewer, submitted=None if is_draft else report
+    )
+    return report, event_id
 
 
 def _lock_for_write(session: Session, report: SmallGroupReport) -> None:
@@ -740,9 +745,10 @@ def submit_report(
     version: int,
     caller_member_id: int | None,
     caller_is_scoped: bool,
-) -> SmallGroupReport:
+) -> tuple[SmallGroupReport, int | None]:
     """Turn a draft into a submitted report, one way (report auto-save rule 5). The caller's member
-    becomes the submitter, with the same checks as filing a report."""
+    becomes the submitter, with the same checks as filing a report. Also returns the id of the report
+    submitted event it wrote, if any (for the fast path)."""
     _lock_for_write(session, report)
     if report.status != ReportStatus.DRAFT:
         raise ReportAlreadySubmittedError
@@ -768,9 +774,9 @@ def submit_report(
     report.submitted_by_member_id = caller_member_id
     report.submitted_at = func.now()
     report.version += 1
-    # The future submit email to elders goes here: an outbox row in this transaction.
+    event_id = _add_submitted_event(session, report)
     session.commit()
-    return report
+    return report, event_id
 
 
 class _NewItem(NamedTuple):
@@ -1483,11 +1489,35 @@ def _validated_roster(
     return roster
 
 
+def _add_submitted_event(session: Session, report: SmallGroupReport) -> int | None:
+    """Report submitted emails: the outbox row for a report that just became submitted, in the same
+    transaction, only while REPORT_SUBMITTED_EMAILS_ENABLED is on (spec rules 1 and 11). Returns its
+    id. Church-wide no meetings never come through here (rule 3)."""
+    if not notification_settings.report_submitted_emails_enabled:
+        return None
+    session.flush()  # the report's id, and its `submitted_at` (set to now()) read back
+    if report.submitted_at is None:
+        raise ValueError("the report was just submitted")
+    event = report_submitted_event(report, report.submitted_at)
+    session.add(event)
+    session.flush()  # event.id, for the fast path
+    return event.id
+
+
 def _commit_report_or_raise_conflict(
-    session: Session, small_group_id: int, meeting_date: date, viewer: DraftViewer
-) -> None:
-    """Commit, mapping a lost race on (group, meeting date) to the same error as the check."""
+    session: Session,
+    small_group_id: int,
+    meeting_date: date,
+    viewer: DraftViewer,
+    *,
+    submitted: SmallGroupReport | None = None,
+) -> int | None:
+    """Commit, mapping a lost race on (group, meeting date) to the same error as the check. With
+    `submitted` (a report filed straight as submitted), its submitted event goes in the same
+    transaction; its flush is inside the `try`, since that's where the race can show. Returns the
+    event's id, if one was written."""
     try:
+        event_id = _add_submitted_event(session, submitted) if submitted is not None else None
         session.commit()
     except IntegrityError as exc:
         session.rollback()
@@ -1496,6 +1526,7 @@ def _commit_report_or_raise_conflict(
             if existing is not None:
                 raise _date_taken(existing, viewer) from exc
         raise
+    return event_id
 
 
 def create_small_group(

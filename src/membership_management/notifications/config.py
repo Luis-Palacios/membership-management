@@ -16,8 +16,10 @@ class NotificationSettings(BaseSettings):
 
     environment: Literal["local", "staging", "production"] = Field(validation_alias="ENVIRONMENT")
 
-    # Kill switch. Off: no outbox rows, no worker, no fast path, no calls to auth-server.
+    # Kill switches, one per kind of email. Off: that kind writes no outbox rows (so its emails and
+    # its fast path never happen). With both off: no worker and no calls to auth-server at all.
     conversation_emails_enabled: bool = False
+    report_submitted_emails_enabled: bool = False
 
     # Same AUTH_SERVER_URL as ApiSettings: auth-server's origin as this service reaches it, no
     # trailing slash. The /internal/* calls go there.
@@ -31,9 +33,18 @@ class NotificationSettings(BaseSettings):
         # Every environment, local too: without the token auth-server answers 503
         # internal_api_disabled, so every email would retry for 24 h and expire unnoticed.
         token = self.internal_api_token.get_secret_value() if self.internal_api_token else ""
-        if self.conversation_emails_enabled and not token.strip():
+        if token.strip():
+            return self
+        if self.conversation_emails_enabled:
             raise ValueError("CONVERSATION_EMAILS_ENABLED needs INTERNAL_API_TOKEN")
+        if self.report_submitted_emails_enabled:
+            raise ValueError("REPORT_SUBMITTED_EMAILS_ENABLED needs INTERNAL_API_TOKEN")
         return self
+
+    @property
+    def any_emails_enabled(self) -> bool:
+        """Whether the worker has anything to do: it runs (embedded or on its own) while either is on."""
+        return self.conversation_emails_enabled or self.report_submitted_emails_enabled
 
     @field_validator("auth_server_url", mode="after")
     @classmethod
