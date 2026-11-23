@@ -11,13 +11,17 @@ class EmailSwitchesSchema(CamelModel):
     report_conversation: bool
     # "Submitted reports": a report submitted in a watched group (category report_submitted).
     report_submitted: bool
+    # "Weekly report reminders": the weekly nudge to a leader whose group hasn't submitted (category
+    # report_reminder). Independent of Watching (report-reminder-emails rule 14).
+    report_reminder: bool
 
 
 class NotificationPreferencesSchema(CamelModel):
     # The caller's switches (default on: no stored row = enabled).
     email: EmailSwitchesSchema
-    # The server's kill switch per kind (CONVERSATION_EMAILS_ENABLED, REPORT_SUBMITTED_EMAILS_ENABLED):
-    # staff-app hides a switch while its value is false, and the Watching switches while both are.
+    # The server's kill switch per kind (CONVERSATION_EMAILS_ENABLED, REPORT_SUBMITTED_EMAILS_ENABLED,
+    # REPORT_REMINDER_EMAILS_ENABLED): staff-app hides a switch while its value is false, and the
+    # Watching switches while both of the first two are.
     available: EmailSwitchesSchema
 
 
@@ -28,8 +32,9 @@ class EmailSwitchesUpdateSchema(CamelModel):
 
     report_conversation: bool | SkipJsonSchema[None] = None
     report_submitted: bool | SkipJsonSchema[None] = None
+    report_reminder: bool | SkipJsonSchema[None] = None
 
-    @field_validator("report_conversation", "report_submitted", mode="after")
+    @field_validator("report_conversation", "report_submitted", "report_reminder", mode="after")
     @classmethod
     def not_null(cls, value: bool | None) -> bool:
         # Defaults aren't validated, so this only sees a value that was sent.

@@ -79,7 +79,7 @@ also has (`ownProfile: update`); `pending` has nothing.
 | `GET /people/{id}/events`, `/first-assistance` | `membershipApplications: view` | ✓ | — |
 | `GET /me` | none (any valid JWT) | ✓ | ✓ |
 | `PATCH /me/member` | `ownProfile: update`; own linked member only, no scope, no `email` | ✓ | ✓ |
-| `GET`, `PUT /me/notification-preferences` | none (any valid JWT): the caller's own email switches (Conversations, Submitted reports) | ✓ | ✓ |
+| `GET`, `PUT /me/notification-preferences` | none (any valid JWT): the caller's own email switches (Conversations, Submitted reports, Weekly report reminders) | ✓ | ✓ |
 | `GET /me/watched-groups`, `PUT /small-groups/{id}/watch` | the full-scope observation audience (`smallGroups: all` + the conversation read rule), else 403 (before any 404) | ✓ (elders, admins) | ✗ (403: leaders have no watch setting) |
 
 A new role, or a change to what a role can do, is an auth-server change only; nothing here
@@ -166,6 +166,20 @@ auth-server's side: `auth-server/docs/REPORT-CONVERSATIONS-EMAIL-HANDOFF.md`,
   Names and counts are read at processing time (`attendedCount`/`peopleCount` only for a held
   meeting; no free text, no member names). A report gone or not submitted: processed, no
   deliveries. No throttle. Leaders are never possible watchers, so they never get one.
+- **Weekly report reminder** (`docs/specs/report-reminder-emails.md`, `docs/REPORT-REMINDER-EMAILS-API-HANDOFF.md`).
+  Trigger: `worker/reminder_trigger.py` (`run_once`, after `expire_overdue`) writes one
+  `small_group_report.reminder_due` event per church week when `scheduled_at <= now < scheduled_at +
+  6 h` (`REPORT_REMINDER_DAY` ISO weekday, 7 = the week's own Sunday; `REPORT_REMINDER_TIME`; both in
+  `CHURCH_TIMEZONE`), inserting `week_start` into `report_reminder_runs` (`ON CONFLICT DO NOTHING`) in
+  the same transaction, so sweeps and replicas can't double it. The event and its deliveries expire at
+  `scheduled_at + 6 h`, so nothing fires late after an outage. Consumer
+  (`data/small_groups/report_reminder_notifications.py`): candidates are the active leaders and
+  co-leaders (active member, linked user) of open groups with no submitted report dated in the week;
+  none in a church-wide no-meeting week. `process_report_reminder` keeps users holding `smallGroups:
+  view` and `smallGroupReports: create`, and queues one `report.reminder` per person (category
+  `report_reminder`) listing their groups by name then id with `hasDraft`; the link is `/groups/reports`
+  (2+ groups), `/groups/reports/new?groupId=` or `/groups/reports/{latestDraftId}/edit`. Names and the
+  draft flag only; no report content.
 - **Dispatch.** `worker/events.py` picks each event's consumer (`candidates`, `process`) from
   `_KNOWN` by `event_type` and `schema_version`; anything else goes `dead`.
 - **Generic `notifications/`**: `deliveries.py` (`create_deliveries`: drops users whose
@@ -176,7 +190,7 @@ auth-server's side: `auth-server/docs/REPORT-CONVERSATIONS-EMAIL-HANDOFF.md`,
 - **Tables.** `outbox_events`, `notification_deliveries` (unique `(source_event_id,
   recipient_user_id, channel)`, `expires_at` inherited from the event), `notification_preferences`
   (no row = on), `report_conversation_notify_state` (throttle), `small_group_watch_opt_outs` (no
-  row = watching). The two queues share the claim columns (`data/claim_columns.py`); events and
+  row = watching), `report_reminder_runs` (one row per church week triggered). The two queues share the claim columns (`data/claim_columns.py`); events and
   deliveries have no foreign keys. Migration `b453135219c0`.
 - **Claiming** (`data/claiming.py`, both queues): one statement leases a batch of 10 with `FOR UPDATE
   SKIP LOCKED` (new claim token, `attempts + 1`, lease 2 min) and turns rows past their deadline into
@@ -185,7 +199,7 @@ auth-server's side: `auth-server/docs/REPORT-CONVERSATIONS-EMAIL-HANDOFF.md`,
   trouble: attempt given back, `failures + 1`, never `dead`), exception (attempt kept), permanent
   (`dead`). Backoff by `failures`: 1, 5, 15, 60 min, then hourly. A transient send error stops the
   batch and releases the rest.
-- **The worker** (`worker/`, runs while either switch is on): `runner.run_once()` expires overdue rows, fetches the possible watchers
+- **The worker** (`worker/`, runs while any switch is on): `runner.run_once()` expires overdue rows, triggers the weekly report reminder when due, fetches the possible watchers
   (auth-server unreachable → claims nothing from either table), drains events then deliveries (at
   most 10 batches each), purges final rows (events after 30 days, deliveries after 90) and logs the
   oldest not-final row's age and the `dead` count per table. `run_forever` repeats it every 2
@@ -198,10 +212,11 @@ auth-server's side: `auth-server/docs/REPORT-CONVERSATIONS-EMAIL-HANDOFF.md`,
   `worker.fast_path.run_fast_path(event_id)` with `BackgroundTasks`: after the response, that one
   event (still `pending`, head start skipped) and its deliveries, through the same claim code.
   Best-effort; the sweep covers it.
-- **Routes.** `GET /me/notification-preferences` → `{ email: { reportConversation, reportSubmitted },
-  available: { reportConversation, reportSubmitted } }` (any signed-in user; `available` is each
-  kill switch, so staff-app can hide a switch). `PUT` takes `{ email: { …any subset } }` (unknown
-  keys and null 422) and returns the same shape. Watching is shared by both kinds.
+- **Routes.** `GET /me/notification-preferences` → `{ email: { reportConversation, reportSubmitted, reportReminder },
+  available: { reportConversation, reportSubmitted, reportReminder } }` (any signed-in user;
+  `available` is each kill switch, so staff-app can hide a switch). `PUT` takes `{ email: { …any
+  subset } }` (unknown keys and null 422) and returns the same shape. Watching is shared by the
+  first two kinds only; the reminder switch is independent of it.
   `GET /me/watched-groups` → `{ items: [{ smallGroupId, name, closed, watching }] }` (every group,
   open first) and `PUT /small-groups/{id}/watch` `{ watching }` → `{ smallGroupId, watching }`, both
   for the full-scope audience only (403 first, then 404). Watching changes nothing in the app.

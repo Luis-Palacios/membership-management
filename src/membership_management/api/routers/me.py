@@ -20,6 +20,9 @@ from membership_management.data.members.services import get_member_leads, update
 from membership_management.data.small_groups.conversation_notifications import (
     CATEGORY as CONVERSATION_CATEGORY,
 )
+from membership_management.data.small_groups.report_reminder_notifications import (
+    CATEGORY as REMINDER_CATEGORY,
+)
 from membership_management.data.small_groups.report_submitted_notifications import (
     CATEGORY as SUBMITTED_CATEGORY,
 )
@@ -74,6 +77,7 @@ def patch_my_member(
 _EMAIL_CATEGORIES = {
     "report_conversation": CONVERSATION_CATEGORY,
     "report_submitted": SUBMITTED_CATEGORY,
+    "report_reminder": REMINDER_CATEGORY,
 }
 
 
@@ -85,6 +89,7 @@ def _preferences(db: MembersSessionDep, user_id: str) -> NotificationPreferences
         available=EmailSwitchesSchema(
             report_conversation=notification_settings.conversation_emails_enabled,
             report_submitted=notification_settings.report_submitted_emails_enabled,
+            report_reminder=notification_settings.report_reminder_emails_enabled,
         ),
     )
 
@@ -111,9 +116,9 @@ def put_my_notification_preferences(
     body: NotificationPreferencesUpdateSchema, claims: CurrentClaimsDep, db: MembersSessionDep
 ) -> NotificationPreferencesSchema:
     # Any signed-in user, for every kind: it only concerns their own inbox (staff-app shows Submitted
-    # reports only to the watch audience). Works while a kill switch is off too (staff-app hides the
-    # switch then), so a choice made earlier is kept.
-    # One transaction for every key sent: both switches change, or neither does.
+    # reports only to the watch audience, Weekly report reminders only to leaders). Works while a kill
+    # switch is off too (staff-app hides the switch then), so a choice made earlier is kept.
+    # One transaction for every key sent: every switch changes, or none does.
     for key, enabled in body.email.model_dump(exclude_unset=True).items():
         set_enabled(db, claims.sub, _EMAIL_CATEGORIES[key], "email", enabled=enabled)
     db.commit()
