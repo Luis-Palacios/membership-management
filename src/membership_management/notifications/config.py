@@ -26,6 +26,10 @@ class NotificationSettings(BaseSettings):
     # Weekly reminder to leaders whose group hasn't submitted this week's report. Off: the worker
     # never triggers it, and staff-app hides the switch.
     report_reminder_emails_enabled: bool = False
+    # The in-app list (notifications spec, rule 3). A kind writes entries only when its own switch above
+    # AND this one are on. Off: no entries, and staff-app hides the bell. It needs no INTERNAL_API_TOKEN
+    # and keeps no worker running by itself: entries ride on the kinds' events.
+    in_app_notifications_enabled: bool = False
 
     # The reminder's schedule, one per deployment for now (report-reminder-emails spec, rule 1).
     # Same CHURCH_TIMEZONE as ApiSettings, read here too so the worker never imports the api package.
