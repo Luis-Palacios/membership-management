@@ -22,8 +22,8 @@ Branch **`feature/notifications-push`**. Each stage: `uv run ruff check .`, `uv 
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| Handoff written | ⬜ | |
-| 1. `PUSH_NOTIFICATIONS_ENABLED` flag + config (token rule, `.env.example`) | ⬜ | |
+| Handoff written | ✅ | `e8e69d0` |
+| 1. `PUSH_NOTIFICATIONS_ENABLED` flag + config (token rule, `.env.example`) | ✅ | `37b1eac` |
 | 2. `create_entries` returns the id and unread count per user | ⬜ | |
 | 3. A `push` request per recipient in the three consumers | ⬜ | |
 | 4. Sender: 404 `no_push_subscription` → `dead` (info) | ⬜ | |

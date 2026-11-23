@@ -3,6 +3,9 @@
 
 Unlike `create_deliveries` there is no preference filter (rule 2): everyone the domain decided on gets
 the entry, before any channel's switch is applied.
+
+`create_entries` also hands back each user's entry id and unread count, for the push channel (rule 5:
+the push opens that entry, and its `badgeCount` is the unread count including it).
 """
 
 from collections.abc import Mapping, Sequence
@@ -30,11 +33,24 @@ class EntryRequest:
     small_group_ids: Sequence[int] | None = None
 
 
-def create_entries(session: Session, source_event_id: int, requests: Sequence[EntryRequest]) -> int:
+@dataclass(frozen=True)
+class EntryResult:
+    """What a push needs about one stored entry: its id (`notificationId`) and the recipient's unread
+    count after the insert, this entry included (`badgeCount`)."""
+
+    notification_id: int
+    unread: int
+
+
+def create_entries(
+    session: Session, source_event_id: int, requests: Sequence[EntryRequest]
+) -> dict[str, EntryResult]:
     """Store the entries, inside the event's transaction. A retried event inserts nothing twice (unique
-    per event and user). Returns how many rows were inserted."""
+    per event and user). Returns, for every requested user, the entry's id and that user's unread count
+    now, in this same transaction. On a retry the rows already exist (`on conflict do nothing` returns
+    nothing for them), so their ids are read back by `(source_event_id, user_id)`."""
     if not requests:
-        return 0
+        return {}
     rows = [
         {
             "user_id": r.user_id,
@@ -48,13 +64,26 @@ def create_entries(session: Session, source_event_id: int, requests: Sequence[En
         }
         for r in requests
     ]
-    inserted = session.execute(
+    session.execute(
         insert(UserNotification)
         .values(rows)
         .on_conflict_do_nothing(index_elements=["source_event_id", "user_id"])
-        .returning(UserNotification.id)
     )
-    return len(inserted.all())
+    # One read for new and already-stored rows alike (our own insert is visible in this transaction).
+    n = UserNotification
+    ids = dict(
+        session.execute(
+            select(n.user_id, n.id).where(
+                n.source_event_id == source_event_id, n.user_id.in_({r.user_id for r in requests})
+            )
+        ).tuples()
+    )
+    unread = dict(
+        session.execute(
+            select(n.user_id, func.count()).where(n.user_id.in_(ids), n.read_at.is_(None)).group_by(n.user_id)
+        ).tuples()
+    )
+    return {user_id: EntryResult(entry_id, unread.get(user_id, 0)) for user_id, entry_id in ids.items()}
 
 
 @dataclass(frozen=True)
