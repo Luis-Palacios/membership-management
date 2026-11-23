@@ -26,6 +26,7 @@ from membership_management.data.claiming import (
 )
 from membership_management.data.outbox.models import OutboxEvent
 from membership_management.data.small_groups import conversation_notifications as conversations
+from membership_management.data.small_groups import report_reminder_notifications as reminders
 from membership_management.data.small_groups import report_submitted_notifications as submitted
 from membership_management.data.small_groups.access_rules import Perms
 from membership_management.notifications.auth_server import AuthServerUnavailable, permissions_for
@@ -56,6 +57,11 @@ _KNOWN = {
         schema_version=1,
         candidates=submitted.candidate_user_ids,
         process=submitted.process_report_submitted,
+    ),
+    reminders.REMINDER_DUE: _Consumer(
+        schema_version=1,
+        candidates=reminders.candidate_user_ids,
+        process=reminders.process_report_reminder,
     ),
 }
 
