@@ -221,6 +221,34 @@ auth-server's side: `auth-server/docs/REPORT-CONVERSATIONS-EMAIL-HANDOFF.md`,
   open first) and `PUT /small-groups/{id}/watch` `{ watching }` → `{ smallGroupId, watching }`, both
   for the full-scope audience only (403 first, then 404). Watching changes nothing in the app.
 
+## Notifications, Part 1: the in-app list (built)
+
+Spec `../docs/specs/notifications.md` (Part 1), handoff `docs/NOTIFICATIONS-API-HANDOFF.md`. Every
+notification the three consumers email also becomes one row in `user_notifications` per recipient
+(migration `ea20b44459b8`): the same `template`, `data` and `path` as the email, a `category`, a
+`subject_key` (`report_conversation:{id}`, `small_group_report:{id}`, `report_reminder:{Sunday}`),
+`small_group_ids` on reminder entries only, `read_at`. Unique `(source_event_id, user_id)`; no foreign
+keys (events live 30 days, entries 90).
+
+- **Writing.** Each consumer hands `EntryRequest`s to `notifications/entries.py` (`create_entries`,
+  generic like `create_deliveries`) in the event's transaction, for exactly the recipients it decided
+  (audience, Watching, throttle, never the submitter, reminder eligibility) and **before** any email
+  preference: in-app has no switch. A kind writes entries only while its own flag AND
+  `IN_APP_NOTIFICATIONS_ENABLED` are on (default off). The flag keeps no worker running by itself.
+- **Routes** (all `/me`, any signed-in user, camelCase). `GET /me/notifications?limit=20&before={id}`
+  → `{ items: [{ id, category, template, data, path, createdAt, readAt }], nextBefore }` (`limit`
+  1-50, newest first, `nextBefore` null on the last page). `GET /me/notifications/unread-count` →
+  `{ enabled, unread }`, never 404, one count over the partial index on unread rows.
+  `POST /me/notifications/{id}/read` → `{ path }`, idempotent, 404 when it isn't the caller's or is
+  gone. `POST /me/notifications/read-all` → `{ marked }`. Everything but the count is 404
+  `notifications_disabled` while the flag is off.
+- **Read state.** `POST /report-conversations/{id}/read` and `read-all` also read the caller's entries
+  for those threads, in the same transaction (rule 13, while the flag is on). A report becoming
+  submitted (`_on_report_submitted`, both submit paths) marks read the reminder entries of its church
+  week whose groups have now all submitted (rule 14, `clear_reminder_entries`).
+- **Purge.** The worker's maintenance deletes entries older than 90 days by `created_at`, in bounded
+  batches (`purge_entries`, `purged["notifications"]` in the log line).
+
 ## Guests and guest groups (built)
 
 People who aren't members take part in guest groups and their reports, never mixed into `members`. Rules and contracts: `docs/specs/guest-small-groups.md` (workspace repo, *rule N* below); this side: `docs/GUEST-SMALL-GROUPS-API-HANDOFF.md`. Code: `data/guests/` (`models/guest.py`, `services.py` for writes, `lookup_services.py` for list/search/detail, `queries.py`, `results.py`), `api/routers/guests.py`, and the guest routes in `api/routers/small_groups.py`.

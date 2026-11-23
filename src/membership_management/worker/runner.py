@@ -25,12 +25,14 @@ from membership_management.notifications.sender import Sender
 from membership_management.notifications.sending import SendStats, send_due_deliveries
 from membership_management.worker.events import EventStats, process_due_events
 from membership_management.worker.maintenance import (
+    ENTRIES_NAME,
     PURGE_BATCHES_PER_RUN,
     QUEUES,
     QueueHealth,
     expire_overdue,
     health,
     purge,
+    purge_entries,
 )
 from membership_management.worker.reminder_trigger import trigger_report_reminder
 
@@ -126,6 +128,17 @@ def run_once(
             if n == 0 or stop.is_set():
                 break
         report.purged[queue.name] = removed
+
+    # The in-app list's 90-day retention (notifications spec, rule 16), batched the same way.
+    removed = 0
+    for _ in range(PURGE_BATCHES_PER_RUN):
+        with sessions() as session:
+            n = purge_entries(session)
+            session.commit()
+        removed += n
+        if n == 0 or stop.is_set():
+            break
+    report.purged[ENTRIES_NAME] = removed
 
     with sessions() as session:
         report.health = {q.name: health(session, q) for q in QUEUES}

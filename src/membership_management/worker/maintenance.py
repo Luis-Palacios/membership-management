@@ -7,6 +7,7 @@ from typing import NamedTuple
 from sqlalchemy import Table, delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
+from membership_management.data.notifications.models import UserNotification
 from membership_management.notifications.sending import DELIVERIES
 from membership_management.worker.events import EVENTS
 
@@ -62,6 +63,25 @@ def purge(session: Session, queue: Queue) -> int:
         .scalar_subquery()
     )
     return len(session.execute(delete(queue.table).where(c.id.in_(old)).returning(c.id)).all())
+
+
+# In-app entries (notifications spec, rule 16): kept 90 days from creation, read or not.
+ENTRIES_NAME = "notifications"
+ENTRIES_RETENTION = timedelta(days=90)
+
+
+def purge_entries(session: Session) -> int:
+    """In-app entries older than the retention, one bounded batch (committed by the caller). Oldest
+    first by id, which follows `created_at`, so the scan stops at the first young row."""
+    n = UserNotification
+    old = (
+        select(n.id)
+        .where(n.created_at < func.now() - ENTRIES_RETENTION)
+        .order_by(n.id)
+        .limit(PURGE_BATCH)
+        .scalar_subquery()
+    )
+    return len(session.execute(delete(n).where(n.id.in_(old)).returning(n.id)).all())
 
 
 class QueueHealth(NamedTuple):
