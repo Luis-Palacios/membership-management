@@ -129,6 +129,11 @@ def _send_outcome(response: httpx.Response) -> SendOutcome:
     reason = _reason(response)
     if status == 410 or (status == 404 and code == "recipient_unavailable"):
         return SendOutcome("dead", reason)  # recipient gone, banned or unverified
+    if status == 404 and code == "no_push_subscription":
+        # Push: the person has no device left (never turned it on, signed out, or every one expired).
+        # Normal, not a bug: dead, and not an error in the logs. 503 send_failed is a plain transient.
+        logger.info("auth-server notifications: %s", reason)
+        return SendOutcome("dead", reason)
     if status == 404:
         logger.error("auth-server notifications: bare 404 (route not deployed or wrong base URL)")
         return SendOutcome("transient", reason)
