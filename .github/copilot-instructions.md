@@ -11,15 +11,17 @@ is `staging` or `production` in the real environment; see `env_file.py`).
 - Lint: `uv run ruff check .`. Ruff uses a 110-character line limit and enforces annotation, async,
   type-checking-import, naming, security, and import-sorting rules.
 - Type-check: `uv run ty check`.
-- There is no test suite or test runner yet, so neither a full-suite nor a single-test command
-  exists. Add the appropriate `uv run <runner> path\to\test.py::test_name` command here when tests
-  are introduced.
+- Run the focused hook tests with `uv run python -m unittest discover -s tests`. For one test, use
+  `uv run python -m unittest discover -s tests -p test_check_hook.py -k test_missing_git_and_git_nonzero`.
 - The `membership-management` script is still a placeholder. Run the implemented CLI with
   `uv run python -m membership_management.cli.main`.
 - Start the API for day-to-day development with
   `uv run --package membership-management-api fastapi dev src\membership_management\api\main.py`.
   For production-style behavior, including configured Uvicorn settings, use
   `uv run --package membership-management-api python -m membership_management.api.run`.
+- For an explicitly requested commit, push, or PR, consult `.claude/skills/ship/SKILL.md` for this
+  repo's checks and handoff conventions. Adapt invocation to the current host; a request to commit
+  alone does not authorize a push or PR.
 - Generate a members-database migration with
   `uv run alembic revision --autogenerate -m "short description"`, review the generated file in
   `src\membership_management\data\migrations\versions\`, then apply it with
@@ -55,13 +57,14 @@ is `staging` or `production` in the real environment; see `env_file.py`).
   ORM instances.
 - The recent-membership-application service uses a 60-day window relative to the newest persisted
   application, falling back to the current UTC time when no applications exist. Preserve that
-  anchor behavior unless changing the feature contract.
+  anchor behavior unless changing the feature contract. The CLI and API both use this default;
+  the 30-day descriptions in `CLAUDE.md` and `README.md` are outdated.
 - The members database is this service's own PostgreSQL database (psycopg 3,
   `MEMBERS_DATABASE_URL`), separate from auth-server's. `data/database.py` owns its engine,
   `MembershipSessionLocal`, and `MemberManagementBase`, whose metadata has a constraint naming
-  convention. Models live per domain in `data/<domain>/models/` (`members`, `small_groups`), are
-  exported from that package's `__init__.py`, and every domain's `models` package is imported in the
-  `data/models.py` registry.
+  convention. Models live per domain in `data/<domain>/models/`, are exported from that package's
+  `__init__.py`, and every domain's `models` package is imported in the `data/models.py` registry
+  (currently `guests`, `members`, `notifications`, `outbox`, and `small_groups`).
 - Alembic (`data/migrations/`, root `alembic.ini`, `script_location` is the package resource
   `membership_management.data:migrations`) owns the whole members database and only that database;
   never point it at the assimilation SQL Server database.
