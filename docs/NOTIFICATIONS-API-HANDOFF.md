@@ -26,7 +26,7 @@ Branch **`feature/notifications`**. Each stage: `uv run ruff check .`, `uv run r
 | 2. `create_entries` in `notifications/`; the three consumers write entries | ✅ | `e8eef34` |
 | 3. Routes + schemas (`GET /me/notifications`, `/unread-count`, `POST /{id}/read`, `/read-all`) | ✅ | `e73df5c` |
 | 4. Rule 13 and rule 14 read side effects | ✅ | `aac614e` |
-| 5. 90-day purge; `docs/ARCHITECTURE.md`, `.env.example`, `CLAUDE.md` | ⬜ | |
+| 5. 90-day purge; `docs/ARCHITECTURE.md`, `.env.example`, `CLAUDE.md` | ✅ | `c29d0bc` |
 
 ## Plan per stage
 
