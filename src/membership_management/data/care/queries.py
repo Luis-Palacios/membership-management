@@ -224,7 +224,8 @@ def coming_up_query(
     viewer: CareLogViewer, member_id: int | None, *, today: date, horizon_days: int
 ) -> Select:
     """The caller's planned entries (as author or participant, and that they see) not past `horizon_days`
-    from today, soonest first; the past-due ones (before today) are the first rows."""
+    from today, soonest first (earlier dates, then by time, so past-due plans come first; the service
+    splits them with `plan_past_due`)."""
     mine = CareLogEntry.author_user_id == viewer.user_id
     if member_id is not None:
         mine = or_(

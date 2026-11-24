@@ -137,7 +137,7 @@ class CareLogEntrySchema(CamelModel):
     cancel_reason: str | None
     author: CareLogAuthorSchema
     source: CareLogSourceSchema | None
-    # Planned and its date is before today: *Record how it went*.
+    # Planned, and its moment has passed in church time (`plan_past_due`): *Record how it went*.
     past_due: bool
     # The author edits and deletes; the author or a participant completes or cancels a plan.
     can_edit: bool
@@ -169,9 +169,9 @@ class CareAudienceSchema(CamelModel):
 class CareLogComingUpSchema(CamelModel):
     """The caller's own plans (care spec rule 11); no paging, the lists stay short."""
 
-    # Planned and dated before today, oldest first: *Record how it went*.
+    # Planned and past due (`plan_past_due`: its time passed, or its day is over), oldest first.
     past_due: list[CareLogEntrySchema]
-    # Planned from today through the next 7 days, soonest first.
+    # The rest, through the next 7 days, soonest first.
     upcoming: list[CareLogEntrySchema]
 
 
