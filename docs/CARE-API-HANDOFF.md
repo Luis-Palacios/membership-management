@@ -61,8 +61,8 @@ Keep the existing conventions:
 | **Part 1, branch `feature/care-log`** | | |
 | 1. Migration, models, seed (care log) | ✅ | `ccfede2` |
 | 2. Care log routes, people search, visibility | ✅ | `a90a8b4` |
-| 3. `careLog` timeline source | ✅ | (hash added by stage 4's commit) |
-| 4. Coming up | ⬜ | |
+| 3. `careLog` timeline source | ✅ | `e3acc5c` |
+| 4. Coming up | ✅ | (hash added by stage 5's commit) |
 | 5. Docs (Part 1) | ⬜ | |
 | **Part 2, branch `feature/care`** | | |
 | 6. Migration, models, seed (care) | ⬜ | |
@@ -170,6 +170,22 @@ Keep the existing conventions:
   a range with nothing in it still lists the plan ahead; cancelled and deleted entries are left out; the
   guest's visit shows for the elder and the guest group's leader, 404 for another leader; on a shared
   date the care log entry goes above the report.
+
+- **Stage 4, shape:** `GET /care-log/coming-up` (`careLog: view`) answers
+  `{ "pastDue": [CareLogEntrySchema], "upcoming": [CareLogEntrySchema] }`: planned, not deleted,
+  author or participant, and visible to the caller (a participant of a plan they can't see, such as an
+  elder's `private` one, doesn't get it). `upcoming` is today through today + 7, by date then time;
+  `pastDue` is before today, oldest first. Declared before `/{entry_id}`. No paging.
+- **Stage 4, a bug in stage 1 found and fixed here:** cancelling a plan with no purpose hit the check
+  `status = 'planned' OR text IS NOT NULL` (500). It is now `status <> 'done' OR text IS NOT NULL`
+  (`ck_care_log_entries_text_when_done`), changed in stage 1's migration in place (the branch isn't
+  merged or deployed anywhere); the scratch DB went through `downgrade -1` + `upgrade head` + `alembic
+  check` again.
+- **Stage 4, tried** (14 checks): elder (author of both seeded plans) gets the past-due call and the
+  meeting ahead; the leader who is a participant of both gets the same; a co-leader, another group's
+  leader, an unlinked elder (author is matched by user id, the seeded ones belong to another) and a deacon
+  with no member get empty lists; `user` 403. The horizon (a plan today and on day 7 listed, day 8 not),
+  ordering by date then time, and completed, cancelled and deleted plans leaving the list.
 
 ---
 

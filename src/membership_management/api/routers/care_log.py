@@ -12,6 +12,7 @@ from membership_management.api.jwt_auth import get_current_claims, require_permi
 from membership_management.api.rate_limit import default_user_rate_limit
 from membership_management.api.schemas.care_log import (
     CareLogCancelSchema,
+    CareLogComingUpSchema,
     CareLogCompleteSchema,
     CareLogCreateSchema,
     CareLogEntrySchema,
@@ -31,6 +32,7 @@ from membership_management.data.care.services import (
     PersonNotFoundError,
     SourceNotFoundError,
     cancel_entry,
+    coming_up,
     complete_entry,
     create_entry,
     delete_entry,
@@ -189,6 +191,26 @@ def post_entry(
     except (CareLogInvalidError, PersonNotFoundError, SourceNotFoundError) as exc:
         raise _http_error(exc) from exc
     return _schema(db, ctx, entry)
+
+
+@router.get(
+    "/coming-up",
+    name="get_care_log_coming_up",
+    description=(
+        "The caller's own planned entries (as author or taking part): the past-due ones to record, "
+        "then those in the next 7 days"
+    ),
+    dependencies=[_can_view],
+)
+def get_coming_up(db: MembersSessionDep, ctx: CareContextDep) -> CareLogComingUpSchema:
+    today = church_today()
+    past_due, upcoming = coming_up(
+        db, ctx.viewer, ctx.member.id if ctx.member is not None else None, today=today
+    )
+    schemas = iter(entry_schemas(db, ctx, [*past_due, *upcoming], today=today))
+    return CareLogComingUpSchema(
+        past_due=[next(schemas) for _ in past_due], upcoming=[next(schemas) for _ in upcoming]
+    )
 
 
 @router.get(

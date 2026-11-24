@@ -92,7 +92,8 @@ class CareLogEntry(MemberManagementBase):
     __tablename__ = "care_log_entries"
     __table_args__ = (
         CheckConstraint("kind IN ('call', 'meeting', 'visit') OR status = 'done'", name="plan_kinds"),
-        CheckConstraint("status = 'planned' OR text IS NOT NULL", name="text_unless_planned"),
+        # A plan may have no purpose, and cancelling it keeps it that way.
+        CheckConstraint("status <> 'done' OR text IS NOT NULL", name="text_when_done"),
         CheckConstraint("(kind = 'meeting') = (meeting_mode IS NOT NULL)", name="meeting_mode_iff_meeting"),
         CheckConstraint("kind = 'heard' OR heard_from IS NULL", name="heard_from_only_when_heard"),
         CheckConstraint("char_length(heard_from) <= 200", name="heard_from_length"),

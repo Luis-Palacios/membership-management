@@ -126,7 +126,7 @@ def upgrade() -> None:
             name=op.f("ck_care_log_entries_plan_kinds"),
         ),
         sa.CheckConstraint(
-            "status = 'planned' OR text IS NOT NULL", name=op.f("ck_care_log_entries_text_unless_planned")
+            "status <> 'done' OR text IS NOT NULL", name=op.f("ck_care_log_entries_text_when_done")
         ),
         sa.CheckConstraint(
             "char_length(cancel_reason) <= 500", name=op.f("ck_care_log_entries_cancel_reason_length")

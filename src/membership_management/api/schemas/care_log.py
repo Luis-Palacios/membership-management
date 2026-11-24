@@ -143,6 +143,15 @@ class CareLogEntrySchema(CamelModel):
     created_at: datetime
 
 
+class CareLogComingUpSchema(CamelModel):
+    """The caller's own plans (care spec rule 11); no paging, the lists stay short."""
+
+    # Planned and dated before today, oldest first: *Record how it went*.
+    past_due: list[CareLogEntrySchema]
+    # Planned from today through the next 7 days, soonest first.
+    upcoming: list[CareLogEntrySchema]
+
+
 class CarePersonSearchRowSchema(CamelModel):
     """Only what tells people apart, like the tag search: no email, address, notes or attendance."""
 
