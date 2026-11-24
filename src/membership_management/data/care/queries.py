@@ -33,7 +33,6 @@ from membership_management.data.small_groups.models import (
     SmallGroup,
     SmallGroupMember,
     SmallGroupReport,
-    SmallGroupReportItem,
 )
 from membership_management.data.small_groups.results import PersonKey
 
@@ -96,7 +95,15 @@ def care_log_visible_condition(viewer: CareLogViewer) -> ColumnElement[bool]:
             ),
         ),
     )
-    return or_(own, and_(CareLogEntry.visibility == CareLogVisibility.LEADERS, person_in_scope))
+    leaders_see = and_(CareLogEntry.visibility == CareLogVisibility.LEADERS, person_in_scope)
+    if viewer.member_id is not None:
+        # Rule 8: the person themselves never sees it. Without `careLog: all`, an entry about the caller's
+        # own member is theirs only as its author.
+        about_me = exists().where(
+            CareLogEntryPerson.entry_id == CareLogEntry.id, CareLogEntryPerson.member_id == viewer.member_id
+        )
+        leaders_see = and_(leaders_see, ~about_me)
+    return or_(own, leaders_see)
 
 
 def care_log_entry_visible_query(viewer: CareLogViewer, entry_id: int) -> Select:
@@ -254,15 +261,6 @@ def source_reports_query(report_ids: Collection[int]) -> Select:
         .join(SmallGroup, SmallGroup.id == SmallGroupReport.small_group_id)
         .where(SmallGroupReport.id.in_(report_ids))
     )
-
-
-def source_items_query(item_ids: Collection[int]) -> Select:
-    """Report items by id, with their section and report."""
-    return select(
-        SmallGroupReportItem.id.label("id"),
-        SmallGroupReportItem.report_id.label("report_id"),
-        SmallGroupReportItem.section.label("section"),
-    ).where(SmallGroupReportItem.id.in_(item_ids))
 
 
 def source_conversations_query(conversation_ids: Collection[int]) -> Select:

@@ -83,7 +83,7 @@ def upgrade() -> None:
             "source_kind",
             sa.Enum(
                 "attendance",
-                "item",
+                "section",
                 "conversation",
                 name="source_kind",
                 native_enum=False,
@@ -95,7 +95,7 @@ def upgrade() -> None:
         sa.Column("source_report_id", sa.Integer(), nullable=True),
         sa.Column("source_member_id", sa.Integer(), nullable=True),
         sa.Column("source_guest_id", sa.Integer(), nullable=True),
-        sa.Column("source_item_id", sa.Integer(), nullable=True),
+        sa.Column("source_section", sa.String(length=16), nullable=True),
         sa.Column("source_conversation_id", sa.Integer(), nullable=True),
         sa.Column("cancel_reason", sa.String(length=500), nullable=True),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
@@ -108,14 +108,18 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint(
             "(source_kind IS NULL AND source_report_id IS NULL AND source_member_id IS NULL"
-            " AND source_guest_id IS NULL AND source_item_id IS NULL AND source_conversation_id IS NULL)"
-            " OR (source_kind = 'attendance' AND source_item_id IS NULL AND source_conversation_id IS NULL"
+            " AND source_guest_id IS NULL AND source_section IS NULL AND source_conversation_id IS NULL)"
+            " OR (source_kind = 'attendance' AND source_section IS NULL AND source_conversation_id IS NULL"
             " AND num_nonnulls(source_member_id, source_guest_id) = 1)"
-            " OR (source_kind = 'item' AND source_report_id IS NULL AND source_member_id IS NULL"
+            " OR (source_kind = 'section' AND source_section IS NOT NULL AND source_member_id IS NULL"
             " AND source_guest_id IS NULL AND source_conversation_id IS NULL)"
             " OR (source_kind = 'conversation' AND source_report_id IS NULL AND source_member_id IS NULL"
-            " AND source_guest_id IS NULL AND source_item_id IS NULL)",
+            " AND source_guest_id IS NULL AND source_section IS NULL)",
             name=op.f("ck_care_log_entries_source_matches_kind"),
+        ),
+        sa.CheckConstraint(
+            "source_section IN ('prayer', 'praise', 'followUp')",
+            name=op.f("ck_care_log_entries_source_section_valid"),
         ),
         sa.CheckConstraint(
             "kind = 'heard' OR heard_from IS NULL",
@@ -151,12 +155,6 @@ def upgrade() -> None:
             ["source_guest_id"], ["guests.id"], name=op.f("fk_care_log_entries_source_guest_id_guests")
         ),
         sa.ForeignKeyConstraint(
-            ["source_item_id"],
-            ["small_group_report_items.id"],
-            name=op.f("fk_care_log_entries_source_item_id_small_group_report_items"),
-            ondelete="SET NULL",
-        ),
-        sa.ForeignKeyConstraint(
             ["source_member_id"], ["members.id"], name=op.f("fk_care_log_entries_source_member_id_members")
         ),
         sa.ForeignKeyConstraint(
@@ -177,13 +175,6 @@ def upgrade() -> None:
         unique=False,
     )
     op.create_index(
-        "ix_care_log_entries_live",
-        "care_log_entries",
-        ["occurred_on"],
-        unique=False,
-        postgresql_where=sa.text("deleted_at IS NULL"),
-    )
-    op.create_index(
         "ix_care_log_entries_occurred_on_desc",
         "care_log_entries",
         [sa.literal_column("occurred_on DESC")],
@@ -194,9 +185,6 @@ def upgrade() -> None:
         "care_log_entries",
         ["source_conversation_id"],
         unique=False,
-    )
-    op.create_index(
-        op.f("ix_care_log_entries_source_item_id"), "care_log_entries", ["source_item_id"], unique=False
     )
     op.create_index(
         op.f("ix_care_log_entries_source_report_id"), "care_log_entries", ["source_report_id"], unique=False
@@ -297,14 +285,8 @@ def downgrade() -> None:
     op.drop_index(op.f("ix_care_log_entry_participants_entry_id"), table_name="care_log_entry_participants")
     op.drop_table("care_log_entry_participants")
     op.drop_index(op.f("ix_care_log_entries_source_report_id"), table_name="care_log_entries")
-    op.drop_index(op.f("ix_care_log_entries_source_item_id"), table_name="care_log_entries")
     op.drop_index(op.f("ix_care_log_entries_source_conversation_id"), table_name="care_log_entries")
     op.drop_index("ix_care_log_entries_occurred_on_desc", table_name="care_log_entries")
-    op.drop_index(
-        "ix_care_log_entries_live",
-        table_name="care_log_entries",
-        postgresql_where=sa.text("deleted_at IS NULL"),
-    )
     op.drop_index("ix_care_log_entries_author_user_id_status_occurred_on", table_name="care_log_entries")
     op.drop_index(op.f("ix_care_log_entries_author_member_id"), table_name="care_log_entries")
     op.drop_table("care_log_entries")

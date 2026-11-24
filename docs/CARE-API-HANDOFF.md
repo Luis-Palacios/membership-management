@@ -63,7 +63,8 @@ Keep the existing conventions:
 | 2. Care log routes, people search, visibility | ✅ | `a90a8b4` |
 | 3. `careLog` timeline source | ✅ | `e3acc5c` |
 | 4. Coming up | ✅ | `a9975a6` |
-| 5. Docs (Part 1) | ✅ | the commit that carries this line (see `git log`) |
+| 5. Docs (Part 1) | ✅ | `0e167a6` |
+| Review fixes (stages 1–4) | ✅ | the commit "Fix care log review findings" (see `git log`) |
 | **Part 2, branch `feature/care`** | | |
 | 6. Migration, models, seed (care) | ⬜ | |
 | 7. Access, create, read, edit, status, owners, read marks | ⬜ | |
@@ -87,10 +88,9 @@ Keep the existing conventions:
   with no purpose gets one by an edit); `text`, `heard_from`, `others` and `cancel_reason` also have
   length CHECKs; `source_matches_kind` requires, for `attendance`, exactly one of
   `source_member_id` / `source_guest_id` (those columns have no cascade, so they stay after the report
-  is deleted while `source_report_id` goes null); `item` and `conversation` need only their id column
-  to be null or set. Known limit: `small_group_report_items.id` isn't stable across report edits
-  (`SmallGroupReportItem` docstring), so an `item` source goes `gone` when the report's items are
-  rewritten; staff-app says "no longer available" for both.
+  is deleted while `source_report_id` goes null); `section` needs its `source_section`; `conversation`
+  needs only its id column to be null or set. (The first version anchored items by id, which a report
+  edit breaks: replaced by `section`, see *Review fixes*.)
 - **Stage 1, seed:** `data/seed/care.py` runs last and draws no random numbers. The made-up elders are
   the conversations seeder's (`seed-elder-N`), found through their comments; the leaders have
   `seed-user-<member id>` ids. No account matches those, so every seeded entry shows as someone else's
@@ -108,10 +108,10 @@ Keep the existing conventions:
   routes; the timeline routes change in stage 3.
 - **Stage 2, validation codes** (422 body `{ detail, code }`, through `CodedHTTPError`): finer than the
   handoff's five. `kind_status`, `date`, `text`, `others`, `heard_from`, `meeting_mode`, `people`,
-  `participants`, `reason` (cancel), `status` (PATCH changing it), `source` (PATCH sending one).
+  `participants`, `reason` (cancel), `status` (PATCH changing it), `source` (PATCH sending one, or a
+  section source without report or section), `kind` and `visibility` (PATCH sending null).
   Length limits aren't pydantic `max_length`, so a too-long text is a coded 422, not FastAPI's list.
-  `heardFrom` isn't required for a `heard` entry (the handoff's list doesn't ask for it, staff-app's form
-  does). 404 for a person or source outside the caller's reach; an inactive person is 422 `people`
+  `heardFrom` is required for a `heard` entry (rule 1; see *Review fixes*). 404 for a person or source outside the caller's reach; an inactive person is 422 `people`
   (checked after the scope, so it tells nothing about people out of scope). 409 `link` (no linked member,
   create only) and 409 `not_planned` (complete or cancel of something not planned). 403 `author`.
 - **Stage 2, decisions:** the write routes (create, edit, delete, complete, cancel, people search) need
@@ -126,9 +126,10 @@ Keep the existing conventions:
   `inThisGroup`, which has no meaning without a group), min 2 characters, at most 10, inside the caller's
   members / guests scope (`careLog: all` searches everyone), active people only.
 - **Stage 2, sources:** the body's `source` is `{ kind: "attendance", reportId, memberId | guestId }`,
-  `{ kind: "item", itemId }` or `{ kind: "conversation", conversationId }`. Attendance rows, follow-up
-  items and threads need the caller's observation audience, prayer and praise items only the group's
-  scope, and the report must be submitted; otherwise 404. In a response, `source` is null (none),
+  `{ kind: "section", reportId, section: "prayer" | "praise" | "followUp" }` or
+  `{ kind: "conversation", conversationId }`. Attendance rows, the `followUp` section and threads need
+  the caller's observation audience, `prayer` and `praise` only the group's scope (the same rule as
+  opening that report), and the report must be submitted; otherwise 404. In a response, `source` is null (none),
   `{ visible: false, gone: false }` with no ids (the caller can't open it) or `{ gone: true }` (deleted).
 - **Stage 2, tried** (`TestClient`, `get_current_claims` overridden, scratch DB `care_scratch` migrated
   and seeded, `GUEST_GROUPS_ENABLED` not needed for the care log), 132 checks, all passing. Roles, with
@@ -196,6 +197,53 @@ Keep the existing conventions:
   Part 2 starts from `main` as `feature/care` once this is merged; it makes `visibility` nullable and adds
   `care_case_id` as the handoff says.
 
+- **Review fixes (stages 1–4), in one commit:**
+  1. *The person never sees it (rule 8).* In `care_log_visible_condition`, for a viewer without
+     `careLog: all` who has a linked member, the `leaders` branch also requires that none of the entry's
+     people is the viewer's own member; the author branch is untouched. `careLog: all` keeps seeing
+     everything (decided: "only for leaders"). Lists, single entry, timeline, *Coming up* and the
+     complete / cancel 404 all follow, being the same condition. Tried: an elder logs a `leaders` plan
+     about a co-leader with him as participant: he gets 404 on GET and on complete, nothing on his own
+     member timeline or in his coming-up, the group's other leader and the elder see it, and he sees his
+     own entry about himself as its author.
+  2. *Section sources (rule 12).* `item` is replaced by `section`: `source_report_id` (SET NULL) plus
+     `source_section` (`prayer` | `praise` | `followUp`, CHECK as in `report_conversations.section`);
+     `source_item_id` and its FK and index are gone; kinds are `attendance`, `section`, `conversation`
+     (as the spec's `care_case_links`, which Part 2 mirrors). Body `{ kind: "section", reportId, section }`
+     (422 `source` without either); response `source` keeps its fields and adds `section`.
+     Visibility: `followUp` needs the observation audience, `prayer` and `praise` the report's group in
+     the caller's scope, the report submitted (the rule for opening that report, which is narrower than
+     the timeline's "prayer and praise tags from any group", since the link opens the report). Stage 1's
+     migration was edited in place (unmerged), then `alembic check` and `downgrade -1` + `upgrade head`
+     again; the seed's follow-up entries are `section` / `followUp` of the report. Tried: a section
+     source survives every item of the report being deleted, and `gone` follows a deleted report.
+     Note `alembic check` doesn't compare the non-native enum CHECKs, so the `source_kind` list was
+     checked by seeding. Replaces the "known limit" of stage 1.
+  3. *Complete / cancel race.* `_lock_planned` takes `SELECT ... FOR UPDATE` on the row, reloads it and
+     only then requires `planned` (409 `not_planned` otherwise), so a complete racing a cancel, or two
+     completes, can't both win. (`session.refresh(..., with_for_update=True)` is refused by Postgres
+     with the eager outer join of the author, hence the separate locking select.) Tried with two
+     sessions and a thread: the cancel waited on the lock, then lost; the outcome text stayed.
+  4. *`heardFrom` required for `heard`* (1–200 after trimming): 422 `heard_from` on create, and on an
+     edit that leaves a `heard` entry without it (blank, or kind changed to `heard` without it). The
+     earlier "not required" deviation is withdrawn.
+  5. *Participants.* Recorded: they get no access (rule 3); *Coming up* and complete / cancel only for
+     entries they can already see. staff-app should warn when a picked participant can't see the entry:
+     `participants[].sees` in `CareLogEntrySchema` says it. It is computed by the same
+     `care_log_visible_condition` for that participant's own user (`members.user_id`; false when the
+     member has no user), assuming `careLog: view` without `all` and the scope of the groups they lead
+     today (permissions of another user aren't known here; an elder participant is therefore shown as
+     not seeing a `private` entry although they would). Cost: two small queries per distinct participant
+     and one per (entry, participant); participants are at most 10 and *Coming up* is short, so it was
+     kept on every response rather than on a separate route.
+  6. *Nits.* Stage 5's hash is `0e167a6` (above). `canEdit` and `canComplete` are false without
+     `careLog: create` (the write routes would 403). The 422 `kind` and `visibility` codes (PATCH sending
+     null) are listed above. Index: `ix_care_log_entries_live` (partial on `deleted_at IS NULL`) is
+     dropped, `ix_care_log_entries_occurred_on_desc` kept: the partial one covered the same column and
+     deleted rows are rare, and the descending one is what the newest-first timeline and lists order by.
+  Tried again: `try_care` 153 checks (was 132), `try_timeline` 16, `try_coming` 14, and the 270-request
+  timeline dump still identical with the care entries removed.
+
 ---
 
 # Part 1: the care log (branch `feature/care-log`)
@@ -213,7 +261,7 @@ New domain package `data/care/` (`models/`, `queries.py`, `services.py`, `result
 | `CareLogStatus` | `done`, `planned`, `cancelled` |
 | `MeetingMode` | `in_person`, `online` |
 | `CareLogVisibility` | `leaders`, `private` |
-| `CareLogSourceKind` | `attendance`, `item`, `conversation` |
+| `CareLogSourceKind` | `attendance`, `section`, `conversation` (was `item`: see *Review fixes*) |
 
 **`care_log_entries`:**
 - `kind`, `status`, `meeting_mode` (null unless `kind = meeting`, CHECK).
@@ -223,11 +271,12 @@ New domain package `data/care/` (`models/`, `queries.py`, `services.py`, `result
 - `visibility` (NOT NULL in Part 1; stage 6 makes it nullable for entries inside a care).
 - `author_user_id`, `author_member_id` → `members.id`.
 - Source (rule 12): `source_kind` null; `source_report_id` → `small_group_reports.id` **ON DELETE SET
-  NULL**; `source_member_id` / `source_guest_id` (the attendance row's person); `source_item_id` →
-  `small_group_report_items.id` ON DELETE SET NULL; `source_conversation_id` →
-  `report_conversations.id` ON DELETE SET NULL. CHECK: the columns match `source_kind` (attendance:
-  report + one person; item: item; conversation: conversation; none: all null). After a delete the
-  kind stays and the ids go null: the API reports the source as gone.
+  NULL**; `source_member_id` / `source_guest_id` (the attendance row's person); `source_section`
+  (`prayer` | `praise` | `followUp`, with `source_report_id`; there is no item id: a report edit rewrites
+  every item); `source_conversation_id` → `report_conversations.id` ON DELETE SET NULL. CHECK: the
+  columns match `source_kind` (attendance: report + one person; section: a section; conversation:
+  conversation; none: all null). After a delete the kind stays and the ids go null: the API reports the
+  source as gone.
 - `cancel_reason` (≤ 500, null), `completed_at` (timestamptz, null).
 - `created_at`, `edited_at`, `deleted_at`.
 - CHECK `kind IN ('call', 'meeting', 'visit') OR status = 'done'` (rule 6).
@@ -300,9 +349,9 @@ its SQL twin `care_log_visible_condition(...)` for lists and the timeline. Both 
   kind; `meetingMode` on another kind or missing on a meeting.
 - `people`: none, more than 10, an inactive member, or anyone outside the caller's scope without
   `careLog: all` (**404** for a person outside the scope, like other scoped lookups).
-- `source`: the caller must be able to see it (attendance and follow-up items and threads: the
-  observation audience, `conversation_access`; prayer and praise items: anyone who can see the
-  report). Otherwise 404.
+- `source`: the caller must be able to see it (attendance, the `followUp` section and threads: the
+  observation audience, `conversation_access`; the `prayer` and `praise` sections: anyone who can see the
+  report's group). Otherwise 404.
 
 **Errors:** 409 `link` when the caller has no linked member (as conversations rule 5): *"Link your
 account to a member to log care."* 403 without the permission; 403 `author` for edit, delete,
@@ -390,7 +439,7 @@ when closed).
 **`care_case_people`** (person pair, unique), **`care_case_owners`** (`member_id`, `user_id`,
 `added_by_user_id`, `added_at`; unique `(care_case_id, member_id)`), **`care_case_events`**
 (`kind`, `data` jsonb, `by_user_id`, `by_member_id` null, `created_at`), **`care_case_links`**
-(`source_kind` attendance | item | conversation, the same source columns as entries with ON DELETE
+(`source_kind` attendance | section | conversation, the same source columns as entries with ON DELETE
 SET NULL, `created_by_user_id`, `created_at`), **`care_case_reads`** (`user_id`, `last_read_at`,
 unique), **`care_case_revisions`** (`field`, `value`, `by_user_id`, `created_at`; never returned).
 All child tables cascade from `care_cases`.

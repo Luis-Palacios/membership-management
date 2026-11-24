@@ -96,7 +96,7 @@ def seed_care_log(ctx: SeedContext) -> None:
             author=(elder_member, elder_user),
             people=[("member", lucia)],
             created_at=at(call_day, 19),
-            source_item_id=item.id if item is not None else None,
+            follow_up_of_report=item.report_id if item is not None else None,
         ),
         # WhatsApp messages by her group's leader, edited once.
         _entry(
@@ -165,7 +165,7 @@ def seed_care_log(ctx: SeedContext) -> None:
                 author=(guest_leader.id, f"seed-user-{guest_leader.id}"),
                 people=[("guest", guest_id)],
                 created_at=at(-5, 16),
-                source_item_id=guest_item.id if guest_item is not None else None,
+                follow_up_of_report=guest_item.report_id if guest_item is not None else None,
             )
         )
     session.add_all(entries)
@@ -187,7 +187,7 @@ def _entry(
     heard_from: str | None = None,
     others: str | None = None,
     participants: list[int] | None = None,
-    source_item_id: int | None = None,
+    follow_up_of_report: int | None = None,
     edited_from: str | None = None,
 ) -> CareLogEntry:
     entry = CareLogEntry(
@@ -212,9 +212,10 @@ def _entry(
         ],
         participants=[CareLogEntryParticipant(member_id=member_id) for member_id in participants or []],
     )
-    if source_item_id is not None:
-        entry.source_kind = CareLogSourceKind.ITEM
-        entry.source_item_id = source_item_id
+    if follow_up_of_report is not None:
+        entry.source_kind = CareLogSourceKind.SECTION
+        entry.source_report_id = follow_up_of_report
+        entry.source_section = ReportSection.FOLLOW_UP
     if edited_from is not None:
         entry.edited_at = created_at + timedelta(minutes=20)
         entry.revisions.append(CareLogEntryRevision(text=edited_from, created_at=entry.edited_at))

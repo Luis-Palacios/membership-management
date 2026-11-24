@@ -9,7 +9,7 @@ from membership_management.data.care.models import (
     CareLogVisibility,
     MeetingMode,
 )
-from membership_management.data.small_groups.models import GroupAudience, ReportStatus
+from membership_management.data.small_groups.models import GroupAudience, ReportSection, ReportStatus
 from membership_management.data.small_groups.results import PersonGroup, PersonKey
 
 
@@ -35,7 +35,7 @@ class SourceRef(NamedTuple):
     """What an entry was logged from, as far as it still exists (care spec rule 12)."""
 
     kind: CareLogSourceKind
-    # False once the report, item or thread was deleted: every other field is then None.
+    # False once the report or thread was deleted: the report fields are then None.
     exists: bool
     report_id: int | None
     meeting_date: date | None
@@ -43,9 +43,11 @@ class SourceRef(NamedTuple):
     group_name: str | None
     group_audience: GroupAudience | None
     report_status: ReportStatus | None
-    # Attendance rows, follow-up items and threads are observations: they follow the observation audience.
-    # Prayer and praise items only need the report (reports rule 9).
+    # Attendance rows, follow-up and threads are observations: they follow the observation audience.
+    # Prayer and praise only need the report's group in scope (reports rule 9).
     needs_observation_audience: bool
+    # Section sources only.
+    section: ReportSection | None = None
 
 
 @dataclass(frozen=True)
@@ -55,7 +57,7 @@ class SourceInput:
     kind: CareLogSourceKind
     report_id: int | None = None
     person: PersonKey | None = None
-    item_id: int | None = None
+    section: ReportSection | None = None
     conversation_id: int | None = None
 
 

@@ -27,7 +27,6 @@ from membership_management.data.care.queries import (
     loggable_guests_query,
     loggable_members_query,
     source_conversations_query,
-    source_items_query,
     source_reports_query,
 )
 from membership_management.data.care.results import (
@@ -37,6 +36,7 @@ from membership_management.data.care.results import (
     SourceInput,
     SourceRef,
 )
+from membership_management.data.guests.lookup_services import get_led_open_guest_group_ids
 from membership_management.data.query_helpers import all_as
 from membership_management.data.small_groups.models import (
     ReportSection,
@@ -53,6 +53,7 @@ from membership_management.data.small_groups.results import (
 from membership_management.data.small_groups.services import (
     TAG_SEARCH_LIMIT,
     TAG_SEARCH_MIN_LENGTH,
+    get_led_small_group_ids,
     phone_last4,
 )
 
@@ -156,6 +157,36 @@ def entry_visible(session: Session, viewer: CareLogViewer, entry_id: int) -> boo
     return session.scalar(care_log_entry_visible_query(viewer, entry_id)) is not None
 
 
+def participants_see(session: Session, entries: Sequence[CareLogEntry]) -> dict[tuple[int, int], bool]:
+    """For each (entry id, participant member id): would that participant see the entry? Participants get
+    no access of their own (rule 3), so this tells the author who in "with whom" is outside the audience.
+    Their permissions aren't known here: they are assumed to have `careLog: view` and not `all`, with the
+    members and guests scope of the groups they lead today. A member with no linked user sees nothing."""
+    viewers: dict[int, CareLogViewer | None] = {}
+    seen: dict[tuple[int, int], bool] = {}
+    for entry in entries:
+        for participant in entry.participants:
+            member = participant.member
+            if member.id not in viewers:
+                viewers[member.id] = (
+                    None
+                    if member.user_id is None
+                    else CareLogViewer(
+                        user_id=member.user_id,
+                        sees_all=False,
+                        can_view=True,
+                        members_full=False,
+                        member_group_ids=get_led_small_group_ids(session, member.id),
+                        guests_full=False,
+                        guest_group_ids=get_led_open_guest_group_ids(session, member.id),
+                        member_id=member.id,
+                    )
+                )
+            viewer = viewers[member.id]
+            seen[(entry.id, member.id)] = viewer is not None and entry_visible(session, viewer, entry.id)
+    return seen
+
+
 def search_people(session: Session, viewer: CareLogViewer, text: str) -> list[CarePerson]:
     """Members and guests the caller may log about matching `text` by name (rule 2), at most
     TAG_SEARCH_LIMIT. Inactive members and guests are never found."""
@@ -216,6 +247,8 @@ def validate_fields(fields: CareLogFields, *, today: date, previous: CareLogEntr
         raise CareLogInvalidError("text", f"The text can't be longer than {MAX_TEXT} characters.")
     if others is not None and len(others) > MAX_SHORT_TEXT:
         raise CareLogInvalidError("others", f"Others can't be longer than {MAX_SHORT_TEXT} characters.")
+    if fields.kind == CareLogKind.HEARD and heard_from is None:
+        raise CareLogInvalidError("heard_from", "Say who told us.")
     if heard_from is not None and fields.kind != CareLogKind.HEARD:
         raise CareLogInvalidError("heard_from", "Only something we heard says who told us.")
     if heard_from is not None and len(heard_from) > MAX_SHORT_TEXT:
@@ -268,10 +301,16 @@ def check_participants(session: Session, participants: Collection[int]) -> None:
 # --- Sources ------------------------------------------------------------------------------------
 
 
-def _source_ref(kind: CareLogSourceKind, report: Row | None, *, observation: bool) -> SourceRef:
+def _source_ref(
+    kind: CareLogSourceKind,
+    report: Row | None,
+    *,
+    observation: bool,
+    section: ReportSection | None = None,
+) -> SourceRef:
     """A SourceRef for a row of `source_reports_query` (None: the source is gone)."""
     if report is None:
-        return SourceRef(kind, False, None, None, None, None, None, None, observation)
+        return SourceRef(kind, False, None, None, None, None, None, None, observation, section)
     return SourceRef(
         kind,
         True,
@@ -282,6 +321,7 @@ def _source_ref(kind: CareLogSourceKind, report: Row | None, *, observation: boo
         report.group_audience,
         report.report_status,
         observation,
+        section,
     )
 
 
@@ -307,15 +347,17 @@ def resolve_source(session: Session, source: SourceInput) -> SourceRef:
             raise SourceNotFoundError
         report = session.execute(source_reports_query([source.report_id])).one_or_none()
         return _source_ref(CareLogSourceKind.ATTENDANCE, report, observation=True)
-    if source.kind == CareLogSourceKind.ITEM:
-        if source.item_id is None:
+    if source.kind == CareLogSourceKind.SECTION:
+        if source.report_id is None or source.section is None:
             raise SourceNotFoundError
-        item = session.execute(source_items_query([source.item_id])).one_or_none()
-        if item is None:
+        report = session.execute(source_reports_query([source.report_id])).one_or_none()
+        if report is None:
             raise SourceNotFoundError
-        report = session.execute(source_reports_query([item.report_id])).one_or_none()
         return _source_ref(
-            CareLogSourceKind.ITEM, report, observation=item.section == ReportSection.FOLLOW_UP
+            CareLogSourceKind.SECTION,
+            report,
+            observation=source.section == ReportSection.FOLLOW_UP,
+            section=source.section,
         )
     if source.conversation_id is None:
         raise SourceNotFoundError
@@ -327,21 +369,19 @@ def resolve_source(session: Session, source: SourceInput) -> SourceRef:
 
 
 def source_refs(session: Session, entries: Sequence[CareLogEntry]) -> dict[int, SourceRef]:
-    """The source of each entry that has one, by entry id: three queries at most. A source that was
+    """The source of each entry that has one, by entry id: two queries at most. A source that was
     deleted (its ids went null) is `exists=False`."""
     wanted = [e for e in entries if e.source_kind is not None]
     if not wanted:
         return {}
-    item_ids = {e.source_item_id for e in wanted if e.source_item_id is not None}
     conversation_ids = {e.source_conversation_id for e in wanted if e.source_conversation_id is not None}
-    items = {i.id: i for i in session.execute(source_items_query(item_ids))} if item_ids else {}
     conversations = (
         {c.id: c for c in session.execute(source_conversations_query(conversation_ids))}
         if conversation_ids
         else {}
     )
     report_ids = {e.source_report_id for e in wanted if e.source_report_id is not None}
-    report_ids |= {i.report_id for i in items.values()} | {c.report_id for c in conversations.values()}
+    report_ids |= {c.report_id for c in conversations.values()}
     reports = (
         {r.report_id: r for r in session.execute(source_reports_query(report_ids))} if report_ids else {}
     )
@@ -352,12 +392,12 @@ def source_refs(session: Session, entries: Sequence[CareLogEntry]) -> dict[int, 
             continue
         if kind == CareLogSourceKind.ATTENDANCE:
             refs[entry.id] = _source_ref(kind, reports.get(entry.source_report_id or 0), observation=True)
-        elif kind == CareLogSourceKind.ITEM:
-            item = items.get(entry.source_item_id or 0)
+        elif kind == CareLogSourceKind.SECTION:
             refs[entry.id] = _source_ref(
                 kind,
-                reports.get(item.report_id) if item is not None else None,
-                observation=item is None or item.section == ReportSection.FOLLOW_UP,
+                reports.get(entry.source_report_id or 0),
+                observation=entry.source_section == ReportSection.FOLLOW_UP,
+                section=entry.source_section,
             )
         else:
             conversation = conversations.get(entry.source_conversation_id or 0)
@@ -375,8 +415,9 @@ def _apply_source(entry: CareLogEntry, source: SourceInput) -> None:
         entry.source_report_id = source.report_id
         entry.source_member_id = source.person[1] if source.person[0] == "member" else None
         entry.source_guest_id = source.person[1] if source.person[0] == "guest" else None
-    elif source.kind == CareLogSourceKind.ITEM:
-        entry.source_item_id = source.item_id
+    elif source.kind == CareLogSourceKind.SECTION:
+        entry.source_report_id = source.report_id
+        entry.source_section = source.section
     else:
         entry.source_conversation_id = source.conversation_id
 
@@ -499,13 +540,21 @@ def delete_entry(session: Session, entry: CareLogEntry) -> None:
     session.commit()
 
 
+def _lock_planned(session: Session, entry: CareLogEntry) -> None:
+    """Lock the entry's row and read it again, then require it is still planned: a complete and a cancel
+    (or two completes) racing each other can't both win, and no outcome is lost."""
+    session.execute(select(CareLogEntry.id).where(CareLogEntry.id == entry.id).with_for_update())
+    session.refresh(entry)
+    if entry.status != CareLogStatus.PLANNED:
+        raise NotPlannedError
+
+
 def complete_entry(
     session: Session, entry: CareLogEntry, *, text: str | None, occurred_on: date | None, today: date
 ) -> CareLogEntry:
     """Rule 6: a planned entry becomes done with the outcome text (required) and the actual date
     (default: the planned one), never in the future. The purpose it had is kept as a revision."""
-    if entry.status != CareLogStatus.PLANNED:
-        raise NotPlannedError
+    _lock_planned(session, entry)
     outcome = _clean(text)
     if outcome is None:
         raise CareLogInvalidError("text", "Write what happened.")
@@ -527,8 +576,7 @@ def complete_entry(
 
 def cancel_entry(session: Session, entry: CareLogEntry, *, reason: str | None) -> CareLogEntry:
     """Rule 6: a planned entry stays visible as cancelled, with an optional reason."""
-    if entry.status != CareLogStatus.PLANNED:
-        raise NotPlannedError
+    _lock_planned(session, entry)
     cleaned = _clean(reason)
     if cleaned is not None and len(cleaned) > MAX_CANCEL_REASON:
         raise CareLogInvalidError(

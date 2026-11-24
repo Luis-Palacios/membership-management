@@ -99,8 +99,10 @@ def _source_input(source: CareLogSourceInputSchema) -> SourceInput:
             ("member", source.member_id) if source.member_id is not None else ("guest", source.guest_id or 0)
         )
         return SourceInput(CareLogSourceKind.ATTENDANCE, report_id=source.report_id, person=person)
-    if source.kind == CareLogSourceKind.ITEM:
-        return SourceInput(CareLogSourceKind.ITEM, item_id=source.item_id)
+    if source.kind == CareLogSourceKind.SECTION:
+        if source.report_id is None or source.section is None:
+            raise CareLogInvalidError("source", "A section source needs a report and a section.")
+        return SourceInput(CareLogSourceKind.SECTION, report_id=source.report_id, section=source.section)
     return SourceInput(CareLogSourceKind.CONVERSATION, conversation_id=source.conversation_id)
 
 

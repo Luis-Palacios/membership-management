@@ -12,6 +12,7 @@ from membership_management.data.care.models import (
     CareLogStatus,
     CareLogVisibility,
 )
+from membership_management.data.small_groups.models import ReportSection
 
 # "12:30", not "12:30:00": the API sends and takes hours and minutes.
 ClockTime = Annotated[time, PlainSerializer(lambda value: value.strftime("%H:%M"), return_type=str)]
@@ -27,13 +28,13 @@ class CarePersonRefSchema(CamelModel):
 
 class CareLogSourceInputSchema(CamelModel):
     """What the entry is logged from (rule 12): an attendance row (`reportId` and one of `memberId`,
-    `guestId`), a report item (`itemId`) or a conversation thread (`conversationId`)."""
+    `guestId`), a report section (`reportId` and `section`) or a conversation thread (`conversationId`)."""
 
     kind: CareLogSourceKind
     report_id: int | None = None
     member_id: int | None = None
     guest_id: int | None = None
-    item_id: int | None = None
+    section: ReportSection | None = None
     conversation_id: int | None = None
 
 
@@ -92,6 +93,10 @@ class CareLogPersonSchema(CamelModel):
 class CareLogParticipantSchema(CamelModel):
     member_id: int
     name: str
+    # Whether this person would see the entry (they get no access from being named, rule 3). Their
+    # permissions aren't known here: assumed `careLog: view` without `all`, with the scope of the groups
+    # they lead. False for a member with no linked user.
+    sees: bool
 
 
 class CareLogAuthorSchema(CamelModel):
@@ -112,7 +117,9 @@ class CareLogSourceSchema(CamelModel):
     small_group: CareLogSourceGroupSchema | None
     # False when the caller can't open it ("A report note you don't have access to").
     visible: bool
-    # True when the report, item or thread was deleted.
+    # Section sources only: `prayer`, `praise` or `followUp`.
+    section: ReportSection | None = None
+    # True when the report or thread was deleted.
     gone: bool
 
 

@@ -15,11 +15,11 @@ from sqlalchemy import (
     Time,
     desc,
     func,
-    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from membership_management.data.database import MemberManagementBase
+from membership_management.data.small_groups.models.report_conversation import ReportSection
 
 if TYPE_CHECKING:
     from membership_management.data.care.models.care_log_entry_participant import CareLogEntryParticipant
@@ -61,7 +61,7 @@ class CareLogSourceKind(StrEnum):
     """What an entry was logged from (rule 12)."""
 
     ATTENDANCE = "attendance"
-    ITEM = "item"
+    SECTION = "section"
     CONVERSATION = "conversation"
 
 
@@ -100,24 +100,27 @@ class CareLogEntry(MemberManagementBase):
         CheckConstraint("char_length(others) <= 200", name="others_length"),
         CheckConstraint("char_length(cancel_reason) <= 500", name="cancel_reason_length"),
         CheckConstraint("char_length(text) BETWEEN 1 AND 4000", name="text_length"),
-        # The ids are the ones that go null when the source is deleted; the person of an attendance row
-        # has no cascade, so it stays and the kind keeps saying what the entry came from.
+        CheckConstraint("source_section IN ('prayer', 'praise', 'followUp')", name="source_section_valid"),
+        # The report and conversation ids are the ones that go null when the source is deleted; the person
+        # of an attendance row and the section of a section source have no cascade, so they stay and the
+        # kind keeps saying what the entry came from.
         CheckConstraint(
             "(source_kind IS NULL AND source_report_id IS NULL AND source_member_id IS NULL"
-            " AND source_guest_id IS NULL AND source_item_id IS NULL AND source_conversation_id IS NULL)"
-            " OR (source_kind = 'attendance' AND source_item_id IS NULL AND source_conversation_id IS NULL"
+            " AND source_guest_id IS NULL AND source_section IS NULL AND source_conversation_id IS NULL)"
+            " OR (source_kind = 'attendance' AND source_section IS NULL AND source_conversation_id IS NULL"
             " AND num_nonnulls(source_member_id, source_guest_id) = 1)"
-            " OR (source_kind = 'item' AND source_report_id IS NULL AND source_member_id IS NULL"
+            " OR (source_kind = 'section' AND source_section IS NOT NULL AND source_member_id IS NULL"
             " AND source_guest_id IS NULL AND source_conversation_id IS NULL)"
             " OR (source_kind = 'conversation' AND source_report_id IS NULL AND source_member_id IS NULL"
-            " AND source_guest_id IS NULL AND source_item_id IS NULL)",
+            " AND source_guest_id IS NULL AND source_section IS NULL)",
             name="source_matches_kind",
         ),
+        # Newest first for the lists; a partial "not deleted" index would only repeat it (deleted rows are
+        # rare, and every timeline query also filters by person).
         Index("ix_care_log_entries_occurred_on_desc", desc("occurred_on")),
         Index(
             "ix_care_log_entries_author_user_id_status_occurred_on", "author_user_id", "status", "occurred_on"
         ),
-        Index("ix_care_log_entries_live", "occurred_on", postgresql_where=text("deleted_at IS NULL")),
     )
 
     id: Mapped[int] = mapped_column(Identity(always=True), primary_key=True)
@@ -138,15 +141,14 @@ class CareLogEntry(MemberManagementBase):
     author_member_id: Mapped[int] = mapped_column(ForeignKey("members.id"), index=True)
 
     source_kind: Mapped[CareLogSourceKind | None] = mapped_column(_enum(CareLogSourceKind, "source_kind", 16))
-    # Deleting the report, item or thread keeps the entry and nulls the link (rule 12).
+    # Deleting the report or thread keeps the entry and nulls the link (rule 12). A report section is
+    # anchored by report and section, never by item: a report edit rewrites every item.
     source_report_id: Mapped[int | None] = mapped_column(
         ForeignKey("small_group_reports.id", ondelete="SET NULL"), index=True
     )
     source_member_id: Mapped[int | None] = mapped_column(ForeignKey("members.id"))
     source_guest_id: Mapped[int | None] = mapped_column(ForeignKey("guests.id"))
-    source_item_id: Mapped[int | None] = mapped_column(
-        ForeignKey("small_group_report_items.id", ondelete="SET NULL"), index=True
-    )
+    source_section: Mapped[ReportSection | None] = mapped_column(String(16))
     source_conversation_id: Mapped[int | None] = mapped_column(
         ForeignKey("report_conversations.id", ondelete="SET NULL"), index=True
     )

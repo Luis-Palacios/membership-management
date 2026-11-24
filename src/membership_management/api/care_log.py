@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from membership_management.api.access import viewable_people
 from membership_management.api.care_access import CareContext
+from membership_management.api.jwt_auth import has_permission
 from membership_management.api.schemas.care_log import (
     CareLogAuthorSchema,
     CareLogEntrySchema,
@@ -24,7 +25,7 @@ from membership_management.data.care.models import (
     MeetingMode,
 )
 from membership_management.data.care.results import SourceRef
-from membership_management.data.care.services import is_participant, source_refs
+from membership_management.data.care.services import is_participant, participants_see, source_refs
 from membership_management.data.small_groups.models import ReportStatus
 from membership_management.data.small_groups.results import PersonKey, person_key
 
@@ -41,8 +42,8 @@ def meeting_mode_from_api(value: str | None) -> MeetingMode | None:
 
 def source_visible(ref: SourceRef, ctx: CareContext) -> bool:
     """Whether the caller may open what an entry was logged from (rule 12). A report that is still a draft
-    is never offered. Attendance rows, follow-up items and threads follow the observation audience (reports
-    rule 9); prayer and praise items only need the report's group in the caller's scope."""
+    is never offered. Attendance rows, follow-up and threads follow the observation audience (reports
+    rule 9); prayer and praise sections only need the report's group in the caller's scope."""
     if not ref.exists or ref.group_id is None or ref.report_status != ReportStatus.SUBMITTED:
         return False
     if ref.needs_observation_audience:
@@ -53,14 +54,27 @@ def source_visible(ref: SourceRef, ctx: CareContext) -> bool:
 def _source_schema(ref: SourceRef, ctx: CareContext) -> CareLogSourceSchema:
     if not ref.exists:
         return CareLogSourceSchema(
-            kind=ref.kind, report_id=None, meeting_date=None, small_group=None, visible=False, gone=True
+            kind=ref.kind,
+            report_id=None,
+            meeting_date=None,
+            small_group=None,
+            visible=False,
+            section=ref.section,
+            gone=True,
         )
     if not source_visible(ref, ctx) or ref.group_id is None or ref.group_name is None:
         return CareLogSourceSchema(
-            kind=ref.kind, report_id=None, meeting_date=None, small_group=None, visible=False, gone=False
+            kind=ref.kind,
+            report_id=None,
+            meeting_date=None,
+            small_group=None,
+            visible=False,
+            section=ref.section,
+            gone=False,
         )
     return CareLogSourceSchema(
         kind=ref.kind,
+        section=ref.section,
         report_id=ref.report_id,
         meeting_date=ref.meeting_date,
         small_group=CareLogSourceGroupSchema(id=ref.group_id, name=ref.group_name),
@@ -82,6 +96,8 @@ def entry_schemas(
     people: set[PersonKey] = {person_key(p.member_id, p.guest_id) for entry in entries for p in entry.people}
     viewable = viewable_people(db, ctx.claims, people, ctx.member_scope, ctx.guest_scope)
     refs = source_refs(db, entries)
+    sees = participants_see(db, entries)
+    can_write = has_permission(ctx.claims, "careLog", "create")
     schemas: list[CareLogEntrySchema] = []
     for entry in entries:
         mine = entry.author_user_id == ctx.claims.sub
@@ -105,7 +121,9 @@ def entry_schemas(
                 ],
                 others=entry.others,
                 participants=[
-                    CareLogParticipantSchema(member_id=p.member_id, name=p.member.name)
+                    CareLogParticipantSchema(
+                        member_id=p.member_id, name=p.member.name, sees=sees[(entry.id, p.member_id)]
+                    )
                     for p in entry.participants
                 ],
                 heard_from=entry.heard_from,
@@ -115,8 +133,9 @@ def entry_schemas(
                 author=CareLogAuthorSchema(member_id=entry.author_member_id, name=entry.author.name),
                 source=_source_schema(ref, ctx) if ref is not None else None,
                 past_due=entry.status == CareLogStatus.PLANNED and entry.occurred_on < today,
-                can_edit=mine,
-                can_complete=entry.status == CareLogStatus.PLANNED
+                can_edit=can_write and mine,
+                can_complete=can_write
+                and entry.status == CareLogStatus.PLANNED
                 and (mine or is_participant(entry, ctx.member.id if ctx.member is not None else None)),
                 edited_at=entry.edited_at,
                 created_at=entry.created_at,
