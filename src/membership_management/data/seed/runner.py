@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 import membership_management.data.models  # noqa: F401
 from membership_management.data.config import settings
 from membership_management.data.database import MemberManagementBase
+from membership_management.data.seed.care import seed_care_log
 from membership_management.data.seed.context import MANAGUA_TZ, SeedContext, Seeder
 from membership_management.data.seed.guests import seed_guests
 from membership_management.data.seed.inactive_guests import seed_inactive_guests
@@ -38,6 +39,8 @@ SEEDERS: list[Seeder] = [
     seed_inactive_guests,
     # Last: replaces two reports, once every seeder that reads them has run.
     seed_report_drafts,
+    # Last of all: entries only, reading the reports, items, guests and the conversations' elders.
+    seed_care_log,
 ]
 
 DEFAULT_RNG_SEED = 2026

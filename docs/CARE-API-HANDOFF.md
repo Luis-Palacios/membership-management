@@ -19,8 +19,8 @@ What this adds:
   timeline source, and owner options.
 
 Work through it **stage by stage**, one reviewable commit per stage. Part 1 is branch
-**`care-log`** (stages 1–5); Part 2 is branch **`care`** (stages 6–12), started from `main` once Part
-1 is merged. The same names are used in every repo.
+**`feature/care-log`** (stages 1–5); Part 2 is branch **`feature/care`** (stages 6–12), started from
+`main` once Part 1 is merged. The same names are used in every repo.
 
 - **Checks.** Each stage must pass `uv run ruff check .` and `uv run ty check` (and
   `uv run alembic check`, `downgrade -1` + `upgrade head` round-trip in the migration stages).
@@ -58,13 +58,13 @@ Keep the existing conventions:
 
 | Stage | Status | Commit |
 | --- | --- | --- |
-| **Part 1, branch `care-log`** | | |
-| 1. Migration, models, seed (care log) | ⬜ | |
+| **Part 1, branch `feature/care-log`** | | |
+| 1. Migration, models, seed (care log) | ✅ | (hash added by stage 2's commit) |
 | 2. Care log routes, people search, visibility | ⬜ | |
 | 3. `careLog` timeline source | ⬜ | |
 | 4. Coming up | ⬜ | |
 | 5. Docs (Part 1) | ⬜ | |
-| **Part 2, branch `care`** | | |
+| **Part 2, branch `feature/care`** | | |
 | 6. Migration, models, seed (care) | ⬜ | |
 | 7. Access, create, read, edit, status, owners, read marks | ⬜ | |
 | 8. Entries inside a care, check-ins, links, moving entries in | ⬜ | |
@@ -75,11 +75,30 @@ Keep the existing conventions:
 
 ### Decisions and deviations
 
-- (none yet)
+- **Branch names:** the handoff first said `care-log` and `care`; a workspace hook only allows
+  `feature/`, `fix/` or `chore/` + kebab-case, so they are `feature/care-log` and `feature/care`
+  (the spec's own "Branch name in every repo" line says the same, to be read with the prefix).
+- **Stage 1, tried:** against the scratch database `care_scratch` on `my-postgres` (created by hand,
+  dropped at the end of Part 1): `alembic upgrade head`, `alembic check` (clean), `downgrade -1` +
+  `upgrade head` + `check` (clean), then `python -m membership_management.data.seed --reset` (six
+  entries: see the seed). Enums use SQLAlchemy `Enum(native_enum=False, create_constraint=True)`, so
+  the checks are named `ck_care_log_entries_<kind|status|meeting_mode|visibility|source_kind>`.
+- **Stage 1, schema choices beyond the handoff:** `care_log_entry_revisions.text` is nullable (a plan
+  with no purpose gets one by an edit); `text`, `heard_from`, `others` and `cancel_reason` also have
+  length CHECKs; `source_matches_kind` requires, for `attendance`, exactly one of
+  `source_member_id` / `source_guest_id` (those columns have no cascade, so they stay after the report
+  is deleted while `source_report_id` goes null); `item` and `conversation` need only their id column
+  to be null or set. Known limit: `small_group_report_items.id` isn't stable across report edits
+  (`SmallGroupReportItem` docstring), so an `item` source goes `gone` when the report's items are
+  rewritten; staff-app says "no longer available" for both.
+- **Stage 1, seed:** `data/seed/care.py` runs last and draws no random numbers. The made-up elders are
+  the conversations seeder's (`seed-elder-N`), found through their comments; the leaders have
+  `seed-user-<member id>` ids. No account matches those, so every seeded entry shows as someone else's
+  whoever signs in.
 
 ---
 
-# Part 1: the care log (branch `care-log`)
+# Part 1: the care log (branch `feature/care-log`)
 
 ## Stage 1: migration, models, seed
 
@@ -253,7 +272,7 @@ caller's own plans (rule 11). Empty lists when there are none.
 
 ---
 
-# Part 2: care (branch `care`)
+# Part 2: care (branch `feature/care`)
 
 ## Stage 6: migration, models, seed
 
