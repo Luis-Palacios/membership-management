@@ -62,8 +62,8 @@ Keep the existing conventions:
 | 1. Migration, models, seed (care log) | ✅ | `ccfede2` |
 | 2. Care log routes, people search, visibility | ✅ | `a90a8b4` |
 | 3. `careLog` timeline source | ✅ | `e3acc5c` |
-| 4. Coming up | ✅ | (hash added by stage 5's commit) |
-| 5. Docs (Part 1) | ⬜ | |
+| 4. Coming up | ✅ | `a9975a6` |
+| 5. Docs (Part 1) | ✅ | the commit that carries this line (see `git log`) |
 | **Part 2, branch `feature/care`** | | |
 | 6. Migration, models, seed (care) | ⬜ | |
 | 7. Access, create, read, edit, status, owners, read marks | ⬜ | |
@@ -186,6 +186,15 @@ Keep the existing conventions:
   leader, an unlinked elder (author is matched by user id, the seeded ones belong to another) and a deacon
   with no member get empty lists; `user` 403. The horizon (a plan today and on day 7 listed, day 8 not),
   ordering by date then time, and completed, cancelled and deleted plans leaving the list.
+
+- **Stage 5, docs:** `docs/ARCHITECTURE.md` has a *Care log* section and the routes in the role x route
+  table (and one sentence in *Person timeline*); `CLAUDE.md` one bullet. `docs/ROADMAP.md` lists no
+  features, so it is untouched. **Part 1 is done in this repo.** Others: staff-app needs the `careLog`
+  permission names in its typed unions (auth-server already ships them in `perms`; a session or JWT
+  minted before that has no `careLog`, so sign in again), the schemas above (`CareLogEntrySchema`, the
+  timeline's `careLog` entry and `counts.careLog`, `coming-up`, `people-search`) and the error codes.
+  Part 2 starts from `main` as `feature/care` once this is merged; it makes `visibility` nullable and adds
+  `care_case_id` as the handoff says.
 
 ---
 
