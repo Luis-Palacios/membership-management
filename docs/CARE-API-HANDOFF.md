@@ -66,6 +66,7 @@ Keep the existing conventions:
 | 5. Docs (Part 1) | ✅ | `0e167a6` |
 | Review fixes (stages 1–4) | ✅ | `9033556` |
 | Second review fixes (stages 2–4) | ✅ | `ffddbb6` |
+| PR review fixes (#80) | ✅ | the commit "Fix care log PR review findings" |
 | **Part 2, branch `feature/care`** | | |
 | 6. Migration, models, seed (care) | ⬜ | |
 | 7. Access, create, read, edit, status, owners, read marks | ⬜ | |
@@ -284,6 +285,12 @@ Keep the existing conventions:
   Tried again: `try_care` 171 checks (was 153), `try_timeline` 16, `try_coming` 14, the 270-request
   timeline dump identical with the care entries removed. Note: a scratch DB that ran the first
   `329e2849ed61` needs `downgrade -1` + `upgrade head` (it was edited in place in the first review).
+- **PR review fixes (#80, bot review):**
+  1. *Cancelled entries keep a plannable kind.* `validate_fields` checked the kind only for `planned`, but
+     the CHECK `ck_care_log_entries_plan_kinds` covers every status but `done`: editing a cancelled plan's
+     kind to `message`, `heard` or `note` was a 500 `IntegrityError`. Now 422 `kind_status` for any
+     status but `done`.
+  2. *Conversation source without its id* is 422 `source`, like the other two kinds (was a 404).
 
 ---
 

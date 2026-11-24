@@ -283,7 +283,9 @@ def validate_fields(fields: CareLogFields, *, today: date, previous: CareLogEntr
         raise CareLogInvalidError(
             "kind_status", "An entry is created as done or planned; cancel a plan instead."
         )
-    if fields.status == CareLogStatus.PLANNED and fields.kind not in PLANNABLE_KINDS:
+    # Planned and cancelled entries alike (CHECK ck_care_log_entries_plan_kinds): a cancelled plan's kind
+    # can't be edited into one that is never planned.
+    if fields.status != CareLogStatus.DONE and fields.kind not in PLANNABLE_KINDS:
         raise CareLogInvalidError("kind_status", "Only a call, meeting or visit can be planned.")
 
     if fields.status == CareLogStatus.DONE and fields.occurred_on > today:

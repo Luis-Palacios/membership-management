@@ -121,6 +121,8 @@ def _source_input(source: CareLogSourceInputSchema) -> SourceInput:
         if source.report_id is None or source.section is None:
             raise CareLogInvalidError("source", "A section source needs a report and a section.")
         return SourceInput(CareLogSourceKind.SECTION, report_id=source.report_id, section=source.section)
+    if source.conversation_id is None:
+        raise CareLogInvalidError("source", "A conversation source needs a conversation.")
     return SourceInput(CareLogSourceKind.CONVERSATION, conversation_id=source.conversation_id)
 
 
