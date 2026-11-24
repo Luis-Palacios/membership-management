@@ -65,7 +65,7 @@ Keep the existing conventions:
 | 4. Coming up | ✅ | `a9975a6` |
 | 5. Docs (Part 1) | ✅ | `0e167a6` |
 | Review fixes (stages 1–4) | ✅ | `9033556` |
-| Second review fixes (stages 2–4) | ✅ | the commit "Fix care log second review" (see `git log`) |
+| Second review fixes (stages 2–4) | ✅ | `ffddbb6` |
 | **Part 2, branch `feature/care`** | | |
 | 6. Migration, models, seed (care) | ⬜ | |
 | 7. Access, create, read, edit, status, owners, read marks | ⬜ | |
