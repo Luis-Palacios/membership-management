@@ -25,7 +25,7 @@ from membership_management.data.care.models import (
     MeetingMode,
 )
 from membership_management.data.care.results import SourceRef
-from membership_management.data.care.services import is_participant, participants_see, source_refs
+from membership_management.data.care.services import is_participant, source_refs
 from membership_management.data.small_groups.models import ReportStatus
 from membership_management.data.small_groups.results import PersonKey, person_key
 
@@ -59,7 +59,7 @@ def _source_schema(ref: SourceRef, ctx: CareContext) -> CareLogSourceSchema:
             meeting_date=None,
             small_group=None,
             visible=False,
-            section=ref.section,
+            section=None,
             gone=True,
         )
     if not source_visible(ref, ctx) or ref.group_id is None or ref.group_name is None:
@@ -69,7 +69,7 @@ def _source_schema(ref: SourceRef, ctx: CareContext) -> CareLogSourceSchema:
             meeting_date=None,
             small_group=None,
             visible=False,
-            section=ref.section,
+            section=None,
             gone=False,
         )
     return CareLogSourceSchema(
@@ -96,7 +96,6 @@ def entry_schemas(
     people: set[PersonKey] = {person_key(p.member_id, p.guest_id) for entry in entries for p in entry.people}
     viewable = viewable_people(db, ctx.claims, people, ctx.member_scope, ctx.guest_scope)
     refs = source_refs(db, entries)
-    sees = participants_see(db, entries)
     can_write = has_permission(ctx.claims, "careLog", "create")
     schemas: list[CareLogEntrySchema] = []
     for entry in entries:
@@ -121,9 +120,7 @@ def entry_schemas(
                 ],
                 others=entry.others,
                 participants=[
-                    CareLogParticipantSchema(
-                        member_id=p.member_id, name=p.member.name, sees=sees[(entry.id, p.member_id)]
-                    )
+                    CareLogParticipantSchema(member_id=p.member_id, name=p.member.name)
                     for p in entry.participants
                 ],
                 heard_from=entry.heard_from,

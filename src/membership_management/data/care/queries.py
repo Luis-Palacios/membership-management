@@ -257,6 +257,7 @@ def source_reports_query(report_ids: Collection[int]) -> Select:
             SmallGroup.name.label("group_name"),
             SmallGroup.audience.label("group_audience"),
             SmallGroupReport.status.label("report_status"),
+            SmallGroupReport.held.label("held"),
         )
         .join(SmallGroup, SmallGroup.id == SmallGroupReport.small_group_id)
         .where(SmallGroupReport.id.in_(report_ids))

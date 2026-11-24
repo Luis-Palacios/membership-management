@@ -48,6 +48,8 @@ class SourceRef(NamedTuple):
     needs_observation_audience: bool
     # Section sources only.
     section: ReportSection | None = None
+    # False for a no-meeting report: it has no sections to log from.
+    held: bool = True
 
 
 @dataclass(frozen=True)

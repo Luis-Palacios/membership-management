@@ -93,10 +93,6 @@ class CareLogPersonSchema(CamelModel):
 class CareLogParticipantSchema(CamelModel):
     member_id: int
     name: str
-    # Whether this person would see the entry (they get no access from being named, rule 3). Their
-    # permissions aren't known here: assumed `careLog: view` without `all`, with the scope of the groups
-    # they lead. False for a member with no linked user.
-    sees: bool
 
 
 class CareLogAuthorSchema(CamelModel):
@@ -148,6 +144,26 @@ class CareLogEntrySchema(CamelModel):
     can_complete: bool
     edited_at: datetime | None
     created_at: datetime
+
+
+class CareAudienceBodySchema(CamelModel):
+    """An entry not saved yet: who it is about, who may see it, and who is "with" (counts are checked with
+    a `people` / `participants` code)."""
+
+    people: list[CarePersonRefSchema] = Field(default_factory=list)
+    visibility: CareLogVisibility = CareLogVisibility.LEADERS
+    participants: list[int]
+
+
+class CareAudienceParticipantSchema(CamelModel):
+    member_id: int
+    # Would this person see the entry, by their own permissions? Null: not known (auth-server couldn't be
+    # asked), so show no warning.
+    sees: bool | None
+
+
+class CareAudienceSchema(CamelModel):
+    participants: list[CareAudienceParticipantSchema]
 
 
 class CareLogComingUpSchema(CamelModel):

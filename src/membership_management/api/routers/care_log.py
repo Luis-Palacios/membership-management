@@ -1,4 +1,5 @@
-from typing import Annotated
+import logging
+from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
@@ -11,6 +12,9 @@ from membership_management.api.dependencies import MembersSessionDep
 from membership_management.api.jwt_auth import get_current_claims, require_permission
 from membership_management.api.rate_limit import default_user_rate_limit
 from membership_management.api.schemas.care_log import (
+    CareAudienceBodySchema,
+    CareAudienceParticipantSchema,
+    CareAudienceSchema,
     CareLogCancelSchema,
     CareLogComingUpSchema,
     CareLogCompleteSchema,
@@ -26,12 +30,16 @@ from membership_management.api.schemas.small_group_reports import TagSearchGroup
 from membership_management.data.care.models import CareLogEntry, CareLogSourceKind
 from membership_management.data.care.results import CareLogFields, SourceInput
 from membership_management.data.care.services import (
+    MAX_PARTICIPANTS,
+    MAX_PEOPLE,
     CareLogChanges,
     CareLogInvalidError,
+    EntryGoneError,
     NotPlannedError,
     PersonNotFoundError,
     SourceNotFoundError,
     cancel_entry,
+    check_people,
     coming_up,
     complete_entry,
     create_entry,
@@ -39,12 +47,15 @@ from membership_management.data.care.services import (
     entry_visible,
     get_entry,
     is_participant,
+    participant_user_ids,
+    participants_audience,
     resolve_source,
     search_people,
     update_entry,
 )
 from membership_management.data.members.models import Member
 from membership_management.data.small_groups.results import PersonKey
+from membership_management.notifications.auth_server import AuthServerUnavailable, permissions_for
 
 # Everyone with a `careLog` permission gets in; the permission of each route and `care_log_visible_condition`
 # (rule 8) decide what they see. Outside what they see, every route answers 404.
@@ -56,6 +67,11 @@ router = APIRouter(
 
 _can_create = Depends(require_permission("careLog", "create"))
 _can_view = Depends(require_permission("careLog", "view"))
+
+if TYPE_CHECKING:
+    from membership_management.data.small_groups.access_rules import Perms
+
+logger = logging.getLogger(__name__)
 
 _NOT_FOUND = "Care log entry not found."
 
@@ -77,6 +93,8 @@ def _http_error(exc: Exception) -> HTTPException:
         return HTTPException(status_code=404, detail="Source not found.")
     if isinstance(exc, NotPlannedError):
         return CodedHTTPError(409, "Only a planned entry can be completed or cancelled.", "not_planned")
+    if isinstance(exc, EntryGoneError):
+        return HTTPException(status_code=404, detail=_NOT_FOUND)
     raise exc
 
 
@@ -169,6 +187,8 @@ def post_entry(
             ref = resolve_source(db, source)
             if not source_visible(ref, ctx):
                 raise SourceNotFoundError
+            if source.kind == CareLogSourceKind.SECTION and not ref.held:
+                raise CareLogInvalidError("source", "A meeting that wasn't held has no sections.")
         entry = create_entry(
             db,
             ctx.viewer,
@@ -193,6 +213,56 @@ def post_entry(
     except (CareLogInvalidError, PersonNotFoundError, SourceNotFoundError) as exc:
         raise _http_error(exc) from exc
     return _schema(db, ctx, entry)
+
+
+@router.post(
+    "/audience",
+    name="care_log_audience",
+    description=(
+        "For an entry not saved yet: would each person picked as 'with whom' see it, by their own "
+        "permissions? `sees` is null when that isn't known (auth-server couldn't be asked)"
+    ),
+    dependencies=[_can_create],
+)
+def post_audience(
+    body: CareAudienceBodySchema, db: MembersSessionDep, ctx: CareContextDep
+) -> CareAudienceSchema:
+    try:
+        people = list(dict.fromkeys(_people(body.people)))
+        participants = list(dict.fromkeys(body.participants))
+        if len(people) > MAX_PEOPLE:
+            raise CareLogInvalidError("people", f"An entry can be about at most {MAX_PEOPLE} people.")
+        if not 1 <= len(participants) <= MAX_PARTICIPANTS:
+            raise CareLogInvalidError(
+                "participants", f"Pick between 1 and {MAX_PARTICIPANTS} people to check."
+            )
+        # The same reach as logging: nobody learns about people outside their own scope.
+        check_people(db, ctx.viewer, people)
+        user_ids = participant_user_ids(db, participants)
+    except (CareLogInvalidError, PersonNotFoundError) as exc:
+        raise _http_error(exc) from exc
+    # Never hold a transaction open across the call to auth-server.
+    db.rollback()
+    wanted = {user_id for user_id in user_ids.values() if user_id is not None}
+    perms_by_user: dict[str, Perms] | None = {}
+    if wanted:
+        try:
+            perms_by_user = permissions_for(wanted)
+        except (AuthServerUnavailable, RuntimeError, KeyError, ValueError) as exc:
+            # Unreachable, not configured or an answer we can't read: unknown, never a 5xx.
+            logger.warning("care log audience: permissions unavailable (%s)", type(exc).__name__)
+            perms_by_user = None
+    answers = participants_audience(
+        db,
+        participants=participants,
+        user_ids=user_ids,
+        people=people,
+        visibility=body.visibility,
+        perms_by_user=perms_by_user,
+    )
+    return CareAudienceSchema(
+        participants=[CareAudienceParticipantSchema(member_id=m, sees=answers[m]) for m in participants]
+    )
 
 
 @router.get(
@@ -270,7 +340,7 @@ def patch_entry(
         if "participants" in sent:
             changes["participants"] = body.participants or []
         entry = update_entry(db, ctx.viewer, entry, changes, today=church_today())
-    except (CareLogInvalidError, PersonNotFoundError) as exc:
+    except (CareLogInvalidError, PersonNotFoundError, EntryGoneError) as exc:
         raise _http_error(exc) from exc
     return _schema(db, ctx, entry)
 
@@ -302,7 +372,7 @@ def post_complete(
     _author_or_participant(entry, ctx)
     try:
         entry = complete_entry(db, entry, text=body.text, occurred_on=body.occurred_on, today=church_today())
-    except (CareLogInvalidError, NotPlannedError) as exc:
+    except (CareLogInvalidError, NotPlannedError, EntryGoneError) as exc:
         raise _http_error(exc) from exc
     return _schema(db, ctx, entry)
 
@@ -320,6 +390,6 @@ def post_cancel(
     _author_or_participant(entry, ctx)
     try:
         entry = cancel_entry(db, entry, reason=body.reason if body is not None else None)
-    except (CareLogInvalidError, NotPlannedError) as exc:
+    except (CareLogInvalidError, NotPlannedError, EntryGoneError) as exc:
         raise _http_error(exc) from exc
     return _schema(db, ctx, entry)

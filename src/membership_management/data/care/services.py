@@ -1,4 +1,4 @@
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import replace
 from datetime import date, datetime, time
 from typing import TypedDict
@@ -6,7 +6,11 @@ from typing import TypedDict
 from sqlalchemy import Row, Select, func, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
-from membership_management.data.care.access_rules import CareLogViewer
+from membership_management.data.care.access_rules import (
+    CareLogViewer,
+    participant_needs_scope,
+    participant_sees,
+)
 from membership_management.data.care.models import (
     PLANNABLE_KINDS,
     CareLogEntry,
@@ -37,7 +41,9 @@ from membership_management.data.care.results import (
     SourceRef,
 )
 from membership_management.data.guests.lookup_services import get_led_open_guest_group_ids
+from membership_management.data.members.models import Member
 from membership_management.data.query_helpers import all_as
+from membership_management.data.small_groups.access_rules import Perms, holds, small_group_scope_for
 from membership_management.data.small_groups.models import (
     ReportSection,
     SmallGroupReportAttendance,
@@ -83,6 +89,10 @@ class PersonNotFoundError(Exception):
 
 class SourceNotFoundError(Exception):
     """The report row, item or thread an entry is logged from doesn't exist."""
+
+
+class EntryGoneError(Exception):
+    """The entry was deleted while the caller was working on it: a 404."""
 
 
 class NotPlannedError(Exception):
@@ -157,34 +167,75 @@ def entry_visible(session: Session, viewer: CareLogViewer, entry_id: int) -> boo
     return session.scalar(care_log_entry_visible_query(viewer, entry_id)) is not None
 
 
-def participants_see(session: Session, entries: Sequence[CareLogEntry]) -> dict[tuple[int, int], bool]:
-    """For each (entry id, participant member id): would that participant see the entry? Participants get
-    no access of their own (rule 3), so this tells the author who in "with whom" is outside the audience.
-    Their permissions aren't known here: they are assumed to have `careLog: view` and not `all`, with the
-    members and guests scope of the groups they lead today. A member with no linked user sees nothing."""
-    viewers: dict[int, CareLogViewer | None] = {}
-    seen: dict[tuple[int, int], bool] = {}
-    for entry in entries:
-        for participant in entry.participants:
-            member = participant.member
-            if member.id not in viewers:
-                viewers[member.id] = (
-                    None
-                    if member.user_id is None
-                    else CareLogViewer(
-                        user_id=member.user_id,
-                        sees_all=False,
-                        can_view=True,
-                        members_full=False,
-                        member_group_ids=get_led_small_group_ids(session, member.id),
-                        guests_full=False,
-                        guest_group_ids=get_led_open_guest_group_ids(session, member.id),
-                        member_id=member.id,
-                    )
+def participant_user_ids(session: Session, member_ids: Sequence[int]) -> dict[int, str | None]:
+    """The auth-server user linked to each member (None: no user). `participants` 422 for an unknown id."""
+    members = {m.id: m.user_id for m in session.scalars(select(Member).where(Member.id.in_(member_ids)))}
+    if set(members) != set(member_ids):
+        raise CareLogInvalidError("participants", "Someone you added doesn't exist.")
+    return members
+
+
+def participants_audience(
+    session: Session,
+    *,
+    participants: Sequence[int],
+    user_ids: Mapping[int, str | None],
+    people: Sequence[PersonKey],
+    visibility: CareLogVisibility,
+    perms_by_user: Mapping[str, Perms] | None,
+) -> dict[int, bool | None]:
+    """For each participant (a member id): would they see an entry of the caller's, not yet saved, about
+    `people` with this `visibility`? Participants get no access from being named (rule 3), so this tells
+    the author who in "with whom" is outside the audience. It follows rule 8 with the participant's own
+    permissions (`perms_by_user`, auth-server's answer by user id; a user missing from it is banned or
+    unknown) and the members / guests scope of the groups they lead today. `perms_by_user` None means the
+    permissions couldn't be had: nothing is known, so every answer is None. Scope queries only run for the
+    participants whose answer depends on them."""
+    if perms_by_user is None:
+        return dict.fromkeys(participants, None)
+    answers: dict[int, bool | None] = {}
+    member_ids = [i for kind, i in people if kind == "member"]
+    guest_ids = [i for kind, i in people if kind == "guest"]
+    for member_id in dict.fromkeys(participants):
+        user_id = user_ids.get(member_id)
+        perms = perms_by_user.get(user_id) if user_id is not None else None
+        if perms is None:
+            answers[member_id] = False
+            continue
+        in_scope = False
+        if participant_needs_scope(perms, visibility, is_one_of_the_people=member_id in member_ids):
+            led = get_led_small_group_ids(session, member_id)
+            group_scope = small_group_scope_for(perms, led, member_id)
+            viewer = CareLogViewer(
+                user_id=user_id or "",
+                sees_all=False,
+                can_view=True,
+                members_full=holds(perms, "members", "all"),
+                member_group_ids=(
+                    frozenset()
+                    if group_scope is None
+                    else None
+                    if group_scope.full
+                    else group_scope.group_ids
+                ),
+                guests_full=holds(perms, "guests", "all"),
+                guest_group_ids=get_led_open_guest_group_ids(session, member_id),
+                member_id=member_id,
+            )
+            in_scope = bool(
+                (
+                    member_ids
+                    and session.scalars(loggable_members_query(viewer, member_ids)).first() is not None
                 )
-            viewer = viewers[member.id]
-            seen[(entry.id, member.id)] = viewer is not None and entry_visible(session, viewer, entry.id)
-    return seen
+                or (
+                    guest_ids
+                    and session.scalars(loggable_guests_query(viewer, guest_ids)).first() is not None
+                )
+            )
+        answers[member_id] = participant_sees(
+            perms, visibility, is_one_of_the_people=member_id in member_ids, person_in_scope=in_scope
+        )
+    return answers
 
 
 def search_people(session: Session, viewer: CareLogViewer, text: str) -> list[CarePerson]:
@@ -322,6 +373,7 @@ def _source_ref(
         report.report_status,
         observation,
         section,
+        report.held,
     )
 
 
@@ -497,7 +549,10 @@ def update_entry(
     today: date,
 ) -> CareLogEntry:
     """Rule 10: the author edits any field but the status, any time. A changed text keeps the old one in
-    `care_log_entry_revisions` (never returned). Only people added now are checked against the scope."""
+    `care_log_entry_revisions` (never returned). Only people added now are checked against the scope. The
+    row is locked first and the rules run against what it holds then, so an edit can't overwrite the
+    outcome of a concurrent complete or write a revision of the wrong text."""
+    _lock_entry(session, entry)
     current = fields_of(entry)
     merged = replace(current, **changes)
     merged = validate_fields(merged, today=today, previous=entry)
@@ -540,11 +595,23 @@ def delete_entry(session: Session, entry: CareLogEntry) -> None:
     session.commit()
 
 
-def _lock_planned(session: Session, entry: CareLogEntry) -> None:
-    """Lock the entry's row and read it again, then require it is still planned: a complete and a cancel
-    (or two completes) racing each other can't both win, and no outcome is lost."""
-    session.execute(select(CareLogEntry.id).where(CareLogEntry.id == entry.id).with_for_update())
+def _lock_entry(session: Session, entry: CareLogEntry) -> None:
+    """Lock the entry's row (if it isn't deleted) and read it again, so whatever is decided next sees what
+    a concurrent write left. `EntryGoneError` (404) when it was deleted meanwhile."""
+    locked = session.scalar(
+        select(CareLogEntry.id)
+        .where(CareLogEntry.id == entry.id, CareLogEntry.deleted_at.is_(None))
+        .with_for_update()
+    )
+    if locked is None:
+        raise EntryGoneError
     session.refresh(entry)
+
+
+def _lock_planned(session: Session, entry: CareLogEntry) -> None:
+    """Lock the entry and require it is still planned: a complete and a cancel (or two completes) racing
+    each other can't both win, and no outcome is lost."""
+    _lock_entry(session, entry)
     if entry.status != CareLogStatus.PLANNED:
         raise NotPlannedError
 

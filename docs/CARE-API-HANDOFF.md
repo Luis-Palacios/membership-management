@@ -64,7 +64,8 @@ Keep the existing conventions:
 | 3. `careLog` timeline source | ✅ | `e3acc5c` |
 | 4. Coming up | ✅ | `a9975a6` |
 | 5. Docs (Part 1) | ✅ | `0e167a6` |
-| Review fixes (stages 1–4) | ✅ | the commit "Fix care log review findings" (see `git log`) |
+| Review fixes (stages 1–4) | ✅ | `9033556` |
+| Second review fixes (stages 2–4) | ✅ | the commit "Fix care log second review" (see `git log`) |
 | **Part 2, branch `feature/care`** | | |
 | 6. Migration, models, seed (care) | ⬜ | |
 | 7. Access, create, read, edit, status, owners, read marks | ⬜ | |
@@ -228,8 +229,8 @@ Keep the existing conventions:
      edit that leaves a `heard` entry without it (blank, or kind changed to `heard` without it). The
      earlier "not required" deviation is withdrawn.
   5. *Participants.* Recorded: they get no access (rule 3); *Coming up* and complete / cancel only for
-     entries they can already see. staff-app should warn when a picked participant can't see the entry:
-     `participants[].sees` in `CareLogEntrySchema` says it. It is computed by the same
+     entries they can already see. (First version: `participants[].sees` in `CareLogEntrySchema`,
+     replaced in the second review, below.) It was computed by the same
      `care_log_visible_condition` for that participant's own user (`members.user_id`; false when the
      member has no user), assuming `careLog: view` without `all` and the scope of the groups they lead
      today (permissions of another user aren't known here; an elder participant is therefore shown as
@@ -243,6 +244,46 @@ Keep the existing conventions:
      deleted rows are rare, and the descending one is what the newest-first timeline and lists order by.
   Tried again: `try_care` 153 checks (was 132), `try_timeline` 16, `try_coming` 14, and the 270-request
   timeline dump still identical with the care entries removed.
+- **Second review fixes (stages 2–4), in one commit:**
+  1. *Lock and 404.* `_lock_entry` locks `WHERE id = … AND deleted_at IS NULL`; no row raises
+     `EntryGoneError`, which the routes answer as 404 (complete, cancel and edit), not a 500 from the
+     reload. `_lock_planned` is `_lock_entry` plus the `planned` check.
+  2. *Edit under the lock.* `update_entry` takes the same lock and builds `current` and the validation
+     (`previous=entry`) from the refreshed row, so the status-dependent rules (a done entry not in the
+     future, text required when done) judge what a concurrent complete left, and the revision keeps the
+     right text. Tried with a thread: a PATCH that read the entry as planned, waiting behind a complete,
+     failed with 422 `date` against the now-done entry and the outcome text stayed, no revision written.
+     Deleted meanwhile: `EntryGoneError`.
+  3. + 4. *`sees` removed, `POST /care-log/audience` added.* `CareLogEntrySchema.participants[]` is
+     `{ memberId, name }` again (no per-entry work, no timeline N+1). The route (`careLog: create`) takes
+     `{ people: [{memberId}|{guestId}] (0 to 10), visibility: "leaders"|"private", participants:
+     [memberId] (1 to 10) }` and answers `{ participants: [{ memberId, sees: boolean | null }] }` in the
+     order sent. People must be in the caller's reach (404 / 422 `people` as for logging, so nobody learns
+     about people outside their scope); counts and unknown participants are 422 `people` / `participants`.
+     `sees` uses each participant's real permissions: their `members.user_id`, one
+     `POST /internal/users/permissions` through `notifications/auth_server.permissions_for` for the whole
+     request (after `db.rollback()`, never holding a transaction across the call), then rule 8 as a pure
+     rule (`participant_sees` / `participant_needs_scope` in `data/care/access_rules.py`) for an unsaved
+     entry authored by the caller: `careLog: all` true; `private` false; without `careLog: view` false;
+     a participant who is one of the people false (the person never sees it); else one of the people in
+     the participant's members / guests scope (from the groups they lead today, widened by `members:
+     all` / `guests: all` / `smallGroups: all`; scope queries only for participants who need them). No
+     linked user, or a user missing from auth-server's answer (banned, unknown): false. auth-server
+     unreachable, token not set or an unreadable answer: `sees: null` for everyone, logged as a warning,
+     HTTP 200. Tried (auth-server's answer faked by user id): elder participant on `private` true; the
+     leader of the person's group on `leaders` true, another group's leader false, a co-leader of the group
+     true, a member leading nothing false; a leader who is the person false; a member with no user false; a
+     user absent from the answer false; no people; one auth-server call per request; 422 for 0, 11 and
+     unknown participants and 11 people; 404 for people outside the caller's scope; 403 for `user`; then the
+     real client pointed at a closed port, and with no token: all `null`, status 200.
+  5. *No hint.* A source the caller can't open, or that is gone, sends `section: null` as well.
+  6. *No-meeting report.* A `section` source on a report with `held = false` is 422 `source` (after the
+     visibility check, so it tells nothing to someone who can't open the report). `SourceRef` has `held`.
+  7. *Part 2 linked-care lookup* (stage 10) now says `{ type: section, section }` to match
+     `care_case_links`. ARCHITECTURE.md and CLAUDE.md describe the audience route and no longer `sees`.
+  Tried again: `try_care` 171 checks (was 153), `try_timeline` 16, `try_coming` 14, the 270-request
+  timeline dump identical with the care entries removed. Note: a scratch DB that ran the first
+  `329e2849ed61` needs `downgrade -1` + `upgrade head` (it was edited in place in the first review).
 
 ---
 
@@ -540,7 +581,7 @@ caller can open** (rule 32): `{ text, sharedBy, sharedAt, careCase: { id, title 
   can always open it, since the entry's visibility is the care's).
 - **Linked-care lookups** (rule 37): `GET /care-cases/linked?reportIds=1,2,3` returns, per report,
   the links to cares the caller can open: `[{ reportId, anchor: { type: attendance, memberId |
-  guestId } | { type: item, itemId } | { type: conversation, conversationId }, careCase: { id, title
+  guestId } | { type: section, section } | { type: conversation, conversationId }, careCase: { id, title
   } }]`. Used by Report detail, the conversation panel and Prayer & follow-up. Nothing for cares the
   caller can't open.
 
