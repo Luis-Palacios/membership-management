@@ -12,6 +12,7 @@ from membership_management.api.access import (
     ensure_guest_groups_enabled,
     sees_all_observations,
 )
+from membership_management.api.care_access import CareContextDep
 from membership_management.api.church_time import church_today
 from membership_management.api.coded_errors import CodedHTTPError
 from membership_management.api.current_member import CurrentMemberDep
@@ -280,6 +281,7 @@ def get_guest_timeline_route(
     member_scope: MemberScopeDep,
     group_scope: OptionalSmallGroupScopeDep,
     params: TimelineParamsDep,
+    care: CareContextDep,
 ) -> PersonTimelineSchema:
     guest = _get_or_404(db, guest_id, scope)
     timeline = get_person_timeline(
@@ -290,9 +292,11 @@ def get_guest_timeline_route(
         to=params.to_date,
         small_group_id=params.small_group_id,
         latest=params.latest,
+        care_viewer=care.viewer,
+        today=church_today(),
     )
     person = PersonSchema(type="guest", id=guest.id, name=guest.name)
-    return timeline_schema(db, claims, person, timeline, member_scope, scope)
+    return timeline_schema(db, claims, person, timeline, member_scope, scope, care)
 
 
 @router.post(

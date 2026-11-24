@@ -7,6 +7,12 @@ from typing import NamedTuple
 
 from sqlalchemy.orm import Session
 
+from membership_management.data.care.access_rules import CareLogViewer
+from membership_management.data.care.queries import (
+    person_timeline_care_log_query,
+    person_timeline_earliest_care_log_query,
+)
+from membership_management.data.care.services import load_entries
 from membership_management.data.query_helpers import all_as
 from membership_management.data.small_groups.models import ReportSection, SmallGroupRole
 from membership_management.data.small_groups.queries import people_query
@@ -18,6 +24,7 @@ from membership_management.data.small_groups.results import (
     ReportItemView,
     TaggedPersonRow,
     TimelineAttendance,
+    TimelineCareLogEntry,
     TimelineCounts,
     TimelineEntry,
     TimelineGroup,
@@ -115,6 +122,9 @@ class _TimelineRequest:
     to: date | None
     small_group_id: int | None
     latest: int | None
+    # Who sees care log entries (care spec rule 8) and today, for the plans still ahead.
+    care_viewer: CareLogViewer
+    today: date
 
 
 class _SourceResult(NamedTuple):
@@ -199,9 +209,32 @@ def _status_source(session: Session, request: _TimelineRequest) -> _SourceResult
     return _SourceResult(entries, earliest, [])
 
 
+def _care_log_source(session: Session, request: _TimelineRequest) -> _SourceResult:
+    """The care log entries about the person that the caller sees (care spec rule 13): planned ones with
+    their badge, cancelled ones left out. The range applies to their date, except plans still ahead, which
+    are always listed (they are *Coming up*). They have no group, so picking one hides them."""
+    entries: list[TimelineEntry] = []
+    if request.small_group_id is None:
+        found = session.execute(
+            person_timeline_care_log_query(
+                request.care_viewer,
+                request.person,
+                today=request.today,
+                from_=request.from_,
+                to=request.to,
+                latest=request.latest,
+            )
+        ).all()
+        loaded = {e.id: e for e in load_entries(session, [row.id for row in found])}
+        entries = [TimelineCareLogEntry(row.entry_date, loaded[row.id]) for row in found if row.id in loaded]
+    earliest = session.scalar(person_timeline_earliest_care_log_query(request.care_viewer, request.person))
+    return _SourceResult(entries, earliest, [])
+
+
 # A new kind of entry is one more source here and in `TimelineEntry`. No source knows about the others.
-# The order breaks ties on a date: an earlier source's entries go above a later one's (rule 15).
-_SOURCES = (_status_source, _report_source)
+# The order breaks ties on a date: an earlier source's entries go above a later one's (rule 15): status
+# changes, then care log entries, then reports.
+_SOURCES = (_status_source, _care_log_source, _report_source)
 
 
 def get_person_timeline(
@@ -213,16 +246,21 @@ def get_person_timeline(
     to: date | None,
     small_group_id: int | None,
     latest: int | None,
+    care_viewer: CareLogViewer,
+    today: date,
 ) -> PersonTimeline:
     """A member's or guest's timeline as the caller may see it, merged from every source.
 
-    `observation_groups` is the caller's observation audience: every group (None) or just these. With
-    `latest`, the newest N visible entries of any date, kind and group; otherwise `from_` and `to`
-    (already resolved) and optionally one group.
+    `observation_groups` is the caller's observation audience: every group (None) or just these.
+    `care_viewer` is the caller for care log entries and `today` the church date. With `latest`, the
+    newest N visible entries of any date, kind and group; otherwise `from_` and `to` (already resolved)
+    and optionally one group.
     """
     if latest is None and (from_ is None or to is None):
         raise ValueError("a timeline needs `latest` or both dates; use resolve_range")
-    request = _TimelineRequest(person, observation_groups, from_, to, small_group_id, latest)
+    request = _TimelineRequest(
+        person, observation_groups, from_, to, small_group_id, latest, care_viewer, today
+    )
     results = [source(session, request) for source in _SOURCES]
 
     all_entries = [entry for result in results for entry in result.entries]
@@ -237,6 +275,7 @@ def get_person_timeline(
         prayer=sum(1 for i in shown_items if i.section == ReportSection.PRAYER),
         praise=sum(1 for i in shown_items if i.section == ReportSection.PRAISE),
         follow_up=sum(1 for i in shown_items if i.section == ReportSection.FOLLOW_UP),
+        care_log=sum(1 for entry in entries if isinstance(entry, TimelineCareLogEntry)),
     )
     return PersonTimeline(
         from_,

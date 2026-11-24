@@ -1,6 +1,7 @@
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
+from membership_management.data.care.models import CareLogEntry
 from membership_management.data.guests.models import GuestInactiveReason, GuestStatus
 from membership_management.data.members.models import MemberInactiveReason, MemberStatus
 from membership_management.data.small_groups.models import (
@@ -730,8 +731,15 @@ class TimelineStatusEntry(NamedTuple):
     change: TimelineStatusRow
 
 
+class TimelineCareLogEntry(NamedTuple):
+    """A care log entry about the person (care spec rule 13), on the date it happened or is planned."""
+
+    entry_date: date
+    entry: CareLogEntry
+
+
 # What a timeline lists: one kind per source (`timeline_services.py`).
-TimelineEntry = TimelineReportEntry | TimelineStatusEntry
+TimelineEntry = TimelineReportEntry | TimelineStatusEntry | TimelineCareLogEntry
 
 
 class TimelineCounts(NamedTuple):
@@ -739,6 +747,8 @@ class TimelineCounts(NamedTuple):
     prayer: int
     praise: int
     follow_up: int
+    # Care log entries listed (planned ones still ahead included); the four above count reports only.
+    care_log: int
 
 
 class PersonTimeline(NamedTuple):

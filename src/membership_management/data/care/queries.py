@@ -7,6 +7,7 @@ from sqlalchemy import (
     and_,
     exists,
     false,
+    func,
     literal,
     null,
     or_,
@@ -34,6 +35,7 @@ from membership_management.data.small_groups.models import (
     SmallGroupReport,
     SmallGroupReportItem,
 )
+from membership_management.data.small_groups.results import PersonKey
 
 
 def member_in_scope_condition(
@@ -159,6 +161,56 @@ def loggable_guests_query(viewer: CareLogViewer, guest_ids: Collection[int]) -> 
 def existing_members_query(member_ids: Collection[int]) -> Select:
     """The ids of the members that exist, for validating participants."""
     return select(Member.id).where(Member.id.in_(member_ids))
+
+
+def _about_person(person: PersonKey) -> ColumnElement[bool]:
+    """The entry is about this member or guest (`care_log_entry_people`)."""
+    kind, person_id = person
+    column = CareLogEntryPerson.member_id if kind == "member" else CareLogEntryPerson.guest_id
+    return exists().where(CareLogEntryPerson.entry_id == CareLogEntry.id, column == person_id)
+
+
+def _timeline_entries(viewer: CareLogViewer, person: PersonKey) -> tuple[ColumnElement[bool], ...]:
+    """What the person timeline lists (rule 13): about the person, the caller sees it, not deleted, not
+    cancelled."""
+    return (
+        CareLogEntry.deleted_at.is_(None),
+        CareLogEntry.status != CareLogStatus.CANCELLED,
+        _about_person(person),
+        care_log_visible_condition(viewer),
+    )
+
+
+def person_timeline_care_log_query(
+    viewer: CareLogViewer,
+    person: PersonKey,
+    *,
+    today: date,
+    from_: date | None,
+    to: date | None,
+    latest: int | None,
+) -> Select:
+    """Ids and dates of the entries about the person the caller sees, newest first, between `from_` and
+    `to` when given plus every plan still ahead (after `today`) whatever the range, at most `latest`."""
+    query = (
+        select(CareLogEntry.id.label("id"), CareLogEntry.occurred_on.label("entry_date"))
+        .where(*_timeline_entries(viewer, person))
+        .order_by(
+            CareLogEntry.occurred_on.desc(),
+            CareLogEntry.occurred_at_time.desc().nulls_last(),
+            CareLogEntry.id.desc(),
+        )
+        .limit(latest)
+    )
+    if from_ is not None and to is not None:
+        ahead = and_(CareLogEntry.status == CareLogStatus.PLANNED, CareLogEntry.occurred_on > today)
+        query = query.where(or_(CareLogEntry.occurred_on.between(from_, to), ahead))
+    return query
+
+
+def person_timeline_earliest_care_log_query(viewer: CareLogViewer, person: PersonKey) -> Select:
+    """The date of the oldest entry about the person the caller sees, whatever the range."""
+    return select(func.min(CareLogEntry.occurred_on)).where(*_timeline_entries(viewer, person))
 
 
 def coming_up_query(

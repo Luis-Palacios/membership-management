@@ -60,8 +60,8 @@ Keep the existing conventions:
 | --- | --- | --- |
 | **Part 1, branch `feature/care-log`** | | |
 | 1. Migration, models, seed (care log) | ✅ | `ccfede2` |
-| 2. Care log routes, people search, visibility | ✅ | (hash added by stage 3's commit) |
-| 3. `careLog` timeline source | ⬜ | |
+| 2. Care log routes, people search, visibility | ✅ | `a90a8b4` |
+| 3. `careLog` timeline source | ✅ | (hash added by stage 4's commit) |
 | 4. Coming up | ⬜ | |
 | 5. Docs (Part 1) | ⬜ | |
 | **Part 2, branch `feature/care`** | | |
@@ -149,6 +149,27 @@ Keep the existing conventions:
   complete (participant, without text 422, future date 422, twice 409) and cancel (participant, again
   409, no body), sources of each kind in and out of scope, and a report deleted: the entry stays and the
   source says `gone`.
+
+- **Stage 3, shape:** the sources stay in `data/small_groups/timeline_services.py` (the "move to
+  `data/timeline/`" option was not taken: three sources still fit, and moving them would touch
+  Part 1's review for nothing). `_care_log_source` sits between status and report in `_SOURCES`, so on a
+  date: status changes, then care log entries, then reports (newest first inside a kind). Its SQL is
+  `person_timeline_care_log_query` in `data/care/queries.py`, over the same
+  `care_log_visible_condition` as the routes. `get_person_timeline` gains `care_viewer` and `today`;
+  `timeline_schema` gains the `CareContext`. A timeline entry is
+  `{ "kind": "careLog", "date": "2026-11-19", "entry": CareLogEntrySchema }`, the date being the
+  entry's `occurredOn`; `counts` gains `careLog` (entries listed, plans ahead included; the four report
+  counts are unchanged). `earliestDate` counts care entries. With `latest`, plans ahead are listed too
+  and, being the newest dates, come first.
+- **Stage 3, tried:** a dump of every timeline (9 roles x 6 people x 5 parameter sets: none, `latest=3`,
+  `latest=10`, a wide `from`/`to`, `smallGroupId=4`; 270 requests, 90 of them 200) before and after, on
+  a freshly seeded scratch DB: with `careLog` entries and `counts.careLog` removed, all 90 responses are
+  identical (for `latest`, the report and status entries are the prefix of the old list that fits). Then
+  by hand (16 checks): elder sees all five entries about the seeded member, the leader of her group four
+  (not the elders-only one), another group's leader gets 404 on the member; picking a group hides them;
+  a range with nothing in it still lists the plan ahead; cancelled and deleted entries are left out; the
+  guest's visit shows for the elder and the guest group's leader, 404 for another leader; on a shared
+  date the care log entry goes above the report.
 
 ---
 

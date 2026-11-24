@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 from pydantic import Field
 
 from membership_management.api.schemas.base import CamelModel
+from membership_management.api.schemas.care_log import CareLogEntrySchema
 from membership_management.api.schemas.person import PersonSchema
 from membership_management.api.schemas.small_group_reports import SegmentSchema
 from membership_management.data.guests.models import GuestInactiveReason, GuestStatus
@@ -56,6 +57,8 @@ class TimelineCountsSchema(CamelModel):
     prayer: int
     praise: int
     follow_up: int
+    # Care log entries listed, planned ones still ahead included. The four above count reports only.
+    care_log: int
 
 
 class TimelineReportEntrySchema(CamelModel):
@@ -81,9 +84,20 @@ class TimelineStatusEntrySchema(CamelModel):
     changed_by: TimelineChangedBySchema | None
 
 
+class TimelineCareLogEntrySchema(CamelModel):
+    """A care log entry about the person (care spec rule 13): planned ones carry `status: planned` (the
+    *Planned* badge), and those still ahead are listed whatever the range."""
+
+    kind: Literal["careLog"] = "careLog"
+    # The day it happened or is planned for.
+    date: date
+    entry: CareLogEntrySchema
+
+
 # staff-app skips a `kind` it doesn't know, so a new source can ship before the UI draws it (rule 15).
 TimelineEntrySchema = Annotated[
-    TimelineReportEntrySchema | TimelineStatusEntrySchema, Field(discriminator="kind")
+    TimelineReportEntrySchema | TimelineStatusEntrySchema | TimelineCareLogEntrySchema,
+    Field(discriminator="kind"),
 ]
 
 
@@ -96,7 +110,7 @@ class PersonTimelineSchema(CamelModel):
     earliest_date: date | None
     # Groups with at least one visible report, any date (the group filter).
     groups: list[TimelineGroupSchema]
-    # The report entries below: status entries aren't counted.
+    # The report entries below, and the care log ones in `careLog`: status entries aren't counted.
     counts: TimelineCountsSchema
-    # Newest first, every kind; on a date, status entries go above reports.
+    # Newest first, every kind; on a date, status entries go above care log entries, above reports.
     entries: list[TimelineEntrySchema]

@@ -8,6 +8,8 @@ from fastapi import Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from membership_management.api.access import GuestScope, MemberScope, viewable_people
+from membership_management.api.care_access import CareContext
+from membership_management.api.care_log import entry_schemas
 from membership_management.api.church_time import church_today
 from membership_management.api.jwt_auth import AuthClaims
 from membership_management.api.report_items import segment_schemas, tagged_in
@@ -15,8 +17,10 @@ from membership_management.api.schemas.person import PersonSchema
 from membership_management.api.schemas.person_timeline import (
     PersonTimelineSchema,
     TimelineAttendanceSchema,
+    TimelineCareLogEntrySchema,
     TimelineChangedBySchema,
     TimelineCountsSchema,
+    TimelineEntrySchema,
     TimelineGroupSchema,
     TimelineItemSchema,
     TimelineObservationSchema,
@@ -28,6 +32,8 @@ from membership_management.api.schemas.person_timeline import (
 from membership_management.data.small_groups.results import (
     PersonKey,
     PersonTimeline,
+    TimelineCareLogEntry,
+    TimelineEntry,
     TimelineGroup,
     TimelineReportEntry,
     TimelineRow,
@@ -95,6 +101,7 @@ def timeline_schema(
     timeline: PersonTimeline,
     member_scope: MemberScope,
     guest_scope: GuestScope,
+    care: CareContext,
 ) -> PersonTimelineSchema:
     """Chips follow rule 12 for the caller; the person's own is viewable (the caller is on their page)."""
     own: PersonKey = (person.type, person.id)
@@ -136,6 +143,18 @@ def timeline_schema(
             ],
         )
 
+    care_entries = [entry for entry in timeline.entries if isinstance(entry, TimelineCareLogEntry)]
+    care_schemas = iter(
+        entry_schemas(db, care, [entry.entry for entry in care_entries], today=church_today())
+    )
+
+    def entry_schema(entry: TimelineEntry) -> TimelineEntrySchema:
+        if isinstance(entry, TimelineReportEntry):
+            return TimelineReportEntrySchema(date=entry.entry_date, report=row_schema(entry.row))
+        if isinstance(entry, TimelineCareLogEntry):
+            return TimelineCareLogEntrySchema(date=entry.entry_date, entry=next(care_schemas))
+        return _status_entry(entry)
+
     return PersonTimelineSchema(
         person=person,
         from_date=timeline.from_date,
@@ -147,11 +166,7 @@ def timeline_schema(
             prayer=timeline.counts.prayer,
             praise=timeline.counts.praise,
             follow_up=timeline.counts.follow_up,
+            care_log=timeline.counts.care_log,
         ),
-        entries=[
-            TimelineReportEntrySchema(date=entry.entry_date, report=row_schema(entry.row))
-            if isinstance(entry, TimelineReportEntry)
-            else _status_entry(entry)
-            for entry in timeline.entries
-        ],
+        entries=[entry_schema(entry) for entry in timeline.entries],
     )
