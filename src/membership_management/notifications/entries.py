@@ -73,7 +73,7 @@ def create_entries(
     n = UserNotification
     id_rows = session.execute(
         select(n.user_id, n.id).where(
-            n.source_event_id == source_event_id, n.user_id.in_({r.user_id for r in requests})
+            n.source_event_id == source_event_id, n.user_id.in_(list({r.user_id for r in requests}))
         )
     ).all()
     ids = {user_id: entry_id for user_id, entry_id in id_rows}

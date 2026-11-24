@@ -88,8 +88,8 @@ def patch_my_member(
     return member_detail(db, update_member(db, member, body.model_dump(exclude_unset=True)), claims)
 
 
-# The schema's keys → the notifications/ categories (one switch per kind of email).
-_EMAIL_CATEGORIES = {
+# The schema's keys → the notifications/ categories (one switch per kind, for each channel).
+_KIND_CATEGORIES = {
     "report_conversation": CONVERSATION_CATEGORY,
     "report_submitted": SUBMITTED_CATEGORY,
     "report_reminder": REMINDER_CATEGORY,
@@ -100,7 +100,7 @@ def _preferences(db: MembersSessionDep, user_id: str) -> NotificationPreferences
     s = notification_settings
     return NotificationPreferencesSchema(
         email=EmailSwitchesSchema(
-            **{key: is_enabled(db, user_id, category, "email") for key, category in _EMAIL_CATEGORIES.items()}
+            **{key: is_enabled(db, user_id, category, "email") for key, category in _KIND_CATEGORIES.items()}
         ),
         available=EmailSwitchesSchema(
             report_conversation=s.conversation_emails_enabled,
@@ -108,7 +108,7 @@ def _preferences(db: MembersSessionDep, user_id: str) -> NotificationPreferences
             report_reminder=s.report_reminder_emails_enabled,
         ),
         push=PushSwitchesSchema(
-            **{key: is_enabled(db, user_id, category, "push") for key, category in _EMAIL_CATEGORIES.items()}
+            **{key: is_enabled(db, user_id, category, "push") for key, category in _KIND_CATEGORIES.items()}
         ),
         # Rule 3: a kind sends push only while its own flag and the push flag are both on.
         available_push=PushSwitchesSchema(
@@ -149,7 +149,7 @@ def put_my_notification_preferences(
         if switches is None:
             continue
         for key, enabled in switches.model_dump(exclude_unset=True).items():
-            set_enabled(db, claims.sub, _EMAIL_CATEGORIES[key], channel, enabled=enabled)
+            set_enabled(db, claims.sub, _KIND_CATEGORIES[key], channel, enabled=enabled)
     db.commit()
     return _preferences(db, claims.sub)
 
