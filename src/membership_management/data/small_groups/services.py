@@ -906,13 +906,13 @@ def search_taggable_people(session: Session, small_group: SmallGroup, text: str)
             name=row.name,
             in_this_group=row.in_this_group,
             groups=groups.get((row.kind, row.id), []),
-            phone_last4=_phone_last4(row.phone) if row.kind == "guest" else None,
+            phone_last4=phone_last4(row.phone) if row.kind == "guest" else None,
         )
         for row in rows
     ]
 
 
-def _phone_last4(phone: str | None) -> str | None:
+def phone_last4(phone: str | None) -> str | None:
     digits = "".join(c for c in phone or "" if c.isdigit())
     return digits[-4:] if len(digits) >= 4 else None
 

@@ -59,8 +59,8 @@ Keep the existing conventions:
 | Stage | Status | Commit |
 | --- | --- | --- |
 | **Part 1, branch `feature/care-log`** | | |
-| 1. Migration, models, seed (care log) | ✅ | (hash added by stage 2's commit) |
-| 2. Care log routes, people search, visibility | ⬜ | |
+| 1. Migration, models, seed (care log) | ✅ | `ccfede2` |
+| 2. Care log routes, people search, visibility | ✅ | (hash added by stage 3's commit) |
 | 3. `careLog` timeline source | ⬜ | |
 | 4. Coming up | ⬜ | |
 | 5. Docs (Part 1) | ⬜ | |
@@ -94,7 +94,61 @@ Keep the existing conventions:
 - **Stage 1, seed:** `data/seed/care.py` runs last and draws no random numbers. The made-up elders are
   the conversations seeder's (`seed-elder-N`), found through their comments; the leaders have
   `seed-user-<member id>` ids. No account matches those, so every seeded entry shows as someone else's
-  whoever signs in.
+  whoever signs in. The guest's visit is by the leader of the guest group the guest is in.
+- **Stage 2, shape:** `data/care/` holds `access_rules.py` (`CareLogViewer`: pure data),
+  `queries.py` (`care_log_visible_condition(viewer)`, the one SQL definition of rule 8),
+  `services.py` and `results.py`; the API side is `api/care_access.py` (`CareContext`, built from the
+  claims and the existing `MemberScope` / `GuestScope` / small group scope), `api/care_log.py`
+  (`entry_schemas`, the `CareLogEntrySchema` builder the timeline reuses), `api/schemas/care_log.py`
+  and `api/routers/care_log.py`. Deviation: there is no separate Python `care_log_visible(...)` twin.
+  The single-entry check (`entry_visible`) runs the same SQL condition on one id, so the two can't
+  disagree.
+- **Stage 2, one touch outside the care code:** `data/small_groups/services.py`'s `_phone_last4` is
+  now `phone_last4`, so the people search shares it. Nothing else of the existing code changed in the
+  routes; the timeline routes change in stage 3.
+- **Stage 2, validation codes** (422 body `{ detail, code }`, through `CodedHTTPError`): finer than the
+  handoff's five. `kind_status`, `date`, `text`, `others`, `heard_from`, `meeting_mode`, `people`,
+  `participants`, `reason` (cancel), `status` (PATCH changing it), `source` (PATCH sending one).
+  Length limits aren't pydantic `max_length`, so a too-long text is a coded 422, not FastAPI's list.
+  `heardFrom` isn't required for a `heard` entry (the handoff's list doesn't ask for it, staff-app's form
+  does). 404 for a person or source outside the caller's reach; an inactive person is 422 `people`
+  (checked after the scope, so it tells nothing about people out of scope). 409 `link` (no linked member,
+  create only) and 409 `not_planned` (complete or cancel of something not planned). 403 `author`.
+- **Stage 2, decisions:** the write routes (create, edit, delete, complete, cancel, people search) need
+  `careLog: create`, the reads `careLog: view`. Edit takes any field but the status and the source; a
+  changed kind must keep the entry consistent (send `meetingMode: null` when leaving `meeting`, `heardFrom:
+  null` when leaving `heard`). A participant completes or cancels only an entry they can see (rule 3: being
+  a participant grants no access), so a `private` plan of an elder "with" a leader is not the leader's to
+  complete. Editing an entry never changes its people to anyone out of scope; people already on it stay
+  even if they later left the caller's scope. A text change writes a revision even when the entry had no
+  text yet (a plan without purpose: revision text null); completing a plan keeps its purpose as a
+  revision. `people-search` returns `{ person, groups, phoneLast4 }` (the tag search's shape without
+  `inThisGroup`, which has no meaning without a group), min 2 characters, at most 10, inside the caller's
+  members / guests scope (`careLog: all` searches everyone), active people only.
+- **Stage 2, sources:** the body's `source` is `{ kind: "attendance", reportId, memberId | guestId }`,
+  `{ kind: "item", itemId }` or `{ kind: "conversation", conversationId }`. Attendance rows, follow-up
+  items and threads need the caller's observation audience, prayer and praise items only the group's
+  scope, and the report must be submitted; otherwise 404. In a response, `source` is null (none),
+  `{ visible: false, gone: false }` with no ids (the caller can't open it) or `{ gone: true }` (deleted).
+- **Stage 2, tried** (`TestClient`, `get_current_claims` overridden, scratch DB `care_scratch` migrated
+  and seeded, `GUEST_GROUPS_ENABLED` not needed for the care log), 132 checks, all passing. Roles, with
+  perms as `statements.ts` computes them: elder (linked, `seed-elder-1`) and elder unlinked (both with
+  `careLog: all`; `admin` has the same perms); `smallGroupLeader` leading group 4 and its co-leader;
+  one leading group 2; one leading guest group 7; one leading guest group 6; a member leading nothing;
+  `deacon` with no member; `user`. Read the six seeded entries as each (elder: all six; group 4's leader:
+  the `leaders` ones about his member, not the elders-only one nor the guest's; group 2's leader and the
+  one leading nothing: none; the guest group's leader: only the guest's; the other guest group's leader:
+  none; deacon with no member: none; `user`: 403). People search per role. Create as a leader about own
+  member (201), about someone in another group (404), about a guest of a group they don't lead (404),
+  the guest's leader about the guest (201), an elder about any member and a guest, an inactive member
+  (422 `people`), unlinked caller (409 `link`), `user` (403), and every 422 above. Visibility: a leaders
+  entry is seen by the co-leader and elders, not by another group's leader; a private one only by its
+  author and elders; a person leaving the group takes someone else's entry out of the leader's sight on
+  the next request and it comes back when they return. Edit (revision kept and never returned, other
+  person 403 `author`, hidden 404, status change 422), soft delete (row kept, 404 for everyone),
+  complete (participant, without text 422, future date 422, twice 409) and cancel (participant, again
+  409, no body), sources of each kind in and out of scope, and a report deleted: the entry stays and the
+  source says `gone`.
 
 ---
 

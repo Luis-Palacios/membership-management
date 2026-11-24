@@ -1,6 +1,7 @@
 from datetime import date, datetime, time, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
+from sqlalchemy.orm import aliased
 
 from membership_management.data.care.models import (
     CareLogEntry,
@@ -270,15 +271,26 @@ def _follow_up_item(
 
 
 def _guest_story(ctx: SeedContext) -> tuple[int, Member, SmallGroupReportItem | None] | None:
-    """The newest follow-up item that tags an active guest (in any group's report), the guest and the
-    member who submitted that report; a guest's visit is then logged from that item."""
+    """The newest follow-up item that tags an active guest who is in a guest group, the guest and that
+    group's leader; the leader's visit is then logged from that item."""
     session = ctx.session
+    guest_period = aliased(SmallGroupMember)
+    leader_period = aliased(SmallGroupMember)
     row = session.execute(
         select(SmallGroupReportItem, SmallGroupReportItemPerson.guest_id, Member)
         .join(SmallGroupReport, SmallGroupReport.id == SmallGroupReportItem.report_id)
         .join(SmallGroupReportItemPerson, SmallGroupReportItemPerson.item_id == SmallGroupReportItem.id)
         .join(Guest, Guest.id == SmallGroupReportItemPerson.guest_id)
-        .join(Member, Member.id == SmallGroupReport.submitted_by_member_id)
+        .join(guest_period, and_(guest_period.guest_id == Guest.id, guest_period.left_at.is_(None)))
+        .join(
+            leader_period,
+            and_(
+                leader_period.small_group_id == guest_period.small_group_id,
+                leader_period.left_at.is_(None),
+                leader_period.role == SmallGroupRole.LEADER,
+            ),
+        )
+        .join(Member, Member.id == leader_period.member_id)
         .where(SmallGroupReportItem.section == ReportSection.FOLLOW_UP, Guest.status == GuestStatus.ACTIVE)
         .order_by(SmallGroupReport.meeting_date.desc(), SmallGroupReportItem.id)
         .limit(1)
