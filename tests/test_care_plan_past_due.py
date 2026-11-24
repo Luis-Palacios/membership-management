@@ -8,7 +8,8 @@ from datetime import date, datetime, time
 from membership_management.data.care.services import plan_past_due
 
 TODAY = date(2026, 11, 24)
-NOW = datetime(2026, 11, 24, 17, 37)
+# The church's wall-clock time, without a zone, as `church_now()` gives it.
+NOW = datetime.combine(TODAY, time(17, 37))
 
 
 class PlanPastDueTest(unittest.TestCase):
