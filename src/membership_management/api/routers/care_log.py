@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from membership_management.api.care_access import CareContext, CareContextDep
 from membership_management.api.care_log import entry_schemas, meeting_mode_from_api, source_visible
-from membership_management.api.church_time import church_today
+from membership_management.api.church_time import church_now, church_today
 from membership_management.api.coded_errors import CodedHTTPError
 from membership_management.api.current_member import CurrentMemberDep
 from membership_management.api.dependencies import MembersSessionDep
@@ -147,7 +147,7 @@ def _author_or_participant(entry: CareLogEntry, ctx: CareContext) -> None:
 
 
 def _schema(db: MembersSessionDep, ctx: CareContext, entry: CareLogEntry) -> CareLogEntrySchema:
-    return entry_schemas(db, ctx, [entry], today=church_today())[0]
+    return entry_schemas(db, ctx, [entry], now=church_now())[0]
 
 
 @router.get(
@@ -277,11 +277,9 @@ def post_audience(
     dependencies=[_can_view],
 )
 def get_coming_up(db: MembersSessionDep, ctx: CareContextDep) -> CareLogComingUpSchema:
-    today = church_today()
-    past_due, upcoming = coming_up(
-        db, ctx.viewer, ctx.member.id if ctx.member is not None else None, today=today
-    )
-    schemas = iter(entry_schemas(db, ctx, [*past_due, *upcoming], today=today))
+    now = church_now()
+    past_due, upcoming = coming_up(db, ctx.viewer, ctx.member.id if ctx.member is not None else None, now=now)
+    schemas = iter(entry_schemas(db, ctx, [*past_due, *upcoming], now=now))
     return CareLogComingUpSchema(
         past_due=[next(schemas) for _ in past_due], upcoming=[next(schemas) for _ in upcoming]
     )

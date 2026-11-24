@@ -657,18 +657,27 @@ def cancel_entry(session: Session, entry: CareLogEntry, *, reason: str | None) -
     return _reloaded(session, entry.id)
 
 
+def plan_past_due(occurred_on: date, occurred_at_time: time | None, now: datetime) -> bool:
+    """Rule 6: a plan waits for *Record how it went* once its moment has passed, in church time. With a
+    time, that's when the time passes (a 3 PM call is past due at 3 PM that day); without one, the day
+    after its date. `now` is the church's wall-clock time (`church_now()`)."""
+    if occurred_on != now.date():
+        return occurred_on < now.date()
+    return occurred_at_time is not None and occurred_at_time <= now.time()
+
+
 def is_participant(entry: CareLogEntry, member_id: int | None) -> bool:
     return member_id is not None and any(p.member_id == member_id for p in entry.participants)
 
 
 def coming_up(
-    session: Session, viewer: CareLogViewer, member_id: int | None, *, today: date
+    session: Session, viewer: CareLogViewer, member_id: int | None, *, now: datetime
 ) -> tuple[list[CareLogEntry], list[CareLogEntry]]:
-    """Rule 11: the caller's planned entries (author or participant) not deleted: (past due, oldest
-    first; today through the next COMING_UP_DAYS days, soonest first)."""
-    ids = list(session.scalars(coming_up_query(viewer, member_id, today=today, horizon_days=COMING_UP_DAYS)))
-    entries = load_entries(session, ids)
-    return (
-        [e for e in entries if e.occurred_on < today],
-        [e for e in entries if e.occurred_on >= today],
-    )
+    """Rule 11: the caller's planned entries (author or participant) not deleted: (past due by
+    `plan_past_due`, oldest first; the rest through the next COMING_UP_DAYS days, soonest first)."""
+    query = coming_up_query(viewer, member_id, today=now.date(), horizon_days=COMING_UP_DAYS)
+    entries = load_entries(session, list(session.scalars(query)))
+    past_due = [e for e in entries if plan_past_due(e.occurred_on, e.occurred_at_time, now)]
+    due_ids = {e.id for e in past_due}
+
+    return past_due, [e for e in entries if e.id not in due_ids]

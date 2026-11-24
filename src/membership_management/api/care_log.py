@@ -2,7 +2,7 @@
 person timeline."""
 
 from collections.abc import Sequence
-from datetime import date
+from datetime import datetime
 
 from sqlalchemy.orm import Session
 
@@ -25,7 +25,7 @@ from membership_management.data.care.models import (
     MeetingMode,
 )
 from membership_management.data.care.results import SourceRef
-from membership_management.data.care.services import is_participant, source_refs
+from membership_management.data.care.services import is_participant, plan_past_due, source_refs
 from membership_management.data.small_groups.models import ReportStatus
 from membership_management.data.small_groups.results import PersonKey, person_key
 
@@ -89,7 +89,7 @@ def _person_name(person: CareLogEntryPerson) -> str:
 
 
 def entry_schemas(
-    db: Session, ctx: CareContext, entries: Sequence[CareLogEntry], *, today: date
+    db: Session, ctx: CareContext, entries: Sequence[CareLogEntry], *, now: datetime
 ) -> list[CareLogEntrySchema]:
     """The entries as the caller sees them: names, which people link (tags rule 12), the source's state
     for this caller. Everyone on the response is looked up once, not per entry."""
@@ -129,7 +129,8 @@ def entry_schemas(
                 cancel_reason=entry.cancel_reason,
                 author=CareLogAuthorSchema(member_id=entry.author_member_id, name=entry.author.name),
                 source=_source_schema(ref, ctx) if ref is not None else None,
-                past_due=entry.status == CareLogStatus.PLANNED and entry.occurred_on < today,
+                past_due=entry.status == CareLogStatus.PLANNED
+                and plan_past_due(entry.occurred_on, entry.occurred_at_time, now),
                 can_edit=can_write and mine,
                 can_complete=can_write
                 and entry.status == CareLogStatus.PLANNED

@@ -66,7 +66,8 @@ Keep the existing conventions:
 | 5. Docs (Part 1) | ✅ | `0e167a6` |
 | Review fixes (stages 1–4) | ✅ | `9033556` |
 | Second review fixes (stages 2–4) | ✅ | `ffddbb6` |
-| PR review fixes (#80) | ✅ | the commit "Fix care log PR review findings" |
+| PR review fixes (#80) | ✅ | `68d0c70` |
+| Fix: past due uses the plan's time (`fix/care-log-record-today`) | ✅ | the commit "Make a plan past due once its time passes" |
 | **Part 2, branch `feature/care`** | | |
 | 6. Migration, models, seed (care) | ⬜ | |
 | 7. Access, create, read, edit, status, owners, read marks | ⬜ | |
@@ -178,7 +179,8 @@ Keep the existing conventions:
   `{ "pastDue": [CareLogEntrySchema], "upcoming": [CareLogEntrySchema] }`: planned, not deleted,
   author or participant, and visible to the caller (a participant of a plan they can't see, such as an
   elder's `private` one, doesn't get it). `upcoming` is today through today + 7, by date then time;
-  `pastDue` is before today, oldest first. Declared before `/{entry_id}`. No paging.
+  `pastDue` is before today, oldest first (since the fix below: once the plan's time has passed, or
+  the day after its date without a time). Declared before `/{entry_id}`. No paging.
 - **Stage 4, a bug in stage 1 found and fixed here:** cancelling a plan with no purpose hit the check
   `status = 'planned' OR text IS NOT NULL` (500). It is now `status <> 'done' OR text IS NOT NULL`
   (`ck_care_log_entries_text_when_done`), changed in stage 1's migration in place (the branch isn't
@@ -291,6 +293,13 @@ Keep the existing conventions:
      kind to `message`, `heard` or `note` was a 500 `IntegrityError`. Now 422 `kind_status` for any
      status but `done`.
   2. *Conversation source without its id* is 422 `source`, like the other two kinds (was a 404).
+- **Fix after merge: past due uses the plan's time** (user's decision, Nov 24 2026; spec rule 6). A
+  plan with a time is past due once that time passes in church time (a 3 PM call is past due at 3 PM
+  that day); one without a time, the day after its date, as before. One pure rule,
+  `plan_past_due(occurred_on, occurred_at_time, now)` in `data/care/services.py`, with `now` from
+  `church_now()` (the church's wall-clock time), drives `pastDue` on entries and the *Coming up* split:
+  a plan earlier today moves from `upcoming` to `pastDue`. Validation still uses the date only (a plan
+  for today is allowed whatever its time).
 
 ---
 
@@ -417,7 +426,7 @@ complete or cancel by someone else.
   "author": { "memberId": 3, "name": "Roberto Aguilar" },
   "source": { "kind": "conversation", "reportId": 120, "meetingDate": "2026-09-24",
               "smallGroup": { "id": 4, "name": "Jóvenes Bello Horizonte" }, "visible": true, "gone": false },
-  "pastDue": false,     // planned and occurred_on < church today
+  "pastDue": false,     // planned, and its date before church today or today with its time passed
   "canEdit": true, "canComplete": true,
   "editedAt": null, "createdAt": "…"
 }
@@ -454,8 +463,8 @@ sets; everything but the new entries and `counts.careLog` byte-identical.
 
 `GET /care-log/coming-up` (`careLog: view`): the caller's planned entries (author **or** participant),
 not deleted:
-- `pastDue`: `occurred_on < church today`, oldest first;
-- `upcoming`: today through today + 7, soonest first.
+- `pastDue`: `plan_past_due` (date before church today, or today with its time passed), oldest first;
+- `upcoming`: the rest, through today + 7, soonest first.
 
 Shape: `{ "pastDue": [CareLogEntrySchema], "upcoming": [CareLogEntrySchema] }`. No paging: only the
 caller's own plans (rule 11). Empty lists when there are none.

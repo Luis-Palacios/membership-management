@@ -9,6 +9,12 @@ def church_today() -> date:
     return datetime.now(ZoneInfo(api_settings.church_timezone)).date()
 
 
+def church_now() -> datetime:
+    """The wall-clock date and time where the church is, without a time zone: for comparing with a
+    church date plus a time of day (a care log plan's `occurred_on` and `occurred_at_time`)."""
+    return datetime.now(ZoneInfo(api_settings.church_timezone)).replace(tzinfo=None)
+
+
 def church_date(moment: datetime) -> date:
     """The date `moment` falls on where the church is."""
     return moment.astimezone(ZoneInfo(api_settings.church_timezone)).date()

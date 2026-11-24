@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from membership_management.api.access import GuestScope, MemberScope, viewable_people
 from membership_management.api.care_access import CareContext
 from membership_management.api.care_log import entry_schemas
-from membership_management.api.church_time import church_today
+from membership_management.api.church_time import church_now, church_today
 from membership_management.api.jwt_auth import AuthClaims
 from membership_management.api.report_items import segment_schemas, tagged_in
 from membership_management.api.schemas.person import PersonSchema
@@ -144,9 +144,7 @@ def timeline_schema(
         )
 
     care_entries = [entry for entry in timeline.entries if isinstance(entry, TimelineCareLogEntry)]
-    care_schemas = iter(
-        entry_schemas(db, care, [entry.entry for entry in care_entries], today=church_today())
-    )
+    care_schemas = iter(entry_schemas(db, care, [entry.entry for entry in care_entries], now=church_now()))
 
     def entry_schema(entry: TimelineEntry) -> TimelineEntrySchema:
         if isinstance(entry, TimelineReportEntry):
