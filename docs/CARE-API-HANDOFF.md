@@ -71,8 +71,8 @@ Keep the existing conventions:
 | **Part 1b, branch `feature/care-calendar`** (the care calendar; spec rules 3, 8, 9, 11, 13, 53, 56–57) | | |
 | 0. Handoff (this section) | ✅ | with 1b.1 |
 | 1b.1 Participants see their entries; `POST /care-log/audience` reports who gains | ✅ | `12726d9` |
-| 1b.2 `GET /care-log` by date range | ✅ | the commit "Add GET /care-log, the care calendar's feed" |
-| 1b.3 Docs (Part 1b) | ✅ | the commit "Document Part 1b of the care log" |
+| 1b.2 `GET /care-log` by date range | ✅ | `c35a1bd` |
+| 1b.3 Docs (Part 1b) | ✅ | `f26e445` |
 | **Part 2, branch `feature/care`** | | |
 | 6. Migration, models, seed (care) | ⬜ | |
 | 7. Access, create, read, edit, status, owners, read marks | ⬜ | |
