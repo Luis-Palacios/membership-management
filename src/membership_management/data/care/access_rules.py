@@ -55,3 +55,15 @@ def participant_sees(
     if visibility != CareLogVisibility.LEADERS or not holds(perms, "careLog", "view"):
         return False
     return not is_one_of_the_people and person_in_scope
+
+
+def participant_gains(
+    perms: Perms, visibility: CareLogVisibility, *, is_one_of_the_people: bool, person_in_scope: bool
+) -> bool:
+    """Rule 3: naming this participant gives them an entry they wouldn't see otherwise. Not when they are
+    one of the people (rule 8: the person never sees it, so being named gives nothing)."""
+    if is_one_of_the_people:
+        return False
+    return not participant_sees(
+        perms, visibility, is_one_of_the_people=False, person_in_scope=person_in_scope
+    )

@@ -68,6 +68,11 @@ Keep the existing conventions:
 | Second review fixes (stages 2–4) | ✅ | `ffddbb6` |
 | PR review fixes (#80) | ✅ | `68d0c70` |
 | Fix: past due uses the plan's time (`fix/care-log-record-today`) | ✅ | the commit "Make a plan past due once its time passes" |
+| **Part 1b, branch `feature/care-calendar`** (the care calendar; spec rules 3, 8, 9, 11, 13, 53, 56–57) | | |
+| 0. Handoff (this section) | ✅ | with 1b.1 |
+| 1b.1 Participants see their entries; `POST /care-log/audience` reports who gains | ⬜ | |
+| 1b.2 `GET /care-log` by date range | ⬜ | |
+| 1b.3 Docs (Part 1b) | ⬜ | |
 | **Part 2, branch `feature/care`** | | |
 | 6. Migration, models, seed (care) | ⬜ | |
 | 7. Access, create, read, edit, status, owners, read marks | ⬜ | |
@@ -475,6 +480,99 @@ caller's own plans (rule 11). Empty lists when there are none.
   source) and the new routes in the role × route table.
 - `CLAUDE.md`: one bullet pointing at it, in the style of the others.
 - Mark Part 1 done in this log.
+
+---
+
+# Part 1b: the care calendar (branch `feature/care-calendar`)
+
+Spec: `../docs/specs/care.md` rules 3, 8, 9, 11, 13, 53, 56–57 (the rest of Part 1b is staff-app). No
+migration, no new permission, no auth-server change: `careLog: view` and `create` cover it. Stage
+numbers start with `1b.` so Part 2's 6–12 stay put.
+
+## Stage 1b.1: participants see their entries
+
+**The change (rules 3, 8):** naming someone in *With whom* now gives them the entry. In
+`care_log_visible_condition(viewer)` (`data/care/queries.py`, still the only definition of rule 8) an
+entry is visible when any of these holds:
+- `careLog: all` (as before);
+- the viewer is the **author** (as before);
+- the viewer's linked member is a **participant** (`care_log_entry_participants`), for both `leaders` and
+  `private` entries, and **whether or not they hold `careLog: view`** (the condition doesn't ask; the routes
+  keep their permission, so someone without `careLog: view` has no route to read it);
+- the old audience: `careLog: view`, a `leaders` entry, and at least one of its people in their members /
+  guests scope.
+
+Rule 8's **self-exclusion** still applies to everything but `careLog: all` and the author: an entry about the
+viewer's own member is not seen through being a participant, nor through the audience. Inside a care (Part 2)
+nothing changes yet: rule 9's "participants also see that entry" is the same participant branch.
+
+Everything reads this one condition, so nothing else changes by itself: `GET /care-log/{id}`, the
+timeline's `careLog` source, `GET /care-log/coming-up` (author or participant plans the viewer now sees: a
+participant gets the plans of entries that were `private`) and the complete / cancel lookups. A participant
+now **can** complete or cancel an entry they are named on (the Part 1 decision "completes or cancels only an
+entry they can see; being a participant grants no access" is reversed: being named is what lets them see
+it). They still don't edit or delete (rule 10, author only, 403 `author`).
+
+**`POST /care-log/audience`: who gains the entry.** Request unchanged (`people` 0–10, `visibility`,
+`participants` 1–10 member ids). Response:
+
+```jsonc
+{ "gains": [ { "memberId": 12, "name": "Andrea Gutiérrez" } ] }   // or { "gains": null }
+```
+
+- **Removed:** `participants: [{ memberId, sees }]` (the old field, which said who would *not* be in the
+  audience once `sees` was false). **New:** `gains`, the participants **who would not see the entry
+  without being named**, in the order sent, one per member id; empty list when nobody does.
+- A participant gains it when their own permissions wouldn't show it: for `private`, anyone who isn't
+  `careLog: all`; for `leaders`, anyone without `careLog: all` and without `careLog: view` plus one of the
+  people in their members / guests scope. Computed by the same pure rule as before (`participant_sees`,
+  `data/care/access_rules.py`) from their real permissions (auth-server, one call, outside the database
+  transaction).
+- Never in `gains`: the caller's own member; a participant who is one of the people (they never see it,
+  rule 8, so naming them gives nothing); a member with no linked user, or a user auth-server doesn't know
+  (banned): there is no one to show it to.
+- `gains: null` when auth-server couldn't be asked (unreachable, no token, unreadable answer), HTTP 200:
+  staff-app shows no warning. Never a 5xx.
+- Errors as before (422 `people` / `participants`, 404 for people outside the caller's reach).
+
+**Tests:** `tests/test_care_log_visibility.py` (helpers in `tests/care_db_support.py`): the condition run
+for each viewer shape (author; participant of a `private` entry, with and without `careLog: view`;
+participant on an entry about themselves; a leader who isn't named, unchanged; `careLog: all`;
+*Coming up* for a participant), `participants_gaining` (the service behind the audience route), and the
+pure rule `participant_gains` (`data/care/access_rules.py`). The ones that need SQL run only when
+`CARE_TEST_DATABASE_URL` points at a migrated, empty scratch database (name containing `scratch` or
+`test`; skipped otherwise, so the plain `unittest discover` still passes anywhere). They write inside
+transactions they roll back.
+
+## Stage 1b.2: `GET /care-log` by date range (rule 53)
+
+`GET /care-log?from=&to=&mine=&groupId=&kind=` (`careLog: view`), the calendar's feed.
+
+- `from`, `to`: church dates, **both required** (a missing or malformed one is FastAPI's plain 422).
+  `to` before `from`, or `(to - from).days > 62` (so at most **63 days inclusive**; the same
+  "difference in days" convention as the person timeline's range) is 422 `range`. Both ends are included.
+- `mine=true` (default `false`): entries the caller wrote **or** is a participant of.
+- `groupId`: entries about at least one person **currently in** that group: an active
+  `small_group_members` row (`left_at IS NULL`), a member or a guest. The group must be in reach:
+  `careLog: all` any existing group, otherwise the caller's small group scope (`smallGroups: all`, or the
+  groups they lead); outside it, or a group that doesn't exist, is 404. A closed group is fine (its people's
+  rows are normally ended).
+- `kind`, repeatable (`?kind=call&kind=visit`): one of the six kinds; an unknown one is FastAPI's 422.
+- Always excludes cancelled and deleted entries (rule 50). Done and planned both come back.
+- Visibility is `care_log_visible_condition`; nothing else widens it.
+- Response: a bare list of `CareLogEntrySchema` (unchanged), ordered by `occurredOn`, then `occurredAtTime`
+  (all-day, with no time, first), then `id`. No paging; at most 63 days is small enough. Built by
+  `entry_schemas`, so names, `viewable`, sources and participants are batched like the timeline's.
+- Declared **before** `/{entry_id}` with `/people-search`, `/audience` and `/coming-up` (a `GET` on the
+  collection root `""` doesn't collide with them: FastAPI matches the path first).
+
+**Tests:** range validation (62 ok, 63 → `range`, `to < from`), plus the query's SQL for `mine`, `groupId` and
+`kind`, and against the scratch database when configured.
+
+## Stage 1b.3: docs
+
+`docs/ARCHITECTURE.md` (the route table row for `GET /care-log`, the audience row, the visibility and
+audience bullets of *Care log*), `CLAUDE.md` (the *Care log* bullet), and *For the other repos* below.
 
 ---
 

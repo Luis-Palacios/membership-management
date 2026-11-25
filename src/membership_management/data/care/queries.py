@@ -73,15 +73,28 @@ def guest_in_scope_condition(
 
 
 def care_log_visible_condition(viewer: CareLogViewer) -> ColumnElement[bool]:
-    """Rule 8, over `care_log_entries` (deleted entries are the caller's to filter): `careLog: all` sees
-    every entry, the author their own, and `careLog: view` the `leaders` entries with at least one of their
-    people in the caller's members or guests scope. The one definition; lists, the timeline and the
+    """Rule 8 with rule 3, over `care_log_entries` (deleted entries are the caller's to filter):
+    `careLog: all` sees every entry, the author their own, a participant (the viewer's member is in
+    "with whom") the entries they are named on, `leaders` and `private` alike and with or without
+    `careLog: view` (the routes ask for that), and `careLog: view` the `leaders` entries with at least one
+    of their people in the caller's members or guests scope. Except for `careLog: all` and the author, an
+    entry about the viewer's own member is never seen. The one definition; lists, the timeline and the
     single-entry check all use it."""
     if viewer.sees_all:
         return true()
     own = CareLogEntry.author_user_id == viewer.user_id
+    named = false()
+    about_me: ColumnElement[bool] | None = None
+    if viewer.member_id is not None:
+        named = exists().where(
+            CareLogEntryParticipant.entry_id == CareLogEntry.id,
+            CareLogEntryParticipant.member_id == viewer.member_id,
+        )
+        about_me = exists().where(
+            CareLogEntryPerson.entry_id == CareLogEntry.id, CareLogEntryPerson.member_id == viewer.member_id
+        )
     if not viewer.can_view:
-        return own
+        return or_(own, and_(named, ~about_me) if about_me is not None else named)
     person_in_scope = exists().where(
         CareLogEntryPerson.entry_id == CareLogEntry.id,
         or_(
@@ -96,14 +109,12 @@ def care_log_visible_condition(viewer: CareLogViewer) -> ColumnElement[bool]:
         ),
     )
     leaders_see = and_(CareLogEntry.visibility == CareLogVisibility.LEADERS, person_in_scope)
-    if viewer.member_id is not None:
+    visible_to_others = or_(named, leaders_see)
+    if about_me is not None:
         # Rule 8: the person themselves never sees it. Without `careLog: all`, an entry about the caller's
-        # own member is theirs only as its author.
-        about_me = exists().where(
-            CareLogEntryPerson.entry_id == CareLogEntry.id, CareLogEntryPerson.member_id == viewer.member_id
-        )
-        leaders_see = and_(leaders_see, ~about_me)
-    return or_(own, leaders_see)
+        # own member is theirs only as its author (being named in it doesn't lift this).
+        visible_to_others = and_(visible_to_others, ~about_me)
+    return or_(own, visible_to_others)
 
 
 def care_log_entry_visible_query(viewer: CareLogViewer, entry_id: int) -> Select:

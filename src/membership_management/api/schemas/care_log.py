@@ -155,15 +155,15 @@ class CareAudienceBodySchema(CamelModel):
     participants: list[int]
 
 
-class CareAudienceParticipantSchema(CamelModel):
+class CareAudienceGainSchema(CamelModel):
     member_id: int
-    # Would this person see the entry, by their own permissions? Null: not known (auth-server couldn't be
-    # asked), so show no warning.
-    sees: bool | None
+    name: str
 
 
 class CareAudienceSchema(CamelModel):
-    participants: list[CareAudienceParticipantSchema]
+    # The participants who would see the entry only because they are named (rule 3), in the order sent.
+    # Null: not known (auth-server couldn't be asked), so show no warning.
+    gains: list[CareAudienceGainSchema] | None
 
 
 class CareLogComingUpSchema(CamelModel):

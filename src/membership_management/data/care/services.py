@@ -8,8 +8,8 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 
 from membership_management.data.care.access_rules import (
     CareLogViewer,
+    participant_gains,
     participant_needs_scope,
-    participant_sees,
 )
 from membership_management.data.care.models import (
     PLANNABLE_KINDS,
@@ -167,15 +167,18 @@ def entry_visible(session: Session, viewer: CareLogViewer, entry_id: int) -> boo
     return session.scalar(care_log_entry_visible_query(viewer, entry_id)) is not None
 
 
-def participant_user_ids(session: Session, member_ids: Sequence[int]) -> dict[int, str | None]:
-    """The auth-server user linked to each member (None: no user). `participants` 422 for an unknown id."""
-    members = {m.id: m.user_id for m in session.scalars(select(Member).where(Member.id.in_(member_ids)))}
+def participant_users(session: Session, member_ids: Sequence[int]) -> dict[int, tuple[str, str | None]]:
+    """Each member's name and linked auth-server user (None: no user). `participants` 422 for an unknown
+    id."""
+    members = {
+        m.id: (m.name, m.user_id) for m in session.scalars(select(Member).where(Member.id.in_(member_ids)))
+    }
     if set(members) != set(member_ids):
         raise CareLogInvalidError("participants", "Someone you added doesn't exist.")
     return members
 
 
-def participants_audience(
+def participants_gaining(
     session: Session,
     *,
     participants: Sequence[int],
@@ -183,24 +186,24 @@ def participants_audience(
     people: Sequence[PersonKey],
     visibility: CareLogVisibility,
     perms_by_user: Mapping[str, Perms] | None,
-) -> dict[int, bool | None]:
-    """For each participant (a member id): would they see an entry of the caller's, not yet saved, about
-    `people` with this `visibility`? Participants get no access from being named (rule 3), so this tells
-    the author who in "with whom" is outside the audience. It follows rule 8 with the participant's own
-    permissions (`perms_by_user`, auth-server's answer by user id; a user missing from it is banned or
-    unknown) and the members / guests scope of the groups they lead today. `perms_by_user` None means the
-    permissions couldn't be had: nothing is known, so every answer is None. Scope queries only run for the
-    participants whose answer depends on them."""
+    caller_member_id: int | None,
+) -> list[int] | None:
+    """Rule 3: which participants (member ids, in the order given) gain an entry of the caller's, not yet
+    saved, about `people` with this `visibility`, because they wouldn't see it otherwise. It follows rule 8
+    with the participant's own permissions (`perms_by_user`, auth-server's answer by user id) and the
+    members / guests scope of the groups they lead today. Never the caller's own member, one of the
+    people (the person never sees it), nor a member with no user or one auth-server doesn't know (banned,
+    unknown): there is no one to show it to. `perms_by_user` None means the permissions couldn't be had:
+    None. Scope queries only run for the participants whose answer depends on them."""
     if perms_by_user is None:
-        return dict.fromkeys(participants, None)
-    answers: dict[int, bool | None] = {}
+        return None
+    gains: list[int] = []
     member_ids = [i for kind, i in people if kind == "member"]
     guest_ids = [i for kind, i in people if kind == "guest"]
     for member_id in dict.fromkeys(participants):
         user_id = user_ids.get(member_id)
         perms = perms_by_user.get(user_id) if user_id is not None else None
-        if perms is None:
-            answers[member_id] = False
+        if perms is None or member_id == caller_member_id:
             continue
         in_scope = False
         if participant_needs_scope(perms, visibility, is_one_of_the_people=member_id in member_ids):
@@ -232,10 +235,11 @@ def participants_audience(
                     and session.scalars(loggable_guests_query(viewer, guest_ids)).first() is not None
                 )
             )
-        answers[member_id] = participant_sees(
+        if participant_gains(
             perms, visibility, is_one_of_the_people=member_id in member_ids, person_in_scope=in_scope
-        )
-    return answers
+        ):
+            gains.append(member_id)
+    return gains
 
 
 def search_people(session: Session, viewer: CareLogViewer, text: str) -> list[CarePerson]:

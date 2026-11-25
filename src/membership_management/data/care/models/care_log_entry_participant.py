@@ -11,8 +11,8 @@ if TYPE_CHECKING:
 
 
 class CareLogEntryParticipant(MemberManagementBase):
-    """Staff who took part in an entry ("with whom", care spec rule 3). Display only: no access comes
-    from it, except completing or cancelling a plan they are in. Members only."""
+    """Staff who took part in an entry ("with whom", care spec rule 3). Being named gives them the entry
+    (`care_log_visible_condition`) and so completing or cancelling a plan; not editing it. Members only."""
 
     __tablename__ = "care_log_entry_participants"
     __table_args__ = (UniqueConstraint("entry_id", "member_id"),)

@@ -13,7 +13,7 @@ from membership_management.api.jwt_auth import get_current_claims, require_permi
 from membership_management.api.rate_limit import default_user_rate_limit
 from membership_management.api.schemas.care_log import (
     CareAudienceBodySchema,
-    CareAudienceParticipantSchema,
+    CareAudienceGainSchema,
     CareAudienceSchema,
     CareLogCancelSchema,
     CareLogComingUpSchema,
@@ -47,8 +47,8 @@ from membership_management.data.care.services import (
     entry_visible,
     get_entry,
     is_participant,
-    participant_user_ids,
-    participants_audience,
+    participant_users,
+    participants_gaining,
     resolve_source,
     search_people,
     update_entry,
@@ -221,8 +221,9 @@ def post_entry(
     "/audience",
     name="care_log_audience",
     description=(
-        "For an entry not saved yet: would each person picked as 'with whom' see it, by their own "
-        "permissions? `sees` is null when that isn't known (auth-server couldn't be asked)"
+        "For an entry not saved yet: which people picked as 'with whom' would gain it, because their own "
+        "permissions wouldn't show it otherwise? `gains` is null when that isn't known (auth-server "
+        "couldn't be asked)"
     ),
     dependencies=[_can_create],
 )
@@ -240,7 +241,8 @@ def post_audience(
             )
         # The same reach as logging: nobody learns about people outside their own scope.
         check_people(db, ctx.viewer, people)
-        user_ids = participant_user_ids(db, participants)
+        users = participant_users(db, participants)
+        user_ids = {member_id: user_id for member_id, (_, user_id) in users.items()}
     except (CareLogInvalidError, PersonNotFoundError) as exc:
         raise _http_error(exc) from exc
     # Never hold a transaction open across the call to auth-server.
@@ -254,17 +256,18 @@ def post_audience(
             # Unreachable, not configured or an answer we can't read: unknown, never a 5xx.
             logger.warning("care log audience: permissions unavailable (%s)", type(exc).__name__)
             perms_by_user = None
-    answers = participants_audience(
+    gaining = participants_gaining(
         db,
         participants=participants,
         user_ids=user_ids,
         people=people,
         visibility=body.visibility,
         perms_by_user=perms_by_user,
+        caller_member_id=ctx.member.id if ctx.member is not None else None,
     )
-    return CareAudienceSchema(
-        participants=[CareAudienceParticipantSchema(member_id=m, sees=answers[m]) for m in participants]
-    )
+    if gaining is None:
+        return CareAudienceSchema(gains=None)
+    return CareAudienceSchema(gains=[CareAudienceGainSchema(member_id=m, name=users[m][0]) for m in gaining])
 
 
 @router.get(
