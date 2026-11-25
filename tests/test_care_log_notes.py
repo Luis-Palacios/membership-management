@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
 
 from care_db_support import CareDbTestCase
@@ -20,6 +20,7 @@ from membership_management.data.care.models import (
 )
 from membership_management.data.care.services import (
     CareLogInvalidError,
+    EntryGoneError,
     NoteExistsError,
     NoteNotAllowedError,
     NoteNotFoundError,
@@ -158,6 +159,21 @@ class NoteServiceTest(_Base):
         delete_note(self.db, other.id, note.id, user_id="user-bob")
         with self.assertRaises(NoteNotFoundError):
             delete_note(self.db, other.id, note.id, user_id="user-bob")
+
+    def test_a_deleted_entry_takes_no_edit_or_delete_of_its_notes(self) -> None:
+        # The entry is deleted after the route's visibility check: the service refuses before writing.
+        self.add(self.entry_done, self.bob, "first")
+        note = notes_for_entries(self.db, [self.entry_done.id])[self.entry_done.id][0]
+        self.entry_done.deleted_at = datetime(2026, 1, 1, tzinfo=UTC)
+        self.db.flush()
+        with self.assertRaises(EntryGoneError):
+            edit_note(self.db, self.entry_done.id, note.id, user_id="user-bob", text="second")
+        with self.assertRaises(EntryGoneError):
+            delete_note(self.db, self.entry_done.id, note.id, user_id="user-bob")
+        self.assertEqual([], list(self.db.scalars(select(CareLogEntryNoteRevision))))
+        kept = self.db.scalars(select(CareLogEntryNote).where(CareLogEntryNote.id == note.id)).one()
+        self.assertEqual("first", kept.text)
+        self.assertIsNone(kept.deleted_at)
 
     def test_a_participant_removed_from_with_keeps_their_note(self) -> None:
         self.add(self.entry_done, self.bob)

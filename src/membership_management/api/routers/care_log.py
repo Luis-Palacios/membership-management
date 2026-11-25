@@ -518,6 +518,6 @@ def delete_note_route(entry_id: int, note_id: int, db: MembersSessionDep, ctx: C
     _entry_or_404(db, entry_id, ctx)
     try:
         delete_note(db, entry_id, note_id, user_id=ctx.claims.sub)
-    except (NoteNotAllowedError, NoteNotFoundError) as exc:
+    except (NoteNotAllowedError, NoteNotFoundError, EntryGoneError) as exc:
         raise _http_error(exc) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)

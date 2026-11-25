@@ -104,7 +104,8 @@ def entry_schemas(
     viewable = viewable_people(db, ctx.claims, people, ctx.member_scope, ctx.guest_scope)
     refs = source_refs(db, entries)
     can_write = has_permission(ctx.claims, "careLog", "create")
-    notes = notes_for_entries(db, [entry.id for entry in entries])
+    # Only done entries take notes (rule 59): *Coming up* (all plans) asks for none.
+    notes = notes_for_entries(db, [entry.id for entry in entries if entry.status == CareLogStatus.DONE])
     member_id = ctx.member.id if ctx.member is not None else None
     schemas: list[CareLogEntrySchema] = []
     for entry in entries:

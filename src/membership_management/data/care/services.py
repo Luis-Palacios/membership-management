@@ -629,14 +629,23 @@ def delete_entry(session: Session, entry: CareLogEntry) -> None:
 def _lock_entry(session: Session, entry: CareLogEntry) -> None:
     """Lock the entry's row (if it isn't deleted) and read it again, so whatever is decided next sees what
     a concurrent write left. `EntryGoneError` (404) when it was deleted meanwhile."""
+    _lock_live_entry(session, entry.id)
+    session.refresh(entry)
+    # `refresh` reads the columns again; the collections loaded before the lock could be stale (a
+    # concurrent edit changing who takes part), so they load again on next use, under the lock.
+    session.expire(entry, ["people", "participants"])
+
+
+def _lock_live_entry(session: Session, entry_id: int) -> None:
+    """Lock the entry's row, or `EntryGoneError` (404) when it was deleted meanwhile: a note is written
+    only while its entry is there. Taken before the note's lock, in the same order as `add_note`."""
     locked = session.scalar(
         select(CareLogEntry.id)
-        .where(CareLogEntry.id == entry.id, CareLogEntry.deleted_at.is_(None))
+        .where(CareLogEntry.id == entry_id, CareLogEntry.deleted_at.is_(None))
         .with_for_update()
     )
     if locked is None:
         raise EntryGoneError
-    session.refresh(entry)
 
 
 def _lock_planned(session: Session, entry: CareLogEntry) -> None:
@@ -792,7 +801,8 @@ def _locked_note(session: Session, entry_id: int, note_id: int, user_id: str) ->
 
 def edit_note(session: Session, entry_id: int, note_id: int, *, user_id: str, text: str) -> CareLogEntry:
     """Rule 61: the writer edits their note any time; the old text goes to a revision (never returned) and
-    `edited_at` is set. The same text changes nothing."""
+    `edited_at` is set. The same text changes nothing. Nothing is written once the entry is deleted."""
+    _lock_live_entry(session, entry_id)
     note = _locked_note(session, entry_id, note_id, user_id)
     cleaned = _clean_note(text)
     if cleaned != note.text:
@@ -803,14 +813,12 @@ def edit_note(session: Session, entry_id: int, note_id: int, *, user_id: str, te
         session.commit()
     else:
         session.rollback()  # release the row lock
-    entry = get_entry(session, entry_id)
-    if entry is None:  # deleted between the visibility check and the note's lock
-        raise EntryGoneError
-    return entry
+    return _reloaded(session, entry_id)
 
 
 def delete_note(session: Session, entry_id: int, note_id: int, *, user_id: str) -> None:
     """Rule 61: soft delete, the note just disappears; its writer can write a new one."""
+    _lock_live_entry(session, entry_id)
     note = _locked_note(session, entry_id, note_id, user_id)
     note.deleted_at = _db_now(session)
     session.commit()
