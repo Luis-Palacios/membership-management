@@ -73,6 +73,7 @@ Keep the existing conventions:
 | 1b.1 Participants see their entries; `POST /care-log/audience` reports who gains | ✅ | `12726d9` |
 | 1b.2 `GET /care-log` by date range | ✅ | `c35a1bd` |
 | 1b.3 Docs (Part 1b) | ✅ | `f26e445` |
+| PR review fixes (#82): audience asks auth-server only for participants who can gain; removal test; docstring | ✅ | the commit "Address the #82 review notes" |
 | **Part 2, branch `feature/care`** | | |
 | 6. Migration, models, seed (care) | ⬜ | |
 | 7. Access, create, read, edit, status, owners, read marks | ⬜ | |

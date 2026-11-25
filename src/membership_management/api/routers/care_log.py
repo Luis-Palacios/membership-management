@@ -288,7 +288,15 @@ def post_audience(
         raise _http_error(exc) from exc
     # Never hold a transaction open across the call to auth-server.
     db.rollback()
-    wanted = {user_id for user_id in user_ids.values() if user_id is not None}
+    # Only the participants whose answer depends on their permissions: never the caller's own member nor
+    # one of the people (both are left out of `gains` anyway), so a lone self-pick stays `[]` offline.
+    caller_member_id = ctx.member.id if ctx.member is not None else None
+    people_member_ids = {i for kind, i in people if kind == "member"}
+    wanted = {
+        user_id
+        for member_id, user_id in user_ids.items()
+        if user_id is not None and member_id != caller_member_id and member_id not in people_member_ids
+    }
     perms_by_user: dict[str, Perms] | None = {}
     if wanted:
         try:
@@ -304,7 +312,7 @@ def post_audience(
         people=people,
         visibility=body.visibility,
         perms_by_user=perms_by_user,
-        caller_member_id=ctx.member.id if ctx.member is not None else None,
+        caller_member_id=caller_member_id,
     )
     if gaining is None:
         return CareAudienceSchema(gains=None)

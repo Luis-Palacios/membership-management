@@ -78,9 +78,13 @@ class ParticipantVisibilityTest(CareDbTestCase):
 
     def test_a_participant_added_later_gains_it_and_one_removed_loses_it(self) -> None:
         self.assertNotIn(self.plain.id, self.visible_ids(self.viewer(self.frank)))
-        self.db.add(CareLogEntryParticipant(entry_id=self.plain.id, member_id=self.frank.id))
+        participant = CareLogEntryParticipant(entry_id=self.plain.id, member_id=self.frank.id)
+        self.db.add(participant)
         self.db.flush()
         self.assertIn(self.plain.id, self.visible_ids(self.viewer(self.frank)))
+        self.db.delete(participant)
+        self.db.flush()
+        self.assertNotIn(self.plain.id, self.visible_ids(self.viewer(self.frank)))
 
     def test_coming_up_lists_the_plans_a_participant_newly_sees(self) -> None:
         plan = self.entry(

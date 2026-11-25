@@ -223,7 +223,7 @@ def care_log_range_query(
 ) -> Select:
     """The calendar's feed (rule 53): ids of the entries the caller sees dated `from_` through `to`, not
     cancelled or deleted (rule 50), by date, then time (all-day first), then id. `mine`: written by the
-    caller or naming their member. `small_group_id`: about someone now in that group (the service checks
+    caller or naming their member. `small_group_id`: about someone now in that group (the route checks
     the caller's reach). `kinds` empty means every kind."""
     query = (
         select(CareLogEntry.id)
