@@ -72,7 +72,7 @@ Keep the existing conventions:
 | 0. Handoff (this section) | ✅ | with 1b.1 |
 | 1b.1 Participants see their entries; `POST /care-log/audience` reports who gains | ✅ | `12726d9` |
 | 1b.2 `GET /care-log` by date range | ✅ | the commit "Add GET /care-log, the care calendar's feed" |
-| 1b.3 Docs (Part 1b) | ⬜ | |
+| 1b.3 Docs (Part 1b) | ✅ | the commit "Document Part 1b of the care log" |
 | **Part 2, branch `feature/care`** | | |
 | 6. Migration, models, seed (care) | ⬜ | |
 | 7. Access, create, read, edit, status, owners, read marks | ⬜ | |
@@ -305,6 +305,32 @@ Keep the existing conventions:
   `church_now()` (the church's wall-clock time), drives `pastDue` on entries and the *Coming up* split:
   a plan earlier today moves from `upcoming` to `pastDue`. Validation still uses the date only (a plan
   for today is allowed whatever its time).
+- *(Part 1b)* **Reverses** the Part 1 decision and review fix 5 above ("a participant completes or
+  cancels only an entry they can see; being a participant grants no access"): under rule 3 as changed,
+  being named gives them the entry, so a participant sees it, gets it in *Coming up* and completes or
+  cancels it, even a `private` one. The rest of that decision stands (they don't edit or delete).
+- *(Part 1b)* **Visibility, one condition.** The participant branch is part of
+  `care_log_visible_condition`, so no read got a separate rule. It doesn't need `careLog: view` in the
+  condition (a named user without it is visible to the condition but every read route still needs `view`,
+  so they have no page: `GET /care-log/{id}` is 403 for them, as for anyone without the permission).
+  Rule 8's self-exclusion is applied to the participant and audience branches together (an
+  `about_me` EXISTS), the author and `careLog: all` exempt.
+- *(Part 1b)* **Audience route renamed its answer.** `participants: [{ memberId, sees }]` is gone;
+  `gains: [{ memberId, name }] | null` replaces it (see 1b.1). `participant_sees` stays as the rule
+  `participant_gains` is built on; `participant_user_ids` / `participants_audience` became
+  `participant_users` (name and user id) / `participants_gaining`. The caller's own member is never in
+  `gains` (the route knows who is asking); a participant with no user account is not in it either, since
+  nobody would see anything.
+- *(Part 1b)* **Range of `GET /care-log`:** `(to - from).days <= 62`, the timeline's own convention
+  ("days apart"), so 63 days with both ends; a month grid with its leading and trailing days is at most
+  42. `from` and `to` are required (no defaults). `groupId` reach for a caller without `careLog: all`
+  is the existing small group scope (`ctx.group_scope.includes`), which includes `smallGroups: all`; an
+  unknown id is 404 either way. "Currently in the group" is an active `small_group_members` row
+  (`left_at IS NULL`) of a member or guest, whether or not the group is closed.
+- *(Part 1b)* **No migration:** the participants table, its indexes (`entry_id`, `member_id`) and the date
+  index already serve the new reads.
+- *(Part 1b)* **Tests:** the first with a database in this repo. They need `CARE_TEST_DATABASE_URL`
+  (a migrated scratch database; `create_all` can't make the trigram functions), and skip otherwise.
 
 ---
 
@@ -728,5 +754,22 @@ for the owner picker (rule 27):
 
 - staff-app regenerates nothing (types are hand-written there); its handoff mirrors the schemas
   above. Tell it about any field you rename.
-- auth-server: nothing beyond its two stages and the existing internal endpoint.
+- **Part 1b (care calendar), for staff-app** (types are hand-written there):
+  - New route `GET /care-log?from=YYYY-MM-DD&to=YYYY-MM-DD[&mine=true][&groupId=N][&kind=call&kind=visit]`
+    (`careLog: view`): a plain `CareLogEntrySchema[]`, ordered by `occurredOn`, `occurredAtTime`
+    (all-day first), `id`; at most 63 days inclusive (422 with `code: "range"` otherwise or when `to <
+    from`); 404 for a group the caller can't reach; cancelled and deleted entries never come back.
+    `kind` is one of `call`, `message`, `meeting`, `visit`, `heard`, `note`.
+  - **`POST /care-log/audience` changed.** Request the same. Response was `{ participants: [{ memberId,
+    sees }] }`, now `{ gains: [{ memberId, name }] | null }`: the participants who would see the entry
+    only because they are named ("{name} will see this entry, including what you write."), `null` when
+    unknown (show nothing). Drop the old `participants` / `sees` reading; the warning is now for each
+    item of `gains`.
+  - `CareLogEntrySchema` is **unchanged** (no new field). What changes is who gets which entries: a
+    participant now receives the entries they're named on from `GET /care-log/{id}`, *Coming up*, the
+    timeline and the new list, `private` ones included, and `canComplete` is true for them on a plan (they
+    can complete or cancel it). A user without `careLog: view` still gets 403 on these routes.
+  - The entry page (rules 56–57) uses the existing `GET /care-log/{id}`: 404 for everything not visible.
+  - Regenerate nothing; update the hand-written types for the audience response and the new route.
+- auth-server: nothing beyond its two stages and the existing internal endpoint (Part 1b needs none).
 - Not in this handoff: email (rule 41, a later Part 3 on the report conversations outbox).
