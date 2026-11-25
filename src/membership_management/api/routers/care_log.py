@@ -1,4 +1,5 @@
 import logging
+from datetime import date
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -27,7 +28,7 @@ from membership_management.api.schemas.care_log import (
 )
 from membership_management.api.schemas.person import PersonSchema
 from membership_management.api.schemas.small_group_reports import TagSearchGroupSchema
-from membership_management.data.care.models import CareLogEntry, CareLogSourceKind
+from membership_management.data.care.models import CareLogEntry, CareLogKind, CareLogSourceKind
 from membership_management.data.care.results import CareLogFields, SourceInput
 from membership_management.data.care.services import (
     MAX_PARTICIPANTS,
@@ -44,6 +45,7 @@ from membership_management.data.care.services import (
     complete_entry,
     create_entry,
     delete_entry,
+    entries_in_range,
     entry_visible,
     get_entry,
     is_participant,
@@ -54,6 +56,7 @@ from membership_management.data.care.services import (
     update_entry,
 )
 from membership_management.data.members.models import Member
+from membership_management.data.small_groups.models import SmallGroup
 from membership_management.data.small_groups.results import PersonKey
 from membership_management.notifications.auth_server import AuthServerUnavailable, permissions_for
 
@@ -215,6 +218,44 @@ def post_entry(
     except (CareLogInvalidError, PersonNotFoundError, SourceNotFoundError) as exc:
         raise _http_error(exc) from exc
     return _schema(db, ctx, entry)
+
+
+@router.get(
+    "",
+    name="list_care_log_entries",
+    description=(
+        "The care calendar's feed: the entries the caller may see from `from` through `to` (at most 63 "
+        "days), not cancelled or deleted, by date and time"
+    ),
+    dependencies=[_can_view],
+)
+def get_entries(
+    db: MembersSessionDep,
+    ctx: CareContextDep,
+    from_: Annotated[date, Query(alias="from")],
+    to: date,
+    mine: bool = False,
+    group_id: Annotated[int | None, Query(alias="groupId")] = None,
+    kind: Annotated[list[CareLogKind] | None, Query()] = None,
+) -> list[CareLogEntrySchema]:
+    if group_id is not None:
+        # careLog: all reaches every group; otherwise the small group scope (the groups they lead).
+        reach = ctx.viewer.sees_all or (ctx.group_scope is not None and ctx.group_scope.includes(group_id))
+        if not reach or db.get(SmallGroup, group_id) is None:
+            raise HTTPException(status_code=404, detail="Small group not found.")
+    try:
+        entries = entries_in_range(
+            db,
+            ctx.viewer,
+            from_=from_,
+            to=to,
+            mine=mine,
+            small_group_id=group_id,
+            kinds=list(dict.fromkeys(kind or [])),
+        )
+    except CareLogInvalidError as exc:
+        raise _http_error(exc) from exc
+    return entry_schemas(db, ctx, entries, now=church_now())
 
 
 @router.post(

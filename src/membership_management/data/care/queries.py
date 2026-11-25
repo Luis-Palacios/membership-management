@@ -21,6 +21,7 @@ from membership_management.data.care.models import (
     CareLogEntry,
     CareLogEntryParticipant,
     CareLogEntryPerson,
+    CareLogKind,
     CareLogStatus,
     CareLogVisibility,
 )
@@ -197,6 +198,61 @@ def _timeline_entries(viewer: CareLogViewer, person: PersonKey) -> tuple[ColumnE
         _about_person(person),
         care_log_visible_condition(viewer),
     )
+
+
+def _about_person_in_group(small_group_id: int) -> ColumnElement[bool]:
+    """The entry is about at least one member or guest currently in the group (an active membership row)."""
+    active = (SmallGroupMember.small_group_id == small_group_id, SmallGroupMember.left_at.is_(None))
+    return exists().where(
+        CareLogEntryPerson.entry_id == CareLogEntry.id,
+        or_(
+            CareLogEntryPerson.member_id.in_(select(SmallGroupMember.member_id).where(*active)),
+            CareLogEntryPerson.guest_id.in_(select(SmallGroupMember.guest_id).where(*active)),
+        ),
+    )
+
+
+def care_log_range_query(
+    viewer: CareLogViewer,
+    *,
+    from_: date,
+    to: date,
+    mine: bool,
+    small_group_id: int | None,
+    kinds: Collection[CareLogKind],
+) -> Select:
+    """The calendar's feed (rule 53): ids of the entries the caller sees dated `from_` through `to`, not
+    cancelled or deleted (rule 50), by date, then time (all-day first), then id. `mine`: written by the
+    caller or naming their member. `small_group_id`: about someone now in that group (the service checks
+    the caller's reach). `kinds` empty means every kind."""
+    query = (
+        select(CareLogEntry.id)
+        .where(
+            CareLogEntry.deleted_at.is_(None),
+            CareLogEntry.status != CareLogStatus.CANCELLED,
+            CareLogEntry.occurred_on.between(from_, to),
+            care_log_visible_condition(viewer),
+        )
+        .order_by(
+            CareLogEntry.occurred_on, CareLogEntry.occurred_at_time.asc().nulls_first(), CareLogEntry.id
+        )
+    )
+    if mine:
+        by_me = CareLogEntry.author_user_id == viewer.user_id
+        if viewer.member_id is not None:
+            by_me = or_(
+                by_me,
+                exists().where(
+                    CareLogEntryParticipant.entry_id == CareLogEntry.id,
+                    CareLogEntryParticipant.member_id == viewer.member_id,
+                ),
+            )
+        query = query.where(by_me)
+    if small_group_id is not None:
+        query = query.where(_about_person_in_group(small_group_id))
+    if kinds:
+        query = query.where(CareLogEntry.kind.in_(kinds))
+    return query
 
 
 def person_timeline_care_log_query(

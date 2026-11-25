@@ -70,8 +70,8 @@ Keep the existing conventions:
 | Fix: past due uses the plan's time (`fix/care-log-record-today`) | ✅ | the commit "Make a plan past due once its time passes" |
 | **Part 1b, branch `feature/care-calendar`** (the care calendar; spec rules 3, 8, 9, 11, 13, 53, 56–57) | | |
 | 0. Handoff (this section) | ✅ | with 1b.1 |
-| 1b.1 Participants see their entries; `POST /care-log/audience` reports who gains | ⬜ | |
-| 1b.2 `GET /care-log` by date range | ⬜ | |
+| 1b.1 Participants see their entries; `POST /care-log/audience` reports who gains | ✅ | `12726d9` |
+| 1b.2 `GET /care-log` by date range | ✅ | the commit "Add GET /care-log, the care calendar's feed" |
 | 1b.3 Docs (Part 1b) | ⬜ | |
 | **Part 2, branch `feature/care`** | | |
 | 6. Migration, models, seed (care) | ⬜ | |
@@ -566,8 +566,12 @@ transactions they roll back.
 - Declared **before** `/{entry_id}` with `/people-search`, `/audience` and `/coming-up` (a `GET` on the
   collection root `""` doesn't collide with them: FastAPI matches the path first).
 
-**Tests:** range validation (62 ok, 63 → `range`, `to < from`), plus the query's SQL for `mine`, `groupId` and
-`kind`, and against the scratch database when configured.
+**Tests:** `tests/test_care_log_range.py`, same scratch database as 1b.1 (skipped without it): the
+service (`entries_in_range`: ordering with all-day first, both ends included, cancelled and deleted left
+out, the visibility condition, `mine`, `groupId` with members, someone who left and guests, repeated
+`kind`, 62 days ok and 63 → `range`, `to < from`) and the route through `TestClient` (shape, the other
+`GET /care-log/...` routes still resolving, 422 `range`, 422 for a missing date or unknown kind, 404 for
+a group outside the leader's reach or missing, 403 without `careLog: view`).
 
 ## Stage 1b.3: docs
 

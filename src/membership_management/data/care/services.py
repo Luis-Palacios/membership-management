@@ -25,6 +25,7 @@ from membership_management.data.care.models import (
 )
 from membership_management.data.care.queries import (
     care_log_entry_visible_query,
+    care_log_range_query,
     care_people_search_query,
     coming_up_query,
     existing_members_query,
@@ -71,6 +72,8 @@ MAX_SHORT_TEXT = 200
 MAX_CANCEL_REASON = 500
 # Rule 11: how far ahead *Coming up* looks.
 COMING_UP_DAYS = 7
+# `GET /care-log` (rule 53): `to - from` at most this many days (63 days with both ends).
+MAX_RANGE_DAYS = 62
 
 
 class CareLogInvalidError(Exception):
@@ -685,3 +688,26 @@ def coming_up(
     due_ids = {e.id for e in past_due}
 
     return past_due, [e for e in entries if e.id not in due_ids]
+
+
+def entries_in_range(
+    session: Session,
+    viewer: CareLogViewer,
+    *,
+    from_: date,
+    to: date,
+    mine: bool,
+    small_group_id: int | None,
+    kinds: Collection[CareLogKind],
+) -> list[CareLogEntry]:
+    """Rule 53: the entries the caller sees from `from_` through `to` (both included), by date and time.
+    422 `range` when `to` is before `from_` or they are more than `MAX_RANGE_DAYS` days apart. The caller's
+    reach to `small_group_id` is the route's to check."""
+    if to < from_:
+        raise CareLogInvalidError("range", "The range must start on or before its end.")
+    if (to - from_).days > MAX_RANGE_DAYS:
+        raise CareLogInvalidError("range", f"The range can't be longer than {MAX_RANGE_DAYS + 1} days.")
+    query = care_log_range_query(
+        viewer, from_=from_, to=to, mine=mine, small_group_id=small_group_id, kinds=kinds
+    )
+    return load_entries(session, list(session.scalars(query)))

@@ -29,6 +29,7 @@ from membership_management.data.care.models import (
     MeetingMode,
 )
 from membership_management.data.care.queries import care_log_visible_condition
+from membership_management.data.guests.models import Guest
 from membership_management.data.members.models import Member
 from membership_management.data.small_groups.models import (
     GroupAudience,
@@ -118,11 +119,27 @@ class CareDbTestCase(unittest.TestCase):
         self.db.flush()
         return group
 
+    def guest_group(self, name: str, guests: Sequence[Guest]) -> SmallGroup:
+        group = SmallGroup(name=name, audience=GroupAudience.GUESTS)
+        self.db.add(group)
+        self.db.flush()
+        for guest in guests:
+            self.db.add(SmallGroupMember.for_group(group, guest_id=guest.id, joined_at=date(2026, 1, 1)))
+        self.db.flush()
+        return group
+
+    def guest(self, name: str) -> Guest:
+        guest = Guest(name=name)
+        self.db.add(guest)
+        self.db.flush()
+        return guest
+
     def entry(
         self,
         author: Member,
         about: Sequence[Member],
         *,
+        about_guests: Sequence[Guest] = (),
         participants: Sequence[Member] = (),
         visibility: CareLogVisibility = CareLogVisibility.LEADERS,
         kind: CareLogKind = CareLogKind.CALL,
@@ -141,7 +158,10 @@ class CareDbTestCase(unittest.TestCase):
             visibility=visibility,
             author_user_id=author.user_id or f"user-{author.id}",
             author_member_id=author.id,
-            people=[CareLogEntryPerson(member_id=m.id) for m in about],
+            people=[
+                *(CareLogEntryPerson(member_id=m.id) for m in about),
+                *(CareLogEntryPerson(guest_id=g.id) for g in about_guests),
+            ],
             participants=[CareLogEntryParticipant(member_id=m.id) for m in participants],
         )
         if deleted:
