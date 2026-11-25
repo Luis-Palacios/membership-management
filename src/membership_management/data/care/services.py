@@ -71,6 +71,8 @@ from membership_management.data.small_groups.services import (
 MAX_PEOPLE = 10
 MAX_PARTICIPANTS = 10
 MAX_TEXT = 4000
+# The partial unique index of `care_log_entry_notes` (one note per writer, rule 59).
+NOTE_UNIQUE_INDEX = "uq_care_log_entry_notes_entry_id_author_member_id"
 MAX_SHORT_TEXT = 200
 MAX_CANCEL_REASON = 500
 # Rule 11: how far ahead *Coming up* looks.
@@ -758,9 +760,13 @@ def add_note(
     )
     try:
         session.commit()
-    except IntegrityError as exc:  # the partial unique index: a concurrent note by the same writer
+    except IntegrityError as exc:
         session.rollback()
-        raise NoteExistsError from exc
+        # Only the partial unique index means "a concurrent note by the same writer"; anything else is a bug.
+        diag = getattr(exc.orig, "diag", None)  # psycopg's error details
+        if getattr(diag, "constraint_name", None) == NOTE_UNIQUE_INDEX:
+            raise NoteExistsError from exc
+        raise
     return _reloaded(session, entry.id)
 
 
@@ -797,7 +803,10 @@ def edit_note(session: Session, entry_id: int, note_id: int, *, user_id: str, te
         session.commit()
     else:
         session.rollback()  # release the row lock
-    return _reloaded(session, entry_id)
+    entry = get_entry(session, entry_id)
+    if entry is None:  # deleted between the visibility check and the note's lock
+        raise EntryGoneError
+    return entry
 
 
 def delete_note(session: Session, entry_id: int, note_id: int, *, user_id: str) -> None:

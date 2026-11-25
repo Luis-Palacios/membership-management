@@ -79,6 +79,7 @@ Keep the existing conventions:
 | 1c.1 Migration, models, seed (notes) | ✅ | `81318f3` |
 | 1c.2 Note routes, `notes` / `canAddNote` on the entry, timeline | ✅ | `37ea82f` |
 | 1c.3 Docs (Part 1c) | ✅ | `ae2e23c` |
+| Review fixes (Part 1c): DB tests roll back what routes commit; PATCH 404 on a deleted entry; 409 only for the unique index; docs | ✅ | `fff55ee` and the commit "Address the Part 1c review notes" |
 | **Part 2, branch `feature/care`** | | |
 | 6. Migration, models, seed (care) | ⬜ | |
 | 7. Access, create, read, edit, status, owners, read marks | ⬜ | |
@@ -357,16 +358,17 @@ Keep the existing conventions:
 - *(Part 1c)* **Timeline carries the full notes**, not a count: its `careLog` item already embeds the full
   `CareLogEntrySchema`, so `notes` and `canAddNote` come with it for free and staff-app opens them in place
   (rule 62) with no second request. Notes are batched with one query per response, as names and sources are.
-- *(Part 1c)* **A note never touches the entry** (rule 63): no `edited_at`, date or status change, and the
-  entry's `last` anything stays. The lock taken on the entry row by `POST` is only to serialise two notes
-  by the same writer; the partial unique index is the last guard (`IntegrityError` also becomes 409).
-- *(Part 1c)* **Not run against a database:** when this part was built Postgres (Docker) wasn't running and
-  no server may be started from the build session, so the migration was checked only as SQL
-  (`alembic upgrade 329e2849ed61:5b8e2d7a1c94 --sql`), and the DB tests were written but skipped. Before the
-  PR: `alembic upgrade head`, `alembic check`, `downgrade -1` + `upgrade head` and
-  `CARE_TEST_DATABASE_URL=… python -m unittest discover -s tests` on a scratch database. The migration is
+- *(Part 1c)* **A note never touches the entry** (rule 63): no `edited_at`, date or status change. The lock
+  taken on the entry row by `POST` is only to serialise two notes by the same writer; the partial unique
+  index is the last guard (its violation, matched by constraint name, also becomes 409 `note_exists`).
+- *(Part 1c)* **Run against a scratch database** (`care_scratch`, during review): `alembic upgrade head`,
+  `alembic check` (clean), `downgrade -1` + `upgrade head`, and all 70 tests with `CARE_TEST_DATABASE_URL`,
+  none skipped. The first run showed the note tests leaking rows (the note routes commit), so
+  `CareDbTestCase` now joins an outer transaction through savepoints and rolls it back. The migration is
   hand-written (`alembic heads` itself fails on `ecbadacc8044`, which calls `op.f` at import: an old
   problem, not this part's).
+- *(Part 1c, review)* `PATCH` on a note whose entry is deleted between the visibility check and the note's
+  lock is 404 (`EntryGoneError`), not a 500.
 - *(Part 1c)* **Removed participants** keep their notes (rule 61): nothing deletes a note when the
   participants of an entry change, and a note's writer is stored by `author_member_id`, not looked up from
   the participants.

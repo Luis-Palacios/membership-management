@@ -36,7 +36,8 @@ STORY_GROUP = "GP - #4"
 
 def seed_care_log(ctx: SeedContext) -> None:
     """The care log story of the design canvas, on the seeded data: a member (the canvas's Lucía) with a
-    call by an elder from a follow-up item, WhatsApp messages by her group's leader, a past planned call
+    call by an elder from a follow-up item (the group's leader took part; both wrote a note, Part 1c, the
+    leader's edited once), WhatsApp messages by her group's leader, a past planned call
     waiting for *Record how it went*, a planned meeting ahead with the leader taking part and an elders-only
     `heard` entry; and a guest with a visit from a follow-up item.
 

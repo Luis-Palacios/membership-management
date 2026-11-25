@@ -502,7 +502,7 @@ def patch_note(
     _entry_or_404(db, entry_id, ctx)
     try:
         entry = edit_note(db, entry_id, note_id, user_id=ctx.claims.sub, text=body.text)
-    except (CareLogInvalidError, NoteNotAllowedError, NoteNotFoundError) as exc:
+    except (CareLogInvalidError, NoteNotAllowedError, NoteNotFoundError, EntryGoneError) as exc:
         raise _http_error(exc) from exc
     return _schema(db, ctx, entry)
 
