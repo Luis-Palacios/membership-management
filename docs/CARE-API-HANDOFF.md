@@ -74,6 +74,11 @@ Keep the existing conventions:
 | 1b.2 `GET /care-log` by date range | ✅ | `c35a1bd` |
 | 1b.3 Docs (Part 1b) | ✅ | `f26e445` |
 | PR review fixes (#82): audience asks auth-server only for participants who can gain; removal test; docstring | ✅ | the commit "Address the #82 review notes" |
+| **Part 1c, branch `feature/care-log-notes`** (notes from those who took part; spec rules 3, 8, 9, 10, 59–63) | | |
+| 0. Handoff (this section) | ✅ | with 1c.1 |
+| 1c.1 Migration, models, seed (notes) | ✅ | the commit "Add care log entry notes: tables, models, seed" |
+| 1c.2 Note routes, `notes` / `canAddNote` on the entry, timeline | ⬜ | |
+| 1c.3 Docs (Part 1c) | ⬜ | |
 | **Part 2, branch `feature/care`** | | |
 | 6. Migration, models, seed (care) | ⬜ | |
 | 7. Access, create, read, edit, status, owners, read marks | ⬜ | |
@@ -340,6 +345,31 @@ Keep the existing conventions:
   index already serve the new reads.
 - *(Part 1b)* **Tests:** the first with a database in this repo. They need `CARE_TEST_DATABASE_URL`
   (a migrated scratch database; `create_all` can't make the trigram functions), and skip otherwise.
+- *(Part 1c)* **Error codes** (all through `CodedHTTPError`): `POST` 403 `not_participant` (the caller is
+  neither the entry's author nor one of its participants), 409 `note_exists` (they already have a note),
+  409 `link` (no linked member), 422 `not_done` (the entry is planned or cancelled), 422 `no_participants`,
+  422 `text`; `PATCH` / `DELETE` 403 `not_note_writer` (the entry's author included: rule 61), 404 for an
+  entry the caller can't see, a deleted entry, a note of another entry or a deleted note. Check order on
+  `POST`: 404 (visibility), 409 `link`, 403, 422 status, 422 `no_participants`, 409 `note_exists`, 422 `text`.
+- *(Part 1c)* **Permission:** the note routes need `careLog: create`, like complete / cancel (a participant
+  with only `careLog: view` reads the notes but doesn't write). `canAddNote` and `canEdit` on a note
+  include that permission.
+- *(Part 1c)* **Timeline carries the full notes**, not a count: its `careLog` item already embeds the full
+  `CareLogEntrySchema`, so `notes` and `canAddNote` come with it for free and staff-app opens them in place
+  (rule 62) with no second request. Notes are batched with one query per response, as names and sources are.
+- *(Part 1c)* **A note never touches the entry** (rule 63): no `edited_at`, date or status change, and the
+  entry's `last` anything stays. The lock taken on the entry row by `POST` is only to serialise two notes
+  by the same writer; the partial unique index is the last guard (`IntegrityError` also becomes 409).
+- *(Part 1c)* **Not run against a database:** when this part was built Postgres (Docker) wasn't running and
+  no server may be started from the build session, so the migration was checked only as SQL
+  (`alembic upgrade 329e2849ed61:5b8e2d7a1c94 --sql`), and the DB tests were written but skipped. Before the
+  PR: `alembic upgrade head`, `alembic check`, `downgrade -1` + `upgrade head` and
+  `CARE_TEST_DATABASE_URL=… python -m unittest discover -s tests` on a scratch database. The migration is
+  hand-written (`alembic heads` itself fails on `ecbadacc8044`, which calls `op.f` at import: an old
+  problem, not this part's).
+- *(Part 1c)* **Removed participants** keep their notes (rule 61): nothing deletes a note when the
+  participants of an entry change, and a note's writer is stored by `author_member_id`, not looked up from
+  the participants.
 
 ---
 
@@ -612,6 +642,63 @@ a group outside the leader's reach or missing, 403 without `careLog: view`).
 
 `docs/ARCHITECTURE.md` (the route table row for `GET /care-log`, the audience row, the visibility and
 audience bullets of *Care log*), `CLAUDE.md` (the *Care log* bullet), and *For the other repos* below.
+
+---
+
+# Part 1c: notes from those who took part (branch `feature/care-log-notes`)
+
+Spec: `../docs/specs/care.md` rules 3, 8, 9, 10, 59–63 (auth-server: nothing; the rest of Part 1c is
+staff-app). One migration, no new permission: `careLog: create` and `view` cover it. Stage numbers start
+with `1c.`.
+
+## Stage 1c.1: migration, models, seed
+
+| Table | Columns (beyond `id`, identity) |
+| --- | --- |
+| `care_log_entry_notes` | `entry_id` FK `care_log_entries` ON DELETE CASCADE (indexed), `author_user_id` string (no FK), `author_member_id` FK `members` (indexed), `text` Text (CHECK length 1–4000), `created_at` timestamptz (default now), `edited_at` null, `deleted_at` null |
+| `care_log_entry_note_revisions` | `note_id` FK `care_log_entry_notes` ON DELETE CASCADE (indexed), `text`, `created_at` |
+
+- **One note per person:** partial unique index `uq_care_log_entry_notes_entry_id_author_member_id` on
+  (`entry_id`, `author_member_id`) `WHERE deleted_at IS NULL`: a new note is allowed after a soft delete.
+- Models `CareLogEntryNote` and `CareLogEntryNoteRevision` in `data/care/models/`, exported from
+  `models/__init__.py`. The entry has no `notes` relationship: notes are read in one batch query
+  (`notes_for_entries`), never lazily.
+- Hand-written migration (`down_revision` `329e2849ed61`); `alembic check` must stay clean.
+- **Seed:** the seeded done call by the elder gets the group leader as a participant, and two notes: the
+  elder's and the leader's (the leader's edited once, with a revision). Draws no random numbers.
+
+## Stage 1c.2: note routes, `notes` / `canAddNote`, timeline
+
+Routes (all `careLog: create`; the entry must be visible to the caller, else 404 as `GET /care-log/{id}`):
+
+| Route | What |
+| --- | --- |
+| `POST /care-log/{id}/notes` | `{ text }` → 201 with the whole `CareLogEntrySchema` |
+| `PATCH /care-log/{id}/notes/{noteId}` | `{ text }` → the whole entry; a changed text writes a revision (never returned) and sets `editedAt`; an identical text is a no-op |
+| `DELETE /care-log/{id}/notes/{noteId}` | soft delete (`deleted_at`) → 204 |
+
+Errors: see *Decisions and deviations* (Part 1c). Text is trimmed, 1–4000 characters (422 `text`).
+
+`CareLogEntrySchema` gains:
+
+```jsonc
+"notes": [ { "id": 5, "author": { "memberId": 12, "name": "Ana Pérez" }, "text": "…",
+             "createdAt": "2026-11-25T18:00:00Z", "editedAt": null, "canEdit": true } ],  // oldest first
+"canAddNote": false   // done, has participants, the caller is the author or a participant, has no note, careLog: create, linked member
+```
+
+`notes` is `[]` for an entry that isn't done. The writer is `author` (a `{ memberId, name }`, like the
+entry's own `author`). Notes of a deleted entry are never returned (the entry is gone). Notes are seen by
+whoever sees the entry (rule 60): nothing else filters them. The timeline's `careLog` items carry the same
+two fields.
+
+**Tests:** `tests/test_care_log_notes.py`, scratch database as in 1b (skipped without
+`CARE_TEST_DATABASE_URL`): service and route.
+
+## Stage 1c.3: docs
+
+`docs/ARCHITECTURE.md` (route table, *Care log* bullets), `CLAUDE.md` (*Care log* bullet), *For the other
+repos* below, and the progress rows.
 
 ---
 

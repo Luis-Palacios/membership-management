@@ -5,6 +5,8 @@ from sqlalchemy.orm import aliased
 
 from membership_management.data.care.models import (
     CareLogEntry,
+    CareLogEntryNote,
+    CareLogEntryNoteRevision,
     CareLogEntryParticipant,
     CareLogEntryPerson,
     CareLogEntryRevision,
@@ -95,6 +97,7 @@ def seed_care_log(ctx: SeedContext) -> None:
             visibility=CareLogVisibility.LEADERS,
             author=(elder_member, elder_user),
             people=[("member", lucia)],
+            participants=[leader.id],
             created_at=at(call_day, 19),
             follow_up_of_report=item.report_id if item is not None else None,
         ),
@@ -170,6 +173,45 @@ def seed_care_log(ctx: SeedContext) -> None:
         )
     session.add_all(entries)
     session.flush()
+
+    # Part 1c: the first call is done and has a participant, so both may write their own note (one each).
+    call = entries[0]
+    call_created = call.created_at
+    session.add_all(
+        [
+            CareLogEntryNote(
+                entry_id=call.id,
+                author_member_id=elder_member,
+                author_user_id=elder_user,
+                text="Se notó cansada pero con ánimo. Quedamos en volver a hablar el jueves.",
+                created_at=call_created + timedelta(hours=1),
+            ),
+            _edited_note(
+                call.id,
+                leader.id,
+                leader_user,
+                created_at=call_created + timedelta(hours=5),
+                text="Estuve en la llamada. Ella agradeció que el grupo la tenga presente.",
+                edited_from="Estuve en la llamada.",
+            ),
+        ]
+    )
+    session.flush()
+
+
+def _edited_note(
+    entry_id: int, member_id: int, user_id: str, *, created_at: datetime, text: str, edited_from: str
+) -> CareLogEntryNote:
+    edited_at = created_at + timedelta(minutes=15)
+    return CareLogEntryNote(
+        entry_id=entry_id,
+        author_member_id=member_id,
+        author_user_id=user_id,
+        text=text,
+        created_at=created_at,
+        edited_at=edited_at,
+        revisions=[CareLogEntryNoteRevision(text=edited_from, created_at=edited_at)],
+    )
 
 
 def _entry(
