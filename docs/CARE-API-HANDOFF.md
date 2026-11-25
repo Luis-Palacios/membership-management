@@ -311,16 +311,24 @@ Keep the existing conventions:
   cancels it, even a `private` one. The rest of that decision stands (they don't edit or delete).
 - *(Part 1b)* **Visibility, one condition.** The participant branch is part of
   `care_log_visible_condition`, so no read got a separate rule. It doesn't need `careLog: view` in the
-  condition (a named user without it is visible to the condition but every read route still needs `view`,
-  so they have no page: `GET /care-log/{id}` is 403 for them, as for anyone without the permission).
-  Rule 8's self-exclusion is applied to the participant and audience branches together (an
+  condition (rule 3: "being named doesn't need `careLog: view`"). The care log routes still need `view`
+  (`GET /care-log/{id}` is 403 without it), but two paths don't: the person timeline (it needs
+  `members: view` / `guests: view` only) and `/complete` / `/cancel` (`careLog: create`), which return
+  the entry. No role today has `members: view` or `careLog: create` without `careLog: view`
+  (`statements.ts`), so nobody reaches it; a role that ever does would see entries it's named on there.
+  Gating the branch on `view` was weighed in review and left out, since rule 3 says naming doesn't need
+  it. Rule 8's self-exclusion is applied to the participant and audience branches together (an
   `about_me` EXISTS), the author and `careLog: all` exempt.
 - *(Part 1b)* **Audience route renamed its answer.** `participants: [{ memberId, sees }]` is gone;
   `gains: [{ memberId, name }] | null` replaces it (see 1b.1). `participant_sees` stays as the rule
   `participant_gains` is built on; `participant_user_ids` / `participants_audience` became
   `participant_users` (name and user id) / `participants_gaining`. The caller's own member is never in
   `gains` (the route knows who is asking); a participant with no user account is not in it either, since
-  nobody would see anything.
+  nobody would see anything. Nor is a participant who is one of the entry's people, even on a `private`
+  entry where rule 3 says "every participant who isn't an elder or admin": rule 8 keeps the entry from
+  them, so being named gives them nothing to warn about. *Reach for `groupId`* is the existing small group
+  scope (lead or co-lead, closed groups they led, every group with `smallGroups: all`), a little wider than
+  rule 52's "groups the viewer leads"; it only narrows the list, never widens what anyone sees.
 - *(Part 1b)* **Range of `GET /care-log`:** `(to - from).days <= 62`, the timeline's own convention
   ("days apart"), so 63 days with both ends; a month grid with its leading and trailing days is at most
   42. `from` and `to` are required (no defaults). `groupId` reach for a caller without `careLog: all`
@@ -523,8 +531,8 @@ entry is visible when any of these holds:
 - `careLog: all` (as before);
 - the viewer is the **author** (as before);
 - the viewer's linked member is a **participant** (`care_log_entry_participants`), for both `leaders` and
-  `private` entries, and **whether or not they hold `careLog: view`** (the condition doesn't ask; the routes
-  keep their permission, so someone without `careLog: view` has no route to read it);
+  `private` entries, and **whether or not they hold `careLog: view`** (rule 3; the care log routes keep
+  their permission, but see *Decisions*: the timeline and complete / cancel don't ask for it);
 - the old audience: `careLog: view`, a `leaders` entry, and at least one of its people in their members /
   guests scope.
 
