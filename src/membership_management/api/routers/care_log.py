@@ -21,6 +21,7 @@ from membership_management.api.schemas.care_log import (
     CareLogCompleteSchema,
     CareLogCreateSchema,
     CareLogEntrySchema,
+    CareLogNoteBodySchema,
     CareLogSourceInputSchema,
     CareLogUpdateSchema,
     CarePersonRefSchema,
@@ -36,15 +37,21 @@ from membership_management.data.care.services import (
     CareLogChanges,
     CareLogInvalidError,
     EntryGoneError,
+    NoteExistsError,
+    NoteNotAllowedError,
+    NoteNotFoundError,
     NotPlannedError,
     PersonNotFoundError,
     SourceNotFoundError,
+    add_note,
     cancel_entry,
     check_people,
     coming_up,
     complete_entry,
     create_entry,
     delete_entry,
+    delete_note,
+    edit_note,
     entries_in_range,
     entry_visible,
     get_entry,
@@ -98,6 +105,17 @@ def _http_error(exc: Exception) -> HTTPException:
         return CodedHTTPError(409, "Only a planned entry can be completed or cancelled.", "not_planned")
     if isinstance(exc, EntryGoneError):
         return HTTPException(status_code=404, detail=_NOT_FOUND)
+    if isinstance(exc, NoteNotAllowedError):
+        detail = (
+            "Only the author or someone who took part can write a note."
+            if exc.code == "not_participant"
+            else "Only the writer can change a note."
+        )
+        return CodedHTTPError(403, detail, exc.code)
+    if isinstance(exc, NoteExistsError):
+        return CodedHTTPError(409, "You already wrote a note on this entry.", "note_exists")
+    if isinstance(exc, NoteNotFoundError):
+        return HTTPException(status_code=404, detail="Note not found.")
     raise exc
 
 
@@ -445,3 +463,61 @@ def post_cancel(
     except (CareLogInvalidError, NotPlannedError, EntryGoneError) as exc:
         raise _http_error(exc) from exc
     return _schema(db, ctx, entry)
+
+
+@router.post(
+    "/{entry_id}/notes",
+    name="create_care_log_entry_note",
+    description=(
+        "Write your own note on a done entry with participants, as its author or one of them (one each)"
+    ),
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[_can_create],
+)
+def post_note(
+    entry_id: int,
+    body: CareLogNoteBodySchema,
+    db: MembersSessionDep,
+    ctx: CareContextDep,
+    member: CurrentMemberDep,
+) -> CareLogEntrySchema:
+    entry = _entry_or_404(db, entry_id, ctx)
+    writer = _linked_member(member)
+    try:
+        entry = add_note(db, entry, user_id=ctx.claims.sub, member_id=writer.id, text=body.text)
+    except (CareLogInvalidError, NoteNotAllowedError, NoteExistsError, EntryGoneError) as exc:
+        raise _http_error(exc) from exc
+    return _schema(db, ctx, entry)
+
+
+@router.patch(
+    "/{entry_id}/notes/{note_id}",
+    name="update_care_log_entry_note",
+    description="Edit your own note, any time; the earlier text stays out of sight",
+    dependencies=[_can_create],
+)
+def patch_note(
+    entry_id: int, note_id: int, body: CareLogNoteBodySchema, db: MembersSessionDep, ctx: CareContextDep
+) -> CareLogEntrySchema:
+    _entry_or_404(db, entry_id, ctx)
+    try:
+        entry = edit_note(db, entry_id, note_id, user_id=ctx.claims.sub, text=body.text)
+    except (CareLogInvalidError, NoteNotAllowedError, NoteNotFoundError) as exc:
+        raise _http_error(exc) from exc
+    return _schema(db, ctx, entry)
+
+
+@router.delete(
+    "/{entry_id}/notes/{note_id}",
+    name="delete_care_log_entry_note",
+    description="Delete your own note (it just disappears; you can write a new one)",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[_can_create],
+)
+def delete_note_route(entry_id: int, note_id: int, db: MembersSessionDep, ctx: CareContextDep) -> Response:
+    _entry_or_404(db, entry_id, ctx)
+    try:
+        delete_note(db, entry_id, note_id, user_id=ctx.claims.sub)
+    except (NoteNotAllowedError, NoteNotFoundError) as exc:
+        raise _http_error(exc) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

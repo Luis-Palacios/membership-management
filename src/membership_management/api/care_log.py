@@ -12,6 +12,7 @@ from membership_management.api.jwt_auth import has_permission
 from membership_management.api.schemas.care_log import (
     CareLogAuthorSchema,
     CareLogEntrySchema,
+    CareLogNoteSchema,
     CareLogParticipantSchema,
     CareLogPersonSchema,
     CareLogSourceGroupSchema,
@@ -25,7 +26,13 @@ from membership_management.data.care.models import (
     MeetingMode,
 )
 from membership_management.data.care.results import SourceRef
-from membership_management.data.care.services import is_participant, plan_past_due, source_refs
+from membership_management.data.care.services import (
+    can_add_note,
+    is_participant,
+    notes_for_entries,
+    plan_past_due,
+    source_refs,
+)
 from membership_management.data.small_groups.models import ReportStatus
 from membership_management.data.small_groups.results import PersonKey, person_key
 
@@ -97,10 +104,13 @@ def entry_schemas(
     viewable = viewable_people(db, ctx.claims, people, ctx.member_scope, ctx.guest_scope)
     refs = source_refs(db, entries)
     can_write = has_permission(ctx.claims, "careLog", "create")
+    notes = notes_for_entries(db, [entry.id for entry in entries])
+    member_id = ctx.member.id if ctx.member is not None else None
     schemas: list[CareLogEntrySchema] = []
     for entry in entries:
         mine = entry.author_user_id == ctx.claims.sub
         ref = refs.get(entry.id)
+        entry_notes = notes.get(entry.id, [])
         schemas.append(
             CareLogEntrySchema(
                 id=entry.id,
@@ -134,7 +144,21 @@ def entry_schemas(
                 can_edit=can_write and mine,
                 can_complete=can_write
                 and entry.status == CareLogStatus.PLANNED
-                and (mine or is_participant(entry, ctx.member.id if ctx.member is not None else None)),
+                and (mine or is_participant(entry, member_id)),
+                notes=[
+                    CareLogNoteSchema(
+                        id=note.id,
+                        author=CareLogAuthorSchema(member_id=note.author_member_id, name=note.author.name),
+                        text=note.text,
+                        created_at=note.created_at,
+                        edited_at=note.edited_at,
+                        can_edit=can_write and note.author_user_id == ctx.claims.sub,
+                    )
+                    for note in entry_notes
+                ],
+                can_add_note=can_add_note(
+                    entry, entry_notes, user_id=ctx.claims.sub, member_id=member_id, can_write=can_write
+                ),
                 edited_at=entry.edited_at,
                 created_at=entry.created_at,
             )

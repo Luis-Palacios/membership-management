@@ -119,6 +119,25 @@ class CareLogSourceSchema(CamelModel):
     gone: bool
 
 
+class CareLogNoteSchema(CamelModel):
+    """One person's note on an entry they took part in (Part 1c). Revisions are never returned."""
+
+    id: int
+    # Who wrote it: kept when they leave *With* (rule 61).
+    author: CareLogAuthorSchema
+    text: str
+    created_at: datetime
+    edited_at: datetime | None
+    # Only the writer edits or deletes it (the entry's author included, rule 61).
+    can_edit: bool
+
+
+class CareLogNoteBodySchema(CamelModel):
+    """Create or edit a note: 1-4000 characters after trimming, checked by the service (422 `text`)."""
+
+    text: str
+
+
 class CareLogEntrySchema(CamelModel):
     id: int
     kind: CareLogKind
@@ -142,6 +161,10 @@ class CareLogEntrySchema(CamelModel):
     # The author edits and deletes; the author or a participant completes or cancels a plan.
     can_edit: bool
     can_complete: bool
+    # Notes from those who took part (rules 59-63), oldest first; seen by whoever sees the entry.
+    notes: list[CareLogNoteSchema]
+    # Done, with participants, the caller is its author or one of them, has no note yet and may write.
+    can_add_note: bool
     edited_at: datetime | None
     created_at: datetime
 

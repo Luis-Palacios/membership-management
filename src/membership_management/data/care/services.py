@@ -4,6 +4,7 @@ from datetime import date, datetime, time
 from typing import TypedDict
 
 from sqlalchemy import Row, Select, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from membership_management.data.care.access_rules import (
@@ -14,6 +15,8 @@ from membership_management.data.care.access_rules import (
 from membership_management.data.care.models import (
     PLANNABLE_KINDS,
     CareLogEntry,
+    CareLogEntryNote,
+    CareLogEntryNoteRevision,
     CareLogEntryParticipant,
     CareLogEntryPerson,
     CareLogEntryRevision,
@@ -100,6 +103,23 @@ class EntryGoneError(Exception):
 
 class NotPlannedError(Exception):
     """Only a planned entry can be completed or cancelled."""
+
+
+class NoteNotAllowedError(Exception):
+    """The caller isn't one of the entry's author and participants (403 `not_participant`), or isn't the
+    note's writer (403 `not_note_writer`): `code` says which."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+class NoteExistsError(Exception):
+    """The caller already has a note on this entry (rule 59): 409."""
+
+
+class NoteNotFoundError(Exception):
+    """The note doesn't exist on this entry, or was deleted: 404."""
 
 
 class CareLogChanges(TypedDict, total=False):
@@ -662,6 +682,129 @@ def cancel_entry(session: Session, entry: CareLogEntry, *, reason: str | None) -
     entry.cancel_reason = cleaned
     session.commit()
     return _reloaded(session, entry.id)
+
+
+def notes_for_entries(session: Session, entry_ids: Sequence[int]) -> dict[int, list[CareLogEntryNote]]:
+    """The notes not deleted of these entries (one query), each list oldest first. The caller has already
+    decided who sees the entries: notes are seen by exactly those (rule 60)."""
+    notes: dict[int, list[CareLogEntryNote]] = {}
+    if not entry_ids:
+        return notes
+    rows = session.scalars(
+        select(CareLogEntryNote)
+        .options(joinedload(CareLogEntryNote.author))
+        .where(CareLogEntryNote.entry_id.in_(entry_ids), CareLogEntryNote.deleted_at.is_(None))
+        .order_by(CareLogEntryNote.created_at, CareLogEntryNote.id)
+    )
+    for note in rows:
+        notes.setdefault(note.entry_id, []).append(note)
+    return notes
+
+
+def can_add_note(
+    entry: CareLogEntry,
+    notes: Sequence[CareLogEntryNote],
+    *,
+    user_id: str,
+    member_id: int | None,
+    can_write: bool,
+) -> bool:
+    """Rule 59: a done entry with participants; its author or a participant; one note each. Writing needs
+    `careLog: create` and a linked member."""
+    return (
+        can_write
+        and member_id is not None
+        and entry.status == CareLogStatus.DONE
+        and bool(entry.participants)
+        and (entry.author_user_id == user_id or is_participant(entry, member_id))
+        and all(note.author_member_id != member_id for note in notes)
+    )
+
+
+def _clean_note(text: str) -> str:
+    cleaned = text.strip()
+    if not cleaned:
+        raise CareLogInvalidError("text", "Write your note.")
+    if len(cleaned) > MAX_TEXT:
+        raise CareLogInvalidError("text", f"The note can't be longer than {MAX_TEXT} characters.")
+    return cleaned
+
+
+def add_note(
+    session: Session, entry: CareLogEntry, *, user_id: str, member_id: int, text: str
+) -> CareLogEntry:
+    """Rules 59 and 63: the author or a participant of a done entry with participants writes their own
+    note, one each. The entry row is locked first, so what is checked is what is there, and nothing of the
+    entry changes (no `edited_at`, no date, no status)."""
+    _lock_entry(session, entry)
+    if entry.author_user_id != user_id and not is_participant(entry, member_id):
+        raise NoteNotAllowedError("not_participant")
+    if entry.status != CareLogStatus.DONE:
+        raise CareLogInvalidError("not_done", "Only an entry that already happened takes notes.")
+    if not entry.participants:
+        raise CareLogInvalidError("no_participants", "An entry with nobody taking part has no notes.")
+    mine = session.scalar(
+        select(CareLogEntryNote.id).where(
+            CareLogEntryNote.entry_id == entry.id,
+            CareLogEntryNote.author_member_id == member_id,
+            CareLogEntryNote.deleted_at.is_(None),
+        )
+    )
+    if mine is not None:
+        raise NoteExistsError
+    cleaned = _clean_note(text)
+    session.add(
+        CareLogEntryNote(entry_id=entry.id, author_user_id=user_id, author_member_id=member_id, text=cleaned)
+    )
+    try:
+        session.commit()
+    except IntegrityError as exc:  # the partial unique index: a concurrent note by the same writer
+        session.rollback()
+        raise NoteExistsError from exc
+    return _reloaded(session, entry.id)
+
+
+def _locked_note(session: Session, entry_id: int, note_id: int, user_id: str) -> CareLogEntryNote:
+    """The note (not deleted, of this entry), row-locked, when `user_id` wrote it (rule 61: nobody else
+    edits or deletes it, the entry's author included)."""
+    note = session.scalars(
+        select(CareLogEntryNote)
+        .where(
+            CareLogEntryNote.id == note_id,
+            CareLogEntryNote.entry_id == entry_id,
+            CareLogEntryNote.deleted_at.is_(None),
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).one_or_none()
+    if note is None:
+        raise NoteNotFoundError
+    if note.author_user_id != user_id:
+        raise NoteNotAllowedError("not_note_writer")
+    return note
+
+
+def edit_note(session: Session, entry_id: int, note_id: int, *, user_id: str, text: str) -> CareLogEntry:
+    """Rule 61: the writer edits their note any time; the old text goes to a revision (never returned) and
+    `edited_at` is set. The same text changes nothing."""
+    note = _locked_note(session, entry_id, note_id, user_id)
+    cleaned = _clean_note(text)
+    if cleaned != note.text:
+        now = _db_now(session)
+        note.revisions.append(CareLogEntryNoteRevision(text=note.text, created_at=now))
+        note.text = cleaned
+        note.edited_at = now
+        session.commit()
+    else:
+        session.rollback()  # release the row lock
+    return _reloaded(session, entry_id)
+
+
+def delete_note(session: Session, entry_id: int, note_id: int, *, user_id: str) -> None:
+    """Rule 61: soft delete, the note just disappears; its writer can write a new one."""
+    note = _locked_note(session, entry_id, note_id, user_id)
+    note.deleted_at = _db_now(session)
+    session.commit()
 
 
 def plan_past_due(occurred_on: date, occurred_at_time: time | None, now: datetime) -> bool:

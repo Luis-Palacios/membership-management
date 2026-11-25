@@ -77,7 +77,7 @@ Keep the existing conventions:
 | **Part 1c, branch `feature/care-log-notes`** (notes from those who took part; spec rules 3, 8, 9, 10, 59–63) | | |
 | 0. Handoff (this section) | ✅ | with 1c.1 |
 | 1c.1 Migration, models, seed (notes) | ✅ | the commit "Add care log entry notes: tables, models, seed" |
-| 1c.2 Note routes, `notes` / `canAddNote` on the entry, timeline | ⬜ | |
+| 1c.2 Note routes, `notes` / `canAddNote` on the entry, timeline | ✅ | the commit "Add the care log note routes and put notes on the entry" |
 | 1c.3 Docs (Part 1c) | ⬜ | |
 | **Part 2, branch `feature/care`** | | |
 | 6. Migration, models, seed (care) | ⬜ | |
