@@ -69,11 +69,16 @@ class CareDbTestCase(unittest.TestCase):
         cls.engine.dispose()
 
     def setUp(self) -> None:
-        self.db = Session(self.engine)
+        # An outer transaction the session joins through savepoints: a route that commits (the note
+        # routes do) only releases a savepoint, and tearDown still rolls everything back.
+        self.connection = self.engine.connect()
+        self.transaction = self.connection.begin()
+        self.db = Session(bind=self.connection, join_transaction_mode="create_savepoint")
 
     def tearDown(self) -> None:
-        self.db.rollback()
         self.db.close()
+        self.transaction.rollback()
+        self.connection.close()
 
     # --- fixtures ---------------------------------------------------------------------------------------
 
