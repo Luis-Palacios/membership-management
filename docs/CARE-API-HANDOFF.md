@@ -76,9 +76,9 @@ Keep the existing conventions:
 | PR review fixes (#82): audience asks auth-server only for participants who can gain; removal test; docstring | ✅ | the commit "Address the #82 review notes" |
 | **Part 1c, branch `feature/care-log-notes`** (notes from those who took part; spec rules 3, 8, 9, 10, 59–63) | | |
 | 0. Handoff (this section) | ✅ | with 1c.1 |
-| 1c.1 Migration, models, seed (notes) | ✅ | the commit "Add care log entry notes: tables, models, seed" |
-| 1c.2 Note routes, `notes` / `canAddNote` on the entry, timeline | ✅ | the commit "Add the care log note routes and put notes on the entry" |
-| 1c.3 Docs (Part 1c) | ✅ | the commit "Document the care log notes (Part 1c)" |
+| 1c.1 Migration, models, seed (notes) | ✅ | `81318f3` |
+| 1c.2 Note routes, `notes` / `canAddNote` on the entry, timeline | ✅ | `37ea82f` |
+| 1c.3 Docs (Part 1c) | ✅ | `ae2e23c` |
 | **Part 2, branch `feature/care`** | | |
 | 6. Migration, models, seed (care) | ⬜ | |
 | 7. Access, create, read, edit, status, owners, read marks | ⬜ | |
