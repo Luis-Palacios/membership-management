@@ -78,7 +78,7 @@ Keep the existing conventions:
 | 0. Handoff (this section) | ✅ | with 1c.1 |
 | 1c.1 Migration, models, seed (notes) | ✅ | the commit "Add care log entry notes: tables, models, seed" |
 | 1c.2 Note routes, `notes` / `canAddNote` on the entry, timeline | ✅ | the commit "Add the care log note routes and put notes on the entry" |
-| 1c.3 Docs (Part 1c) | ⬜ | |
+| 1c.3 Docs (Part 1c) | ✅ | the commit "Document the care log notes (Part 1c)" |
 | **Part 2, branch `feature/care`** | | |
 | 6. Migration, models, seed (care) | ⬜ | |
 | 7. Access, create, read, edit, status, owners, read marks | ⬜ | |
@@ -868,4 +868,27 @@ for the owner picker (rule 27):
   - The entry page (rules 56–57) uses the existing `GET /care-log/{id}`: 404 for everything not visible.
   - Regenerate nothing; update the hand-written types for the audience response and the new route.
 - auth-server: nothing beyond its two stages and the existing internal endpoint (Part 1b needs none).
+- **Part 1c (notes), for staff-app** (types are hand-written there):
+  - `CareLogEntrySchema` gains `notes: CareLogNote[]` (oldest first) and `canAddNote: boolean`, on every
+    place the entry comes: `GET /care-log/{id}`, `GET /care-log`, *Coming up*, and the timeline's `careLog`
+    item (`entry`). The timeline carries the **full notes**, not a count (rule 62: collapsed, open in place).
+    ```jsonc
+    { "id": 5, "author": { "memberId": 12, "name": "Ana Pérez" }, "text": "…",
+      "createdAt": "2026-11-25T18:00:00Z", "editedAt": null, "canEdit": true }
+    ```
+    `editedAt` non-null means "edited". `notes` is `[]` when there are none or the entry isn't done.
+    `canAddNote` is true only for someone who is the author or a participant of a done entry with
+    participants, has no note yet, holds `careLog: create` and has a linked member: show *Add your note*
+    only then. `canEdit` is true only for the writer: *Edit* / *Delete* only then.
+  - `POST /care-log/{id}/notes` body `{ "text" }` → 201 with the **whole entry**; `PATCH
+    /care-log/{id}/notes/{noteId}` body `{ "text" }` → 200 with the whole entry; `DELETE` → 204. Replace the
+    entry from the response. The text is trimmed by the API (1–4000).
+  - Errors (body `{ detail, code }` except plain 404s): 403 `not_participant` (POST: not the author nor a
+    participant), 403 `not_note_writer` (PATCH / DELETE: not yours, the entry's author included), 409
+    `note_exists` (you already have one: reload), 409 `link` (no linked member), 422 `not_done`, 422
+    `no_participants`, 422 `text` (empty or over 4000); 404 for an entry the caller can't see, a deleted
+    entry, or a missing / deleted note. Every note route needs `careLog: create`.
+  - A participant removed from *With* keeps their note on the entry but no longer sees the entry.
+  - Seed: the elder's seeded done call now has the group leader as participant and two notes.
+  - No auth-server change. The migration `5b8e2d7a1c94` must run before the API starts.
 - Not in this handoff: email (rule 41, a later Part 3 on the report conversations outbox).
